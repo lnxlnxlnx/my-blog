@@ -29,9 +29,9 @@ import mdx from "@astrojs/mdx";
 import searchIndexer from "./src/integrations/searchIndex.mts";
 // https://astro.build/config
 export default defineConfig({
-	site: siteConfig.site_url,
+	site: "https://lnxlnxlnx.github.io",
 
-	base: "/",
+	base: "my-blog",
 	trailingSlash: "always",
 	integrations: [
 		tailwind({
