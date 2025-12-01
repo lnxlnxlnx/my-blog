@@ -1,5 +1,5 @@
 ---
-title: Markdown Tutorial
+title: my_first_test
 published: 2025-11-30
 pinned: true
 description: A simple example of a Markdown blog post.
