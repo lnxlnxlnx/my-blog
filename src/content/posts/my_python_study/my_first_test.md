@@ -1,7 +1,7 @@
 ---
 title: my_first_test
 published: 2025-11-30
-pinned: true
+pinned: false
 description: A simple example of a Markdown blog post.
 tags: [Markdown, Blogging]
 category: k230
@@ -10,7 +10,7 @@ author: emn178
 sourceLink: "https://github.com/emn178/markdown"
 draft: false
 date: 2025-11-30
-image: ./cover.jpg
+image: ./yuki.jpg
 pubDate: 2025-11-30
 ---
 ## GPIO

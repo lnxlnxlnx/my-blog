@@ -1,16 +1,15 @@
 ---
 title: uv基础使用
 published: 2025-12-01
-pinned: true
+pinned: false
 description: A simple example of a Markdown blog post.
-tags: [Markdown, Blogging,uv,python]
+tags: [Markdown, Blogging,ruff,python]
 category: study python
 licenseName: "Unlicensed"
 author: lnxlnxlnx
 sourceLink: "https://github.com/emn178/markdown"
 draft: false
 date: 2025-12-01
-image: ./cover.jpg
 pubDate: 2025-12-01
 ---
 ## 常用操作:
