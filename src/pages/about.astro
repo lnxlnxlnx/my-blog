@@ -88,6 +88,40 @@ const { Content } = await render(aboutPost);
                     <canvas id="adc-scope" class="mt-3 w-full h-40 rounded-lg bg-gradient-to-br from-sky-50 via-white to-indigo-50"></canvas>
                 </div>
 
+                <div class="mt-4 rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="text-sm font-semibold">天气查询</div>
+                        <div class="text-xs opacity-60">数据来源：Open-Meteo</div>
+                    </div>
+                    <div class="mt-3 flex flex-wrap gap-2 items-center">
+                        <input id="weather-city" class="px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" placeholder="城市名，例如：Shanghai" />
+                        <input id="weather-lat" class="px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" placeholder="纬度" />
+                        <input id="weather-lon" class="px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" placeholder="经度" />
+                        <button id="weather-fetch" class="px-3 py-2 rounded-md bg-black text-white dark:bg-white dark:text-black">查询天气</button>
+                        <button id="weather-send" class="px-3 py-2 rounded-md border border-neutral-300/60 dark:border-neutral-700/60">发送到 ESP32</button>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-amber-50/80 to-amber-50/10 dark:from-amber-400/10 dark:to-amber-400/0">
+                            <div class="text-xs uppercase tracking-wider opacity-60">温度</div>
+                            <div id="weather-temp" class="mt-1 text-2xl font-semibold">--</div>
+                            <div class="mt-2 text-xs opacity-60">°C</div>
+                        </div>
+                        <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-cyan-50/80 to-cyan-50/10 dark:from-cyan-400/10 dark:to-cyan-400/0">
+                            <div class="text-xs uppercase tracking-wider opacity-60">风速</div>
+                            <div id="weather-wind" class="mt-1 text-2xl font-semibold">--</div>
+                            <div class="mt-2 text-xs opacity-60">km/h</div>
+                        </div>
+                        <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-violet-50/80 to-violet-50/10 dark:from-violet-400/10 dark:to-violet-400/0">
+                            <div class="text-xs uppercase tracking-wider opacity-60">天气代码</div>
+                            <div id="weather-code" class="mt-1 text-2xl font-semibold">--</div>
+                            <div id="weather-place" class="mt-2 text-xs opacity-60">--</div>
+                        </div>
+                    </div>
+
+                    <div id="weather-msg" class="mt-3 text-sm opacity-70"></div>
+                </div>
+
                 <div class="mt-5 rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4">
                     <div class="text-sm font-semibold">设置</div>
                     <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -145,6 +179,15 @@ const { Content } = await render(aboutPost);
     const scopeSmoothEl = document.getElementById("scope-smooth");
     const scopeFitEl = document.getElementById("scope-fit");
     let scopeCaptureEnabled = true;
+    const weatherCityEl = document.getElementById("weather-city");
+    const weatherLatEl = document.getElementById("weather-lat");
+    const weatherLonEl = document.getElementById("weather-lon");
+    const weatherTempEl = document.getElementById("weather-temp");
+    const weatherWindEl = document.getElementById("weather-wind");
+    const weatherCodeEl = document.getElementById("weather-code");
+    const weatherPlaceEl = document.getElementById("weather-place");
+    const weatherMsgEl = document.getElementById("weather-msg");
+    let latestWeather = null;
 
     function buildUrl(path) {
         const host = hostInput.value.trim();
@@ -154,6 +197,10 @@ const { Content } = await render(aboutPost);
 
     function setMsg(text) {
         msg.textContent = text;
+    }
+
+    function setWeatherMsg(text) {
+        weatherMsgEl.textContent = text;
     }
 
     function updateCards(data) {
@@ -308,6 +355,91 @@ const { Content } = await render(aboutPost);
         }
     }
 
+    async function fetchWeather() {
+        const city = weatherCityEl.value.trim();
+        let lat = weatherLatEl.value.trim();
+        let lon = weatherLonEl.value.trim();
+
+        setWeatherMsg("查询中...");
+
+        try {
+            if ((!lat || !lon) && city) {
+                const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`);
+                const geoData = await geoRes.json();
+                const item = geoData?.results?.[0];
+                if (!item) {
+                    setWeatherMsg("未找到城市，请手动输入经纬度");
+                    return;
+                }
+                lat = String(item.latitude);
+                lon = String(item.longitude);
+                weatherLatEl.value = lat;
+                weatherLonEl.value = lon;
+                weatherPlaceEl.textContent = `${item.name}${item.country ? ", " + item.country : ""}`;
+            } else if (city) {
+                weatherPlaceEl.textContent = city;
+            } else if (lat && lon) {
+                weatherPlaceEl.textContent = `${lat}, ${lon}`;
+            }
+
+            if (!lat || !lon) {
+                setWeatherMsg("请填写城市或经纬度");
+                return;
+            }
+
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,wind_speed_10m,weather_code`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const current = data?.current;
+            if (!current) {
+                setWeatherMsg("天气数据获取失败");
+                return;
+            }
+
+            const temp = current.temperature_2m;
+            const wind = current.wind_speed_10m;
+            const code = current.weather_code;
+
+            weatherTempEl.textContent = typeof temp === "number" ? temp.toFixed(1) : "--";
+            weatherWindEl.textContent = typeof wind === "number" ? wind.toFixed(1) : "--";
+            weatherCodeEl.textContent = typeof code === "number" ? String(code) : "--";
+
+            latestWeather = {
+                temp,
+                wind,
+                code,
+                lat: Number(lat),
+                lon: Number(lon),
+                place: weatherPlaceEl.textContent || city || `${lat},${lon}`,
+            };
+
+            setWeatherMsg("已更新");
+        } catch (err) {
+            setWeatherMsg("查询失败：" + err);
+        }
+    }
+
+    async function sendWeatherToEsp32() {
+        if (!latestWeather) {
+            setWeatherMsg("请先查询天气");
+            return;
+        }
+        const { temp, wind, code, place } = latestWeather;
+        const url = buildUrl(`/weather?temp=${encodeURIComponent(temp)}&wind=${encodeURIComponent(wind)}&code=${encodeURIComponent(code)}&place=${encodeURIComponent(place)}`);
+        if (!url) {
+            setWeatherMsg("请先填写 ESP32 地址");
+            return;
+        }
+        setWeatherMsg("发送中...");
+        try {
+            const res = await fetch(url, { method: "GET" });
+            const text = await res.text();
+            setWeatherMsg(`已发送：${res.status} | ${text}`);
+        } catch (err) {
+            setWeatherMsg("发送失败：" + err);
+        }
+    }
+
     async function request(path) {
         const url = buildUrl(path);
         if (!url) {
@@ -329,6 +461,8 @@ const { Content } = await render(aboutPost);
     document.getElementById("esp32-status").addEventListener("click", () => request("/status"));
     document.getElementById("esp32-toggle").addEventListener("click", () => request("/toggle"));
     document.getElementById("esp32-adc").addEventListener("click", () => request("/adc"));
+    document.getElementById("weather-fetch").addEventListener("click", fetchWeather);
+    document.getElementById("weather-send").addEventListener("click", sendWeatherToEsp32);
 
     let pollTimer = null;
     function startPolling() {
