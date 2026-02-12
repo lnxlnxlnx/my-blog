@@ -31,7 +31,7 @@ import searchIndexer from "./src/integrations/searchIndex.mts";
 export default defineConfig({
 	site: "https://lnxlnxlnx.github.io",
 
-	base: "my-blog",
+	base: "/my-blog/",
 	trailingSlash: "always",
 	integrations: [
 		tailwind({

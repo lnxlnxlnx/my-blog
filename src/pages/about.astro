@@ -20,6 +20,96 @@ const { Content } = await render(aboutPost);
             <Markdown class="mt-2">
                 <Content />
             </Markdown>
+
+            <div class="mt-8 rounded-[var(--radius-large)] border border-neutral-200/60 dark:border-neutral-700/60 p-4">
+                <h2 class="text-lg font-semibold">ESP32 局域网测试面板</h2>
+                <p class="text-sm opacity-70 mt-1">填入 ESP32 的局域网地址，例如：192.168.1.88</p>
+
+                <div class="mt-3 flex flex-wrap gap-2 items-center">
+                    <input
+                        id="esp32-host"
+                        class="px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent"
+                        placeholder="192.168.1.88"
+                        value="192.168.1.88"
+                    />
+                    <button id="esp32-status" class="px-3 py-2 rounded-md bg-black text-white dark:bg-white dark:text-black">读取状态</button>
+                    <button id="esp32-toggle" class="px-3 py-2 rounded-md border border-neutral-300/60 dark:border-neutral-700/60">切换开关</button>
+                    <button id="esp32-adc" class="px-3 py-2 rounded-md border border-neutral-300/60 dark:border-neutral-700/60">读取 ADC</button>
+                </div>
+
+                <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-white/60 to-white/10 dark:from-white/5 dark:to-white/0">
+                        <div class="text-xs uppercase tracking-wider opacity-60">LED</div>
+                        <div id="esp32-led" class="mt-1 text-2xl font-semibold">--</div>
+                        <div class="mt-2 text-xs opacity-60">/toggle</div>
+                    </div>
+                    <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-sky-50/80 to-sky-50/10 dark:from-sky-400/10 dark:to-sky-400/0">
+                        <div class="text-xs uppercase tracking-wider opacity-60">ADC Raw</div>
+                        <div id="esp32-adc-raw" class="mt-1 text-2xl font-semibold">--</div>
+                        <div class="mt-2 text-xs opacity-60">0 ~ 4095</div>
+                    </div>
+                    <div class="rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4 bg-gradient-to-br from-emerald-50/80 to-emerald-50/10 dark:from-emerald-400/10 dark:to-emerald-400/0">
+                        <div class="text-xs uppercase tracking-wider opacity-60">ADC Voltage</div>
+                        <div id="esp32-adc-v" class="mt-1 text-2xl font-semibold">--</div>
+                        <div class="mt-2 text-xs opacity-60">0.000 ~ 3.300V</div>
+                    </div>
+                </div>
+
+                <div id="esp32-msg" class="mt-3 text-sm opacity-70"></div>
+            </div>
         </div>
     </div>
 </MainGridLayout>
+
+<script>
+    const msg = document.getElementById("esp32-msg");
+    const hostInput = document.getElementById("esp32-host");
+    const ledEl = document.getElementById("esp32-led");
+    const adcRawEl = document.getElementById("esp32-adc-raw");
+    const adcVEl = document.getElementById("esp32-adc-v");
+
+    function buildUrl(path) {
+        const host = hostInput.value.trim();
+        if (!host) return null;
+        return `http://${host}${path}`;
+    }
+
+    function setMsg(text) {
+        msg.textContent = text;
+    }
+
+    function updateCards(data) {
+        if (typeof data?.led === "boolean") {
+            ledEl.textContent = data.led ? "ON" : "OFF";
+            ledEl.className = `mt-1 text-2xl font-semibold ${data.led ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`;
+        }
+        if (typeof data?.adc_raw === "number") {
+            adcRawEl.textContent = String(data.adc_raw);
+        }
+        if (typeof data?.adc_v === "number") {
+            adcVEl.textContent = `${data.adc_v.toFixed(3)} V`;
+        }
+    }
+
+    async function request(path) {
+        const url = buildUrl(path);
+        if (!url) {
+            setMsg("请先填写 ESP32 地址");
+            return;
+        }
+        setMsg("请求中...");
+        try {
+            const res = await fetch(url, { method: "GET" });
+            const text = await res.text();
+            const maybeJson = text.trim().startsWith("{") ? JSON.parse(text) : null;
+            if (maybeJson) updateCards(maybeJson);
+            setMsg(`状态码: ${res.status}${maybeJson ? "" : ` | ${text}`}`);
+        } catch (err) {
+            setMsg("请求失败：" + err);
+        }
+    }
+
+    document.getElementById("esp32-status").addEventListener("click", () => request("/status"));
+    document.getElementById("esp32-toggle").addEventListener("click", () => request("/toggle"));
+    document.getElementById("esp32-adc").addEventListener("click", () => request("/adc"));
+</script>
