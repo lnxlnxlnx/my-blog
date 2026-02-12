@@ -55,6 +55,36 @@ const { Content } = await render(aboutPost);
                     </div>
                 </div>
 
+                <div class="mt-5 rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4">
+                    <div class="text-sm font-semibold">设置</div>
+                    <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label class="flex items-center gap-2 text-sm">
+                            <input id="poll-enabled" type="checkbox" class="accent-black dark:accent-white" checked />
+                            <span>启用轮询</span>
+                        </label>
+                        <label class="text-sm">
+                            轮询间隔（ms）
+                            <input id="poll-interval" type="number" min="500" step="100" value="2000"
+                                class="mt-1 w-full px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" />
+                        </label>
+                        <label class="text-sm">
+                            LED 引脚
+                            <input id="led-pin" type="number" min="0" max="39" value="2"
+                                class="mt-1 w-full px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" />
+                        </label>
+                        <label class="text-sm">
+                            ADC 引脚
+                            <input id="adc-pin" type="number" min="0" max="39" value="34"
+                                class="mt-1 w-full px-3 py-2 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" />
+                        </label>
+                    </div>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        <button id="apply-settings" class="px-3 py-2 rounded-md bg-black text-white dark:bg-white dark:text-black">应用设置</button>
+                        <button id="save-settings" class="px-3 py-2 rounded-md border border-neutral-300/60 dark:border-neutral-700/60">保存到本地</button>
+                    </div>
+                    <div class="mt-2 text-xs opacity-60">提示：引脚设置需要 ESP32 端支持 /config 接口。</div>
+                </div>
+
                 <div id="esp32-msg" class="mt-3 text-sm opacity-70"></div>
             </div>
         </div>
@@ -67,6 +97,10 @@ const { Content } = await render(aboutPost);
     const ledEl = document.getElementById("esp32-led");
     const adcRawEl = document.getElementById("esp32-adc-raw");
     const adcVEl = document.getElementById("esp32-adc-v");
+    const pollEnabledEl = document.getElementById("poll-enabled");
+    const pollIntervalEl = document.getElementById("poll-interval");
+    const ledPinEl = document.getElementById("led-pin");
+    const adcPinEl = document.getElementById("adc-pin");
 
     function buildUrl(path) {
         const host = hostInput.value.trim();
@@ -112,4 +146,86 @@ const { Content } = await render(aboutPost);
     document.getElementById("esp32-status").addEventListener("click", () => request("/status"));
     document.getElementById("esp32-toggle").addEventListener("click", () => request("/toggle"));
     document.getElementById("esp32-adc").addEventListener("click", () => request("/adc"));
+
+    let pollTimer = null;
+    function startPolling() {
+        if (!pollEnabledEl.checked) return;
+        const interval = Math.max(500, Number(pollIntervalEl.value) || 2000);
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(() => request("/status"), interval);
+    }
+
+    function stopPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+    }
+
+    function applySettings() {
+        stopPolling();
+        if (pollEnabledEl.checked) {
+            startPolling();
+        } else {
+            setMsg("轮询已关闭");
+        }
+    }
+
+    async function sendConfig() {
+        const url = buildUrl(`/config?led_pin=${encodeURIComponent(ledPinEl.value)}&adc_pin=${encodeURIComponent(adcPinEl.value)}`);
+        if (!url) {
+            setMsg("请先填写 ESP32 地址");
+            return;
+        }
+        setMsg("发送配置中...");
+        try {
+            const res = await fetch(url, { method: "GET" });
+            const text = await res.text();
+            setMsg(`配置结果: ${res.status} | ${text}`);
+        } catch (err) {
+            setMsg("配置失败：" + err);
+        }
+    }
+
+    function saveSettings() {
+        const payload = {
+            pollEnabled: pollEnabledEl.checked,
+            pollInterval: Number(pollIntervalEl.value) || 2000,
+            ledPin: Number(ledPinEl.value) || 2,
+            adcPin: Number(adcPinEl.value) || 34,
+        };
+        localStorage.setItem("esp32_panel_settings", JSON.stringify(payload));
+        setMsg("已保存到本地");
+    }
+
+    function loadSettings() {
+        try {
+            const raw = localStorage.getItem("esp32_panel_settings");
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (typeof data.pollEnabled === "boolean") pollEnabledEl.checked = data.pollEnabled;
+            if (typeof data.pollInterval === "number") pollIntervalEl.value = String(data.pollInterval);
+            if (typeof data.ledPin === "number") ledPinEl.value = String(data.ledPin);
+            if (typeof data.adcPin === "number") adcPinEl.value = String(data.adcPin);
+        } catch {
+            // ignore
+        }
+    }
+
+    loadSettings();
+    applySettings();
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            stopPolling();
+        } else {
+            applySettings();
+        }
+    });
+
+    pollEnabledEl.addEventListener("change", applySettings);
+    pollIntervalEl.addEventListener("change", applySettings);
+    document.getElementById("apply-settings").addEventListener("click", () => {
+        applySettings();
+        sendConfig();
+    });
+    document.getElementById("save-settings").addEventListener("click", saveSettings);
 </script>
