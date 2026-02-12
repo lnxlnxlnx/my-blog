@@ -55,6 +55,39 @@ const { Content } = await render(aboutPost);
                     </div>
                 </div>
 
+                <div class="mt-4 rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="text-sm font-semibold">ADC 示波器</div>
+                        <div class="text-xs opacity-60">实时波形（最近 200 点）</div>
+                    </div>
+                    <div class="mt-3 flex flex-wrap gap-2 items-center text-sm">
+                        <button id="scope-toggle" class="px-3 py-1.5 rounded-md bg-black text-white dark:bg-white dark:text-black">暂停</button>
+                        <button id="scope-clear" class="px-3 py-1.5 rounded-md border border-neutral-300/60 dark:border-neutral-700/60">清空</button>
+                        <label class="text-xs opacity-70">
+                            采样来源
+                            <select id="scope-source" class="ml-2 px-2 py-1 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent">
+                                <option value="status">/status</option>
+                                <option value="adc">/adc</option>
+                            </select>
+                        </label>
+                        <label class="text-xs opacity-70">
+                            采样间隔（ms）
+                            <input id="scope-interval" type="number" min="100" step="50" value="300"
+                                class="ml-2 w-24 px-2 py-1 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" />
+                        </label>
+                        <label class="text-xs opacity-70">
+                            平滑窗口
+                            <input id="scope-smooth" type="number" min="1" max="21" step="2" value="5"
+                                class="ml-2 w-20 px-2 py-1 rounded-md border border-neutral-200/60 dark:border-neutral-700/60 bg-transparent" />
+                        </label>
+                        <label class="text-xs opacity-70">
+                            拟合曲线
+                            <input id="scope-fit" type="checkbox" class="ml-2 accent-black dark:accent-white" checked />
+                        </label>
+                    </div>
+                    <canvas id="adc-scope" class="mt-3 w-full h-40 rounded-lg bg-gradient-to-br from-sky-50 via-white to-indigo-50"></canvas>
+                </div>
+
                 <div class="mt-5 rounded-xl border border-neutral-200/60 dark:border-neutral-700/60 p-4">
                     <div class="text-sm font-semibold">设置</div>
                     <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -101,6 +134,17 @@ const { Content } = await render(aboutPost);
     const pollIntervalEl = document.getElementById("poll-interval");
     const ledPinEl = document.getElementById("led-pin");
     const adcPinEl = document.getElementById("adc-pin");
+    const scopeCanvas = document.getElementById("adc-scope");
+    const scopeCtx = scopeCanvas.getContext("2d");
+    const scopeBuffer = [];
+    const scopeMax = 200;
+    const scopeToggleBtn = document.getElementById("scope-toggle");
+    const scopeClearBtn = document.getElementById("scope-clear");
+    const scopeSourceEl = document.getElementById("scope-source");
+    const scopeIntervalEl = document.getElementById("scope-interval");
+    const scopeSmoothEl = document.getElementById("scope-smooth");
+    const scopeFitEl = document.getElementById("scope-fit");
+    let scopeCaptureEnabled = true;
 
     function buildUrl(path) {
         const host = hostInput.value.trim();
@@ -119,9 +163,148 @@ const { Content } = await render(aboutPost);
         }
         if (typeof data?.adc_raw === "number") {
             adcRawEl.textContent = String(data.adc_raw);
+            if (scopeCaptureEnabled) pushScopePoint(data.adc_raw);
         }
         if (typeof data?.adc_v === "number") {
             adcVEl.textContent = `${data.adc_v.toFixed(3)} V`;
+        }
+    }
+
+    function pushScopePoint(raw) {
+        //if (raw === 0) return;
+        scopeBuffer.push(raw);
+        if (scopeBuffer.length > scopeMax) scopeBuffer.shift();
+        drawScope();
+    }
+
+    function resizeCanvas() {
+        const rect = scopeCanvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        scopeCanvas.width = Math.floor(rect.width * dpr);
+        scopeCanvas.height = Math.floor(rect.height * dpr);
+        scopeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        drawScope();
+    }
+
+    function drawScope() {
+        const w = scopeCanvas.width / (window.devicePixelRatio || 1);
+        const h = scopeCanvas.height / (window.devicePixelRatio || 1);
+        if (!w || !h) return;
+
+        scopeCtx.clearRect(0, 0, w, h);
+
+        // grid
+        scopeCtx.strokeStyle = "rgba(0,0,0,0.06)";
+        scopeCtx.lineWidth = 1;
+        for (let x = 0; x <= w; x += w / 10) {
+            scopeCtx.beginPath();
+            scopeCtx.moveTo(x, 0);
+            scopeCtx.lineTo(x, h);
+            scopeCtx.stroke();
+        }
+        for (let y = 0; y <= h; y += h / 4) {
+            scopeCtx.beginPath();
+            scopeCtx.moveTo(0, y);
+            scopeCtx.lineTo(w, y);
+            scopeCtx.stroke();
+        }
+
+        // waveform
+        if (scopeBuffer.length < 2) return;
+        const smoothWindow = Math.max(1, Number(scopeSmoothEl.value) || 1);
+        const preprocessed = preprocessBuffer(scopeBuffer, smoothWindow);
+        const renderBuffer = scopeFitEl.checked ? preprocessed : preprocessed;
+        scopeCtx.strokeStyle = "rgba(76, 120, 255, 0.9)";
+        scopeCtx.lineWidth = 2;
+        scopeCtx.beginPath();
+        if (scopeFitEl.checked) {
+            drawSpline(renderBuffer, w, h);
+        } else {
+            renderBuffer.forEach((v, i) => {
+                const x = (i / (scopeMax - 1)) * w;
+                const y = h - (v / 4095) * h;
+                if (i === 0) scopeCtx.moveTo(x, y);
+                else scopeCtx.lineTo(x, y);
+            });
+        }
+        scopeCtx.stroke();
+
+        // glow
+        scopeCtx.strokeStyle = "rgba(76, 120, 255, 0.25)";
+        scopeCtx.lineWidth = 6;
+        scopeCtx.stroke();
+    }
+
+    function preprocessBuffer(buffer, windowSize) {
+        const medianed = medianFilter(buffer, Math.max(1, Math.min(9, windowSize | 0)));
+        return smoothBuffer(medianed, windowSize);
+    }
+
+    function smoothBuffer(buffer, windowSize) {
+        const size = Math.max(1, windowSize | 0);
+        if (size <= 1) return buffer;
+        const half = Math.floor(size / 2);
+        const out = new Array(buffer.length);
+        for (let i = 0; i < buffer.length; i++) {
+            let sum = 0;
+            let count = 0;
+            for (let k = i - half; k <= i + half; k++) {
+                if (k >= 0 && k < buffer.length) {
+                    sum += buffer[k];
+                    count++;
+                }
+            }
+            out[i] = sum / count;
+        }
+        return out;
+    }
+
+    function medianFilter(buffer, windowSize) {
+        const size = Math.max(1, windowSize | 0);
+        if (size <= 1) return buffer;
+        const half = Math.floor(size / 2);
+        const out = new Array(buffer.length);
+        for (let i = 0; i < buffer.length; i++) {
+            const window = [];
+            for (let k = i - half; k <= i + half; k++) {
+                if (k >= 0 && k < buffer.length) window.push(buffer[k]);
+            }
+            window.sort((a, b) => a - b);
+            out[i] = window[Math.floor(window.length / 2)];
+        }
+        return out;
+    }
+
+    function drawSpline(buffer, w, h) {
+        const n = buffer.length;
+        if (n < 2) return;
+        const toPoint = (i) => ({
+            x: (i / (scopeMax - 1)) * w,
+            y: h - (buffer[i] / 4095) * h,
+        });
+
+        const alpha = 0.5; // Catmull-Rom
+        const get = (i) => buffer[Math.max(0, Math.min(n - 1, i))];
+
+        let p0 = toPoint(0);
+        scopeCtx.moveTo(p0.x, p0.y);
+        for (let i = 0; i < n - 1; i++) {
+            const p1 = toPoint(i);
+            const p2 = toPoint(i + 1);
+            const p3 = toPoint(Math.min(i + 2, n - 1));
+
+            const t1x = (p2.x - p0.x) * alpha;
+            const t1y = (p2.y - p0.y) * alpha;
+            const t2x = (p3.x - p1.x) * alpha;
+            const t2y = (p3.y - p1.y) * alpha;
+
+            const cp1x = p1.x + t1x / 3;
+            const cp1y = p1.y + t1y / 3;
+            const cp2x = p2.x - t2x / 3;
+            const cp2y = p2.y - t2y / 3;
+
+            scopeCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+            p0 = p1;
         }
     }
 
@@ -213,11 +396,60 @@ const { Content } = await render(aboutPost);
     loadSettings();
     applySettings();
 
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
+    let scopeTimer = null;
+    let scopeRunning = true;
+
+    function startScope() {
+        stopScope();
+        const interval = Math.max(100, Number(scopeIntervalEl.value) || 300);
+        const source = scopeSourceEl.value;
+        scopeTimer = setInterval(() => request(source === "adc" ? "/adc" : "/status"), interval);
+        scopeRunning = true;
+        scopeCaptureEnabled = true;
+        scopeToggleBtn.textContent = "暂停";
+    }
+
+    function stopScope() {
+        if (scopeTimer) clearInterval(scopeTimer);
+        scopeTimer = null;
+        scopeRunning = false;
+        scopeCaptureEnabled = false;
+        scopeToggleBtn.textContent = "开始";
+    }
+
+    scopeToggleBtn.addEventListener("click", () => {
+        if (scopeRunning) stopScope();
+        else startScope();
+    });
+
+    scopeClearBtn.addEventListener("click", () => {
+        scopeBuffer.length = 0;
+        drawScope();
+    });
+
+    scopeSourceEl.addEventListener("change", () => {
+        if (scopeRunning) startScope();
+    });
+
+    scopeIntervalEl.addEventListener("change", () => {
+        if (scopeRunning) startScope();
+    });
+
+    scopeSmoothEl.addEventListener("change", drawScope);
+    scopeFitEl.addEventListener("change", drawScope);
+
+    startScope();
+
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
             stopPolling();
+            stopScope();
         } else {
             applySettings();
+            if (scopeRunning) startScope();
         }
     });
 
