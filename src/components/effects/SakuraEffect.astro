@@ -2,10 +2,14 @@
 import { sakuraConfig } from "@/config";
 
 const config = sakuraConfig;
+const sakuraImageUrl = `${import.meta.env.BASE_URL}assets/images/sakura.png`;
 ---
 
 {sakuraConfig?.enable && (
-	<script is:inline define:vars={{ sakuraConfig: config }}>
+	<script
+		is:inline
+		define:vars={{ sakuraConfig: config, sakuraImageUrl }}
+	>
 		// 樱花对象类
 		class Sakura {
 			constructor(x, y, s, r, a, fn, idx, img, limitArray, config) {
@@ -173,7 +177,7 @@ const config = sakuraConfig;
 
 				// 创建图片对象
 				this.img = new Image();
-				this.img.src = '/assets/images/sakura.png'; // 使用樱花图片
+				this.img.src = sakuraImageUrl; // 使用樱花图片
 
 				// 等待图片加载完成
 				await new Promise((resolve, reject) => {
