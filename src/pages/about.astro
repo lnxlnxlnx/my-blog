@@ -159,51 +159,60 @@ const { Content } = await render(aboutPost);
 </MainGridLayout>
 
 <script>
-    const msg = document.getElementById("esp32-msg");
-    const hostInput = document.getElementById("esp32-host");
-    const ledEl = document.getElementById("esp32-led");
-    const adcRawEl = document.getElementById("esp32-adc-raw");
-    const adcVEl = document.getElementById("esp32-adc-v");
-    const pollEnabledEl = document.getElementById("poll-enabled");
-    const pollIntervalEl = document.getElementById("poll-interval");
-    const ledPinEl = document.getElementById("led-pin");
-    const adcPinEl = document.getElementById("adc-pin");
-    const scopeCanvas = document.getElementById("adc-scope");
-    const scopeCtx = scopeCanvas.getContext("2d");
-    const scopeBuffer = [];
+    const msg = document.getElementById("esp32-msg")!;
+    const hostInput = document.getElementById("esp32-host") as HTMLInputElement;
+    const ledEl = document.getElementById("esp32-led")!;
+    const adcRawEl = document.getElementById("esp32-adc-raw")!;
+    const adcVEl = document.getElementById("esp32-adc-v")!;
+    const pollEnabledEl = document.getElementById("poll-enabled") as HTMLInputElement;
+    const pollIntervalEl = document.getElementById("poll-interval") as HTMLInputElement;
+    const ledPinEl = document.getElementById("led-pin") as HTMLInputElement;
+    const adcPinEl = document.getElementById("adc-pin") as HTMLInputElement;
+    const scopeCanvas = document.getElementById("adc-scope") as HTMLCanvasElement;
+    const scopeCtx = scopeCanvas.getContext("2d")!;
+    const scopeBuffer: number[] = [];
     const scopeMax = 200;
-    const scopeToggleBtn = document.getElementById("scope-toggle");
-    const scopeClearBtn = document.getElementById("scope-clear");
-    const scopeSourceEl = document.getElementById("scope-source");
-    const scopeIntervalEl = document.getElementById("scope-interval");
-    const scopeSmoothEl = document.getElementById("scope-smooth");
-    const scopeFitEl = document.getElementById("scope-fit");
+    const scopeToggleBtn = document.getElementById("scope-toggle") as HTMLButtonElement;
+    const scopeClearBtn = document.getElementById("scope-clear") as HTMLButtonElement;
+    const scopeSourceEl = document.getElementById("scope-source") as HTMLSelectElement;
+    const scopeIntervalEl = document.getElementById("scope-interval") as HTMLInputElement;
+    const scopeSmoothEl = document.getElementById("scope-smooth") as HTMLInputElement;
+    const scopeFitEl = document.getElementById("scope-fit") as HTMLInputElement;
     let scopeCaptureEnabled = true;
-    const weatherCityEl = document.getElementById("weather-city");
-    const weatherLatEl = document.getElementById("weather-lat");
-    const weatherLonEl = document.getElementById("weather-lon");
-    const weatherTempEl = document.getElementById("weather-temp");
-    const weatherWindEl = document.getElementById("weather-wind");
-    const weatherCodeEl = document.getElementById("weather-code");
-    const weatherPlaceEl = document.getElementById("weather-place");
-    const weatherMsgEl = document.getElementById("weather-msg");
-    let latestWeather = null;
+    const weatherCityEl = document.getElementById("weather-city") as HTMLInputElement;
+    const weatherLatEl = document.getElementById("weather-lat") as HTMLInputElement;
+    const weatherLonEl = document.getElementById("weather-lon") as HTMLInputElement;
+    const weatherTempEl = document.getElementById("weather-temp")!;
+    const weatherWindEl = document.getElementById("weather-wind")!;
+    const weatherCodeEl = document.getElementById("weather-code")!;
+    const weatherPlaceEl = document.getElementById("weather-place")!;
+    const weatherMsgEl = document.getElementById("weather-msg")!;
 
-    function buildUrl(path) {
+    type WeatherData = {
+        temp?: number;
+        wind?: number;
+        code?: number;
+        lat: number;
+        lon: number;
+        place: string;
+    };
+    let latestWeather: WeatherData | null = null;
+
+    function buildUrl(path: string): string | null {
         const host = hostInput.value.trim();
         if (!host) return null;
         return `http://${host}${path}`;
     }
 
-    function setMsg(text) {
+    function setMsg(text: string) {
         msg.textContent = text;
     }
 
-    function setWeatherMsg(text) {
+    function setWeatherMsg(text: string) {
         weatherMsgEl.textContent = text;
     }
 
-    function updateCards(data) {
+    function updateCards(data: any) {
         if (typeof data?.led === "boolean") {
             ledEl.textContent = data.led ? "ON" : "OFF";
             ledEl.className = `mt-1 text-2xl font-semibold ${data.led ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`;
@@ -217,7 +226,7 @@ const { Content } = await render(aboutPost);
         }
     }
 
-    function pushScopePoint(raw) {
+    function pushScopePoint(raw: number) {
         //if (raw === 0) return;
         scopeBuffer.push(raw);
         if (scopeBuffer.length > scopeMax) scopeBuffer.shift();
@@ -282,12 +291,12 @@ const { Content } = await render(aboutPost);
         scopeCtx.stroke();
     }
 
-    function preprocessBuffer(buffer, windowSize) {
+    function preprocessBuffer(buffer: number[], windowSize: number): number[] {
         const medianed = medianFilter(buffer, Math.max(1, Math.min(9, windowSize | 0)));
         return smoothBuffer(medianed, windowSize);
     }
 
-    function smoothBuffer(buffer, windowSize) {
+    function smoothBuffer(buffer: number[], windowSize: number): number[] {
         const size = Math.max(1, windowSize | 0);
         if (size <= 1) return buffer;
         const half = Math.floor(size / 2);
@@ -306,13 +315,13 @@ const { Content } = await render(aboutPost);
         return out;
     }
 
-    function medianFilter(buffer, windowSize) {
+    function medianFilter(buffer: number[], windowSize: number): number[] {
         const size = Math.max(1, windowSize | 0);
         if (size <= 1) return buffer;
         const half = Math.floor(size / 2);
         const out = new Array(buffer.length);
         for (let i = 0; i < buffer.length; i++) {
-            const window = [];
+            const window: number[] = [];
             for (let k = i - half; k <= i + half; k++) {
                 if (k >= 0 && k < buffer.length) window.push(buffer[k]);
             }
@@ -322,16 +331,15 @@ const { Content } = await render(aboutPost);
         return out;
     }
 
-    function drawSpline(buffer, w, h) {
+    function drawSpline(buffer: number[], w: number, h: number) {
         const n = buffer.length;
         if (n < 2) return;
-        const toPoint = (i) => ({
+        const toPoint = (i: number) => ({
             x: (i / (scopeMax - 1)) * w,
             y: h - (buffer[i] / 4095) * h,
         });
 
         const alpha = 0.5; // Catmull-Rom
-        const get = (i) => buffer[Math.max(0, Math.min(n - 1, i))];
 
         let p0 = toPoint(0);
         scopeCtx.moveTo(p0.x, p0.y);
@@ -359,7 +367,6 @@ const { Content } = await render(aboutPost);
         const city = weatherCityEl.value.trim();
         let lat = weatherLatEl.value.trim();
         let lon = weatherLonEl.value.trim();
-
         setWeatherMsg("查询中...");
 
         try {
@@ -425,7 +432,7 @@ const { Content } = await render(aboutPost);
             return;
         }
         const { temp, wind, code, place } = latestWeather;
-        const url = buildUrl(`/weather?temp=${encodeURIComponent(temp)}&wind=${encodeURIComponent(wind)}&code=${encodeURIComponent(code)}&place=${encodeURIComponent(place)}`);
+        const url = buildUrl(`/weather?temp=${encodeURIComponent(String(temp ?? ""))}&wind=${encodeURIComponent(String(wind ?? ""))}&code=${encodeURIComponent(String(code ?? ""))}&place=${encodeURIComponent(place)}`);
         if (!url) {
             setWeatherMsg("请先填写 ESP32 地址");
             return;
@@ -440,7 +447,7 @@ const { Content } = await render(aboutPost);
         }
     }
 
-    async function request(path) {
+    async function request(path: string) {
         const url = buildUrl(path);
         if (!url) {
             setMsg("请先填写 ESP32 地址");
@@ -458,13 +465,13 @@ const { Content } = await render(aboutPost);
         }
     }
 
-    document.getElementById("esp32-status").addEventListener("click", () => request("/status"));
-    document.getElementById("esp32-toggle").addEventListener("click", () => request("/toggle"));
-    document.getElementById("esp32-adc").addEventListener("click", () => request("/adc"));
-    document.getElementById("weather-fetch").addEventListener("click", fetchWeather);
-    document.getElementById("weather-send").addEventListener("click", sendWeatherToEsp32);
+    document.getElementById("esp32-status")!.addEventListener("click", () => request("/status"));
+    document.getElementById("esp32-toggle")!.addEventListener("click", () => request("/toggle"));
+    document.getElementById("esp32-adc")!.addEventListener("click", () => request("/adc"));
+    document.getElementById("weather-fetch")!.addEventListener("click", fetchWeather);
+    document.getElementById("weather-send")!.addEventListener("click", sendWeatherToEsp32);
 
-    let pollTimer = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
     function startPolling() {
         if (!pollEnabledEl.checked) return;
         const interval = Math.max(500, Number(pollIntervalEl.value) || 2000);
@@ -533,7 +540,7 @@ const { Content } = await render(aboutPost);
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
-    let scopeTimer = null;
+    let scopeTimer: ReturnType<typeof setInterval> | null = null;
     let scopeRunning = true;
 
     function startScope() {
@@ -589,9 +596,9 @@ const { Content } = await render(aboutPost);
 
     pollEnabledEl.addEventListener("change", applySettings);
     pollIntervalEl.addEventListener("change", applySettings);
-    document.getElementById("apply-settings").addEventListener("click", () => {
+    document.getElementById("apply-settings")!.addEventListener("click", () => {
         applySettings();
         sendConfig();
     });
-    document.getElementById("save-settings").addEventListener("click", saveSettings);
+    document.getElementById("save-settings")!.addEventListener("click", saveSettings);
 </script>
