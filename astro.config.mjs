@@ -71,6 +71,12 @@ export default defineConfig({
 			themes: [expressiveCodeConfig.darkTheme, expressiveCodeConfig.lightTheme],
 			useDarkModeMediaQuery: false,
 			themeCssSelector: (theme) => `[data-theme='${theme.name}']`,
+			shiki: {
+				// 将 Qt .pro 工程文件映射到 ini/properties 语法
+				langAlias: {
+					pro: "ini",
+				},
+			},
 			plugins: [
 				pluginCollapsibleSections(),
 				pluginLineNumbers(),
@@ -138,7 +144,13 @@ export default defineConfig({
 			remarkMermaid,
 		],
 		rehypePlugins: [
-			rehypeKatex,
+			[
+				rehypeKatex,
+				{
+					// 允许中文等 Unicode 字符出现在数学模式中，避免 KaTeX 严格模式报警
+					strict: false,
+				},
+			],
 			rehypeSlug,
 			rehypeMermaid,
 			[
