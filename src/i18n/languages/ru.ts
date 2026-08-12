@@ -42,6 +42,10 @@ export const ru: Translation = {
 	[Key.postsCount]: "постов",
 
 	[Key.themeColor]: "Цвет темы",
+	// Эффекты
+	[Key.effects]: "Эффекты",
+	[Key.sakuraEffect]: "Сакура",
+	[Key.mouseTrailEffect]: "Шлейф курсора",
 
 	[Key.lightMode]: "Светлая",
 	[Key.darkMode]: "Тёмная",

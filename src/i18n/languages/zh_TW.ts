@@ -40,6 +40,10 @@ export const zh_TW: Translation = {
 	[Key.postsCount]: "篇文章",
 
 	[Key.themeColor]: "主題色",
+	// 特效
+	[Key.effects]: "特效",
+	[Key.sakuraEffect]: "櫻花特效",
+	[Key.mouseTrailEffect]: "滑鼠拖尾",
 
 	[Key.lightMode]: "亮色",
 	[Key.darkMode]: "暗色",

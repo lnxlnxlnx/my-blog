@@ -141,6 +141,3840 @@ URL：&lt;code&gt;/posts/how-to-use-firefly-blog-theme&lt;/code&gt;&lt;/p&gt;
 &lt;li&gt;如果多个文章使用相同的 slug，后面的文章会覆盖前面的&lt;/li&gt;
 &lt;li&gt;Slug 会自动转换为小写&lt;/li&gt;
 &lt;/ul&gt;
+</content:encoded></item><item><title>五子棋 AI 难度实现说明</title><link>https://lnxlnxlnx.github.io/posts/ai%E5%BA%94%E7%94%A8/%E4%BA%94%E5%AD%90%E6%A3%8Bai%E9%9A%BE%E5%BA%A6%E5%AE%9E%E7%8E%B0%E8%AF%B4%E6%98%8E/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/ai%E5%BA%94%E7%94%A8/%E4%BA%94%E5%AD%90%E6%A3%8Bai%E9%9A%BE%E5%BA%A6%E5%AE%9E%E7%8E%B0%E8%AF%B4%E6%98%8E/</guid><description>经典启发式评估 + 搜索算法实现三档 AI 难度，非强化学习。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;五子棋 AI 难度实现说明&lt;/h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;位置：&lt;code&gt;qt_dev/gobang/engine/ai_player.{h,cpp}&lt;/code&gt;
+运行环境：iMX6ULL（Cortex-A7 单核 528MHz，256MB DDR），Qt 5.12.9
+结论先行：&lt;strong&gt;不是强化学习&lt;/strong&gt;，而是经典的「启发式评估 + 搜索」算法。三档难度靠「计算深度」和「随机性」区分。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;1. 整体流程&lt;/h2&gt;
+&lt;p&gt;AI 每次落子都走同一条主路径（&lt;code&gt;AiPlayer::bestMove&lt;/code&gt;）：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;生成候选点&lt;/strong&gt; —— 只在已有棋子的 2 格邻域内找空点，不做全棋盘扫描&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;必胜/必防检查&lt;/strong&gt; —— 自己能五连必下；对方能五连必堵（所有难度共用）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;难度分支&lt;/strong&gt; —— 按难度档用不同策略选落点&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code&gt;bestMove()
+  │
+  ├─ 1. candidates()            候选点(棋子周围 2 格)
+  ├─ 2. makesFive(AI)           能赢就赢
+  ├─ 3. makesFive(对手)          必堵就堵
+  └─ 4. 难度分支
+        ├─ Easy   : 启发式打分 + 前5名随机
+        ├─ Normal : 启发式打分取最高(防守权重大)
+        └─ Hard   : alpha-beta 搜索 2 层(取前8候选)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;2. 候选点生成&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;candidates()&lt;/code&gt;（&lt;code&gt;ai_player.cpp:93&lt;/code&gt;）&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;开局（棋盘为空）→ 返回天元 &lt;code&gt;(9, 9)&lt;/code&gt;，即棋盘中心&lt;/li&gt;
+&lt;li&gt;之后 → 遍历每个已有棋子，收集其&lt;strong&gt;半径 2 格&lt;/strong&gt;内的空交叉点&lt;/li&gt;
+&lt;li&gt;目的：五子棋的好点必然贴着已有棋子，这能把候选从 &lt;code&gt;361&lt;/code&gt; 个压缩到几十个，大幅减少评估与搜索量&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;3. 棋形评估函数&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;patternScore()&lt;/code&gt;（&lt;code&gt;ai_player.cpp:30&lt;/code&gt;）&lt;/p&gt;
+&lt;p&gt;想象某色子落在候选点 &lt;code&gt;(x, y)&lt;/code&gt;，沿水平、垂直、两条斜线共 &lt;strong&gt;4 个方向&lt;/strong&gt;，各数出：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;len&lt;/code&gt; —— 该方向上的连子数（含想象的那颗子）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;openEnds&lt;/code&gt; —— 两端还能继续下棋的开放端数（0/1/2）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;按棋形查表打分，取四个方向的最大值：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;棋形&lt;/th&gt;
+&lt;th&gt;len&lt;/th&gt;
+&lt;th&gt;openEnds&lt;/th&gt;
+&lt;th&gt;分值&lt;/th&gt;
+&lt;th&gt;含义&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;五连&lt;/td&gt;
+&lt;td&gt;≥5&lt;/td&gt;
+&lt;td&gt;任意&lt;/td&gt;
+&lt;td&gt;10000000&lt;/td&gt;
+&lt;td&gt;必胜，最高优先级&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;活四&lt;/td&gt;
+&lt;td&gt;4&lt;/td&gt;
+&lt;td&gt;2&lt;/td&gt;
+&lt;td&gt;100000&lt;/td&gt;
+&lt;td&gt;双端开放，对手必堵&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;冲四&lt;/td&gt;
+&lt;td&gt;4&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;10000&lt;/td&gt;
+&lt;td&gt;单端开放，形成威胁&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;活三&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;td&gt;2&lt;/td&gt;
+&lt;td&gt;1000&lt;/td&gt;
+&lt;td&gt;下一步能成活四&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;冲三&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;100&lt;/td&gt;
+&lt;td&gt;受一端限制的三连&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;活二&lt;/td&gt;
+&lt;td&gt;2&lt;/td&gt;
+&lt;td&gt;2&lt;/td&gt;
+&lt;td&gt;10&lt;/td&gt;
+&lt;td&gt;潜在进攻起点&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;冲二&lt;/td&gt;
+&lt;td&gt;2&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;弱威胁&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;code&gt;makesFive()&lt;/code&gt; 即判断 &lt;code&gt;patternScore &amp;gt;= WIN_SCORE&lt;/code&gt;，用于必胜/必防检查。&lt;/p&gt;
+&lt;h2&gt;4. 三档难度&lt;/h2&gt;
+&lt;h3&gt;通用前置（所有难度）&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;遍历候选点，若 AI 自己落子能成五连 → 直接选该点（&lt;strong&gt;必赢先赢&lt;/strong&gt;）&lt;/li&gt;
+&lt;li&gt;遍历候选点，若对手落子能成五连 → 选该点堵住（&lt;strong&gt;必防&lt;/strong&gt;）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;简单 Easy&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;每个候选点打分：&lt;code&gt;score = 攻分 × 5 + 守分 × 3&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;按分数从高到低排序后，&lt;strong&gt;在前 5 名里随机挑一个&lt;/strong&gt;（&lt;code&gt;std::rand&lt;/code&gt;，构造函数里 &lt;code&gt;srand(time)&lt;/code&gt; 保证每次启动序列不同）&lt;/li&gt;
+&lt;li&gt;效果：棋力弱且不固定，偶尔走出臭棋，适合新手体验&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;普通 Normal&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;每个候选点打分：&lt;code&gt;score = 攻分 × 8 + 守分 × 10&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;防守权重（&lt;code&gt;×10&lt;/code&gt;）高于进攻（&lt;code&gt;×8&lt;/code&gt;），优先堵对方&lt;/li&gt;
+&lt;li&gt;直接取&lt;strong&gt;最高分&lt;/strong&gt;的候选点&lt;/li&gt;
+&lt;li&gt;效果：贪心的一步棋，看一步，棋力中等&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;困难 Hard&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;先按 &lt;code&gt;攻分 + 守分 × 10&lt;/code&gt; 排序候选，&lt;strong&gt;只保留前 8 个&lt;/strong&gt;（限制单核耗时）&lt;/li&gt;
+&lt;li&gt;对每个候选：模拟落子 → 递归 &lt;code&gt;alphaBeta()&lt;/code&gt; 搜索剩余 &lt;strong&gt;1 层&lt;/strong&gt;（即总共看 2 步）&lt;/li&gt;
+&lt;li&gt;每层同样只展开启发式前 8 个候选&lt;/li&gt;
+&lt;li&gt;叶子评估：&lt;code&gt;攻分 - 守分 × 10&lt;/code&gt;（从 AI 视角）&lt;/li&gt;
+&lt;li&gt;取「我方落子后、对手最佳回应之下」局面最优的候选点&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;alpha-beta 剪枝&lt;/strong&gt;（&lt;code&gt;alphaBeta()&lt;/code&gt;，&lt;code&gt;ai_player.cpp:145&lt;/code&gt;）：在极大极小搜索里，一旦发现某分支不可能比已找到的更优（&lt;code&gt;alpha &amp;gt;= beta&lt;/code&gt;），立即剪掉，不再展开，从而在有限算力下把同样的深度搜索得更快。&lt;/p&gt;
+&lt;h2&gt;5. 为什么不用强化学习&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;方面&lt;/th&gt;
+&lt;th&gt;本实现（启发式+搜索）&lt;/th&gt;
+&lt;th&gt;强化学习&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;运行开销&lt;/td&gt;
+&lt;td&gt;每步毫秒级，单核 528MHz 无压力&lt;/td&gt;
+&lt;td&gt;需要神经网络前向推理，嵌入式吃力&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;是否需要训练&lt;/td&gt;
+&lt;td&gt;否，棋理由人直接写成公式&lt;/td&gt;
+&lt;td&gt;需要海量对局 + 训练时间&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;棋力上限&lt;/td&gt;
+&lt;td&gt;中等（看 1~2 步）&lt;/td&gt;
+&lt;td&gt;可达到很高，但成本高&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;适用场景&lt;/td&gt;
+&lt;td&gt;游戏内嵌 AI、板卡演示&lt;/td&gt;
+&lt;td&gt;大规模离线训练后再部署&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;五子棋的棋形有限（连子、开放端、攻防），手写评估函数在 528MHz 上就能达到&quot;能堵、能赢、有点思考&quot;的效果，满足人机对战需求，因此没有引入强化学习。&lt;/p&gt;
+&lt;h2&gt;6. 相关测试&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;引擎：&lt;code&gt;qt_dev/gobang/engine/tests/&lt;/code&gt;（QtTest，host / ARM 均可编译运行）&lt;/li&gt;
+&lt;li&gt;AI 关键用例（&lt;code&gt;TestAiPlayer&lt;/code&gt;）：
+&lt;ul&gt;
+&lt;li&gt;三档难度都只返回合法落子&lt;/li&gt;
+&lt;li&gt;可一步获胜时必选获胜点&lt;/li&gt;
+&lt;li&gt;对手有必杀时优先防守&lt;/li&gt;
+&lt;li&gt;困难档自弈 10 回合保持落子合法&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;运行方式：&lt;code&gt;cd qt_dev/gobang/engine/tests &amp;amp;&amp;amp; qmake &amp;amp;&amp;amp; make &amp;amp;&amp;amp; ./test_gobang&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;7. 如果想继续调&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;加深困难档&lt;/strong&gt;：把 &lt;code&gt;HARD_DEPTH&lt;/code&gt; 从 2 改 3/4（每深一层耗时成倍增加，528MHz 需谨慎）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;调整攻防权重&lt;/strong&gt;：改 &lt;code&gt;Normal&lt;/code&gt; 的 &lt;code&gt;defMul&lt;/code&gt;、&lt;code&gt;Easy&lt;/code&gt; 的 &lt;code&gt;×5/×3&lt;/code&gt;、&lt;code&gt;Hard&lt;/code&gt; 的 &lt;code&gt;×10&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;调整棋形分值&lt;/strong&gt;：改 &lt;code&gt;OPEN_FOUR/FOUR/OPEN_THREE/...&lt;/code&gt; 常量表&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;候选广度&lt;/strong&gt;：改 &lt;code&gt;HARD_TOP&lt;/code&gt;（Hard 每层展开数）与候选邻域半径（&lt;code&gt;candidates()&lt;/code&gt; 里的 &lt;code&gt;±2&lt;/code&gt;）&lt;/li&gt;
+&lt;/ul&gt;
+</content:encoded></item><item><title>格斗游戏 AI 实现说明</title><link>https://lnxlnxlnx.github.io/posts/ai%E5%BA%94%E7%94%A8/%E6%A0%BC%E6%96%97%E6%B8%B8%E6%88%8Fai%E5%AE%9E%E7%8E%B0%E8%AF%B4%E6%98%8E/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/ai%E5%BA%94%E7%94%A8/%E6%A0%BC%E6%96%97%E6%B8%B8%E6%88%8Fai%E5%AE%9E%E7%8E%B0%E8%AF%B4%E6%98%8E/</guid><description>格斗游戏（openmugen 风格）AI 的实现思路与说明。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;格斗游戏 AI 实现说明&lt;/h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;位置：&lt;code&gt;qt_dev/mytest/FightGame.qml&lt;/code&gt;（2 人格斗，Canvas 绘制，P1 手柄 + P2 AI）
+结论先行：&lt;strong&gt;不是强化学习，也不是决策树/状态机&lt;/strong&gt;，而是&lt;strong&gt;纯手写的距离阈值 + 随机策略&lt;/strong&gt;。AI 每帧读对手位置，按距离分档决定&quot;靠近 / 后退 / 出手 / 发呆&quot;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;1. 总体结构&lt;/h2&gt;
+&lt;p&gt;游戏主循环（&lt;code&gt;Timer&lt;/code&gt; 16ms）每帧依次调用：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;onTriggered()
+  ├─ p1Input()      P1 读手柄(摇杆/A/B/X)
+  ├─ p2AI()         本文主角:P2 决策
+  ├─ updateFighter()  物理/状态更新(含攻击判定框生成)
+  ├─ checkAttacks()   攻击矩形碰撞检测
+  └─ canvas.requestPaint()  重绘
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;2. AI 决策逻辑&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;p2AI()&lt;/code&gt;（优化后，&lt;code&gt;FightGame.qml:74&lt;/code&gt;）只有两段：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;第一段 —— 面向与距离判定&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;var dx = p1.x - p2.x
+var dist = Math.abs(dx)
+if (p2.state !== &quot;idle&quot; &amp;amp;&amp;amp; p2.state !== &quot;walk&quot;) return   // 出招/跳跃中不重新决策
+p2.vx = 0
+p2.facing = dx &amp;gt; 0 ? 1 : -1    // 始终面向对手
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;第二段 —— 按距离三档决策&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;距离区间&lt;/th&gt;
+&lt;th&gt;行为&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;dist &amp;gt; 68&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;朝对手走（&lt;code&gt;vx = ±2.8&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;dist &amp;lt; 38&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;后退拉开（&lt;code&gt;vx = ∓1.8&lt;/code&gt;），避免贴身无攻击空间&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;38 ≤ dist ≤ 68&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;攻击冷却好了就 80% 概率出拳/踢，20% 犹豫&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;关键常量：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;ATK_DIST = 68&lt;/code&gt; —— 攻击判定框实际有效射程（见下节推导）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;BACK_DIST = 38&lt;/code&gt; —— 过近后退阈值&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;atkCd = 42&lt;/code&gt; —— 攻击硬直帧（出招后 42 帧内不再出手）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;3. 攻击距离怎么来的&lt;/h2&gt;
+&lt;p&gt;AI 出拳的判定框（&lt;code&gt;updateFighter&lt;/code&gt; 中生成）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;x: f.x + (f.facing &amp;gt; 0 ? f.w - 12 : -reach),   // 右向: f.x + 28
+w: reach                                        // reach = 44
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;面向右时，判定框覆盖 &lt;code&gt;[f.x+28, f.x+28+44] = [f.x+28, f.x+72]&lt;/code&gt;。
+对手身体在 &lt;code&gt;[p1.x, p1.x+40]&lt;/code&gt;。命中条件是两者相交：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;p2.x + 28 &amp;lt; p1.x + 40  →  p1.x &amp;gt; p2.x - 12
+p2.x + 72 &amp;gt; p1.x       →  p1.x &amp;lt; p2.x + 72
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;即 &lt;strong&gt;&lt;code&gt;dist &amp;lt; 72&lt;/code&gt; 出手必中&lt;/strong&gt;。代码取 &lt;code&gt;ATK_DIST = 68&lt;/code&gt; 留了 4px 余量，保证 AI 出手不会打空。&lt;/p&gt;
+&lt;h2&gt;4. 攻击/命中细节&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;伤害&lt;/strong&gt;：AI 拳 6、脚 9（P1 是 12/16，玩家占优）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;射程&lt;/strong&gt;：AI 44px（P1 62px，玩家更长）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;攻击判定时机&lt;/strong&gt;：&lt;code&gt;atkDur&lt;/code&gt; 在 4~12 帧之间生成判定框，出招中段生效&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;命中效果&lt;/strong&gt;：扣血 + &lt;code&gt;hitFlash&lt;/code&gt; 闪白 + 击退（&lt;code&gt;vx = attacker.facing * 3&lt;/code&gt;，位移 12px）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;胜负&lt;/strong&gt;：血 ≤ 0 判定，弹结束遮罩（A 再来一局 / B 返回）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;5. 本次优化改了什么&lt;/h2&gt;
+&lt;p&gt;原版把 AI 做得&quot;笨&quot;靠的是&lt;strong&gt;一堆随机多余动作&lt;/strong&gt;，已移除：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;原问题&lt;/th&gt;
+&lt;th&gt;问题分析&lt;/th&gt;
+&lt;th&gt;处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;出手距离用 &lt;code&gt;dist &amp;lt; 85&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;实际判定框只到 72px，85 内出手必打空&lt;/td&gt;
+&lt;td&gt;改为精确的 &lt;code&gt;ATK_DIST = 68&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;AI 30% 挥空（&lt;code&gt;miss&lt;/code&gt;）&lt;/td&gt;
+&lt;td&gt;距离对了也随机打不中，纯浪费&lt;/td&gt;
+&lt;td&gt;删除挥空逻辑&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;r &amp;lt; 0.1&lt;/code&gt; 乱跳&lt;/td&gt;
+&lt;td&gt;跳起后不攻击、还脱离距离&lt;/td&gt;
+&lt;td&gt;删除 AI 跳跃&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;接近时 30% 概率后退/绕圈&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;dist &amp;gt; 140&lt;/code&gt; 时后退越走越远，毫无意义&lt;/td&gt;
+&lt;td&gt;删除，靠近就是靠近&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;出手概率仅 45%&lt;/td&gt;
+&lt;td&gt;大部分时间发呆&lt;/td&gt;
+&lt;td&gt;提高到 80%&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;未显式面向对手&lt;/td&gt;
+&lt;td&gt;站定时可能朝反方向出招&lt;/td&gt;
+&lt;td&gt;决策前强制 &lt;code&gt;facing&lt;/code&gt; 指向对手&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;优化后 AI 行为：&quot;远离→靠近、贴脸→拉开、射程内→果断出手&quot;，不再有打空、乱跳、反向出招等冗余动作，同时保留 20% 犹豫和 42 帧硬直，不会无脑连击。&lt;/p&gt;
+&lt;h2&gt;6. 为什么不叫&quot;AI 算法&quot;&lt;/h2&gt;
+&lt;p&gt;这里的 &lt;code&gt;p2AI()&lt;/code&gt; 严格说是&lt;strong&gt;规则脚本&lt;/strong&gt;，不是算法：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;没有搜索（不像五子棋的 alpha-beta）&lt;/li&gt;
+&lt;li&gt;没有学习（不是强化学习）&lt;/li&gt;
+&lt;li&gt;没有状态机抽象（就是几个 &lt;code&gt;if/else&lt;/code&gt; 距离分支）&lt;/li&gt;
+&lt;li&gt;决策输入只有&lt;strong&gt;一个变量&lt;/strong&gt;：距离 &lt;code&gt;dist&lt;/code&gt;（+ 随机数 + 冷却计时）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它适合这个场景：格斗 AI 的对手只是让玩家有个能打的陪练，规则够用、零训练成本、单核实时跑无压力。&lt;/p&gt;
+&lt;h2&gt;7. 如果想继续调&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;强度&lt;/strong&gt;：改 &lt;code&gt;ATK_DIST&lt;/code&gt;（攻击范围）、&lt;code&gt;Math.random() &amp;lt; 0.8&lt;/code&gt;（出手概率）、&lt;code&gt;atkCd = 42&lt;/code&gt;（攻击间隔）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;行为&lt;/strong&gt;：加状态机（压迫/防守/反击），或检测 P1 出招后闪避/格挡&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;公平性&lt;/strong&gt;：目前玩家伤害/射程都占优，改 &lt;code&gt;dmg&lt;/code&gt; 和 &lt;code&gt;reach&lt;/code&gt; 可平衡&lt;/li&gt;
+&lt;/ul&gt;
+</content:encoded></item><item><title>Qt 开发学习笔记：00-总览</title><link>https://lnxlnxlnx.github.io/posts/qt/00-%E6%80%BB%E8%A7%88/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/00-%E6%80%BB%E8%A7%88/</guid><description>基于正点原子 IMX6ULL + qt_dev 项目的 Qt 开发学习笔记总览与文档目录。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;Qt 开发学习笔记（基于正点原子 IMX6ULL + qt_dev 项目）&lt;/h1&gt;
+&lt;p&gt;本系列文档基于本仓库 &lt;code&gt;qt_dev/&lt;/code&gt; 目录下的全部应用源码，面向 &lt;strong&gt;Qt 初学者&lt;/strong&gt;，用&lt;strong&gt;实际例子&lt;/strong&gt;讲解 Qt/QML 的组件、用法、结构，以及&lt;strong&gt;嵌入式硬件交互&lt;/strong&gt;（区别于普通 PC 端 Qt）。&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;板卡：正点原子 IMX6ULL（Cortex-A7 单核 528MHz，Yocto Qt 5.12.9，linuxfb 显示）
+入口：桌面 systemui 点击图标启动各 App&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;文档目录&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;文件&lt;/th&gt;
+&lt;th&gt;内容&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/01-%E5%B7%A5%E7%A8%8B%E4%B8%8E%E6%A1%86%E6%9E%B6/&quot;&gt;01-工程与框架.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;系统架构、.pro 工程、systemui 桌面框架、remoteobjects 通信、编译部署&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/02-QML%E6%A0%B8%E5%BF%83%E7%BB%84%E4%BB%B6/&quot;&gt;02-QML核心组件.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;QML 语法、布局、常用组件与 API、动画、Canvas、Loader&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/03-QML%E4%B8%8EC++%E4%BA%A4%E4%BA%92/&quot;&gt;03-QML与C++交互.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;qmlRegisterType/contextProperty、Q_PROPERTY、信号槽、多线程&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/04-%E7%A1%AC%E4%BB%B6%E4%BA%A4%E4%BA%92/&quot;&gt;04-硬件交互.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;GPIO、按键、传感器、摄像头、音频、触摸屏、虚拟键盘&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/05-%E7%BD%91%E7%BB%9C%E9%80%9A%E4%BF%A1/&quot;&gt;05-网络通信.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;MQTT、TCP 投屏、Qt RemoteObjects、Unix Socket 手柄通信&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/06-%E5%9B%BE%E5%BD%A2%E6%95%88%E6%9E%9C%E4%B8%8E3D/&quot;&gt;06-图形效果与3D.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;QtGraphicalEffects、Qt 3D 仪表盘、Material/Fluid 主题&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;a href=&quot;/my-blog/posts/Qt/07-App%E5%AE%9E%E6%88%98%E8%A7%A3%E6%9E%90/&quot;&gt;07-App实战解析.md&lt;/a&gt;&lt;/td&gt;
+&lt;td&gt;逐个 App 的组件清单、结构、关键代码逐行讲解&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;快速了解 qt_dev 里有什么&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;qt_dev/
+├── systemui/        桌面系统（窗口管理、启动 App、任务栏）
+├── client/          App 公共框架（Client.qml + systemuicommonapiclient）
+├── server/          systemui 的服务端（remoteobjects 通信）
+├── Repcs/           remoteobjects 的 .rep 接口定义
+├── audio/           音频分析（录音 + 波形）
+├── background/      壁纸设置
+├── beep/            蜂鸣器控制
+├── camera/          摄像头预览/拍照
+├── clock/           时钟
+├── dashboard/       Qt 3D 仪表盘
+├── fileview/        文件浏览
+├── fluid_demo/      Fluid 组件库演示
+├── iot_control/     MQTT 智能控制（远程开关灯）
+├── keil/            Keil 编程器
+├── key/             按键检测
+├── led/             LED 控制（GPIO）
+├── location/        传感器定位
+├── music/           音乐播放
+├── mytest/          小游戏集合（拼图/扫雷/手写识别/手柄游戏）
+├── notepad/         记事本（虚拟键盘）
+├── openhome/        Widgets 版首页（唯一 QWidget 示例）
+├── pcba/            PCBA 测试
+├── photoview/       图片浏览器
+├── player/          视频播放
+├── screenview/      Widgets + TCP 投屏
+├── sensor/          传感器（光感/陀螺仪）
+├── settings/        系统设置（WiFi/蓝牙）
+└── template/        App 空白模板（复制它开始新 App）
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;三个最基础的概念&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;App 由 C++ 启动 + QML 画界面&lt;/strong&gt;：&lt;code&gt;main.cpp&lt;/code&gt; 创建 &lt;code&gt;QQmlApplicationEngine&lt;/code&gt; 加载 &lt;code&gt;main.qml&lt;/code&gt;，界面全部用 QML 写。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;C++ 给 QML 提供能力&lt;/strong&gt;：摄像头、GPIO、网络等底层能力用 C++ 实现，通过 &lt;code&gt;qmlRegisterType&lt;/code&gt; 或 &lt;code&gt;contextProperty&lt;/code&gt; 暴露给 QML 调用。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;App 嵌入 systemui 桌面&lt;/strong&gt;：每个 App 的 &lt;code&gt;AppMainBody.qml&lt;/code&gt; 是入口界面，通过 &lt;code&gt;client/Client.qml&lt;/code&gt; 与 systemui 协调显示（隐藏桌面、返回按钮、退出）。&lt;/li&gt;
+&lt;/ol&gt;
+</content:encoded></item><item><title>Qt 开发：01 工程与系统框架</title><link>https://lnxlnxlnx.github.io/posts/qt/01-%E5%B7%A5%E7%A8%8B%E4%B8%8E%E6%A1%86%E6%9E%B6/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/01-%E5%B7%A5%E7%A8%8B%E4%B8%8E%E6%A1%86%E6%9E%B6/</guid><description>Qt 工程结构、.pro 配置、systemui 桌面框架、remoteobjects 通信与编译部署。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;01 工程与系统框架&lt;/h1&gt;
+&lt;p&gt;本章回答三个问题：&lt;strong&gt;一个 App 的工程文件长什么样&lt;/strong&gt;、&lt;strong&gt;App 如何被 systemui 桌面启动&lt;/strong&gt;、&lt;strong&gt;App 之间如何通信&lt;/strong&gt;。&lt;/p&gt;
+&lt;h2&gt;1. 工程结构（.pro / qml.qrc / main.cpp）&lt;/h2&gt;
+&lt;p&gt;以最简单的 &lt;code&gt;template/&lt;/code&gt;（App 空白模板）为例：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;template/
+├── template.pro       # 工程文件(qmake 用)
+├── main.cpp           # C++ 入口(启动 QML 引擎)
+├── main.qml           # 顶层窗口
+├── AppMainBody.qml    # App 主界面(桌面加载的就是它)
+├── qml.qrc            # 资源清单(哪些 QML/图片打包进程序)
+└── icons/             # 图标
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;template.pro&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;QT       += quick                     # 使用 Qt Quick(QML)
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets   # Qt5 才加 widgets
+TARGET = template                      # 生成的可执行文件名
+TEMPLATE = app
+CONFIG += c++11
+SOURCES += main.cpp                    # C++ 源文件
+HEADERS +=                             # C++ 头文件
+RESOURCES += qml.qrc                   # 资源文件
+include(../client/client.pri)          # 引入公共框架(后面讲)
+INCLUDEPATH += ../client
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;&lt;code&gt;.pro&lt;/code&gt; 里的 &lt;code&gt;QT +=&lt;/code&gt; 行就是&quot;我要用哪些 Qt 模块&quot;&lt;/strong&gt;。qt_dev 各 App 用到的模块：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;模块&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;th&gt;用到它的 App&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;quick&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;QML 界面&lt;/td&gt;
+&lt;td&gt;几乎所有&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;multimedia&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;摄像头/音频/视频&lt;/td&gt;
+&lt;td&gt;camera, music, player, audio&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;network&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;网络(TCP/套接字)&lt;/td&gt;
+&lt;td&gt;iot_control, screenview, mytest&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;remoteobjects&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;进程间通信(桌面框架)&lt;/td&gt;
+&lt;td&gt;systemui, 所有 App 的 client.pri&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;virtualkeyboard&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;屏幕虚拟键盘&lt;/td&gt;
+&lt;td&gt;mytest, notepad, settings&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;svg&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;SVG 矢量图&lt;/td&gt;
+&lt;td&gt;iot_control, fluid_demo&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;quickcontrols2&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Qt Quick Controls 2 组件库&lt;/td&gt;
+&lt;td&gt;fluid_demo&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;3dcore/3drender/3dinput&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Qt 3D&lt;/td&gt;
+&lt;td&gt;dashboard&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;widgets&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;传统 Widgets 界面&lt;/td&gt;
+&lt;td&gt;openhome, screenview&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;blockquote&gt;
+&lt;p&gt;内存小技巧：&lt;code&gt;QT +=&lt;/code&gt; 决定链接哪些 &lt;code&gt;libQt5Xxx.so&lt;/code&gt;，缺了就编译报错。板子 Qt 5.12.9 完整版都装了。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3&gt;main.cpp —— C++ 入口&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QGuiApplication&amp;gt;
+#include &amp;lt;QQmlApplicationEngine&amp;gt;
+#include &amp;lt;QQmlContext&amp;gt;
+#include &quot;systemuicommonapiclient.h&quot;     // 公共框架:与桌面通信
+
+int main(int argc, char *argv[])
+{
+    QGuiApplication app(argc, argv);
+    qmlRegisterType&amp;lt;SystemUICommonApiClient&amp;gt;(&quot;com.alientek.qmlcomponents&quot;, 1, 0,
+                                              &quot;SystemUICommonApiClient&quot;);
+    QQmlApplicationEngine engine;
+    engine.rootContext()-&amp;gt;setContextProperty(&quot;appCurrtentDir&quot;,
+                                             QCoreApplication::applicationDirPath());
+    engine.load(QUrl(QStringLiteral(&quot;qrc:/main.qml&quot;)));   // 加载 QML
+    return app.exec();                   // 进入事件循环
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;要点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;QGuiApplication&lt;/code&gt;（无 widgets）或 &lt;code&gt;QApplication&lt;/code&gt;（有 widgets）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;qmlRegisterType&amp;lt;Xxx&amp;gt;(&quot;模块名&quot;,1,0,&quot;类型名&quot;)&lt;/code&gt; → QML 里就能 &lt;code&gt;import com.alientek.qmlcomponents 1.0&lt;/code&gt; 然后 &lt;code&gt;Xxx {}&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;engine.rootContext()-&amp;gt;setContextProperty(&quot;名字&quot;, 对象指针)&lt;/code&gt; → QML 里直接用这个名字&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;qrc:/main.qml&lt;/code&gt; 指从资源文件加载&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;qml.qrc —— 资源清单&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;&amp;lt;RCC&amp;gt;
+    &amp;lt;qresource prefix=&quot;/&quot;&amp;gt;
+        &amp;lt;file&amp;gt;main.qml&amp;lt;/file&amp;gt;
+        &amp;lt;file&amp;gt;AppMainBody.qml&amp;lt;/file&amp;gt;
+        &amp;lt;file&amp;gt;icons/xxx.png&amp;lt;/file&amp;gt;
+    &amp;lt;/qresource&amp;gt;
+&amp;lt;/RCC&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;编译后 QML 文件、图片都被&lt;strong&gt;打包进可执行文件&lt;/strong&gt;（&lt;code&gt;qrc_qml.cpp&lt;/code&gt;），程序里用 &lt;code&gt;qrc:/xxx.png&lt;/code&gt; 访问。好处：单文件部署，不依赖外部文件。&lt;/p&gt;
+&lt;h2&gt;2. main.qml —— 顶层窗口&lt;/h2&gt;
+&lt;p&gt;所有 QML App 的 main.qml 结构几乎一样：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick 2.12
+import QtQuick.Window 2.12
+import QtQuick.VirtualKeyboard 2.4        // 需要虚拟键盘的 App
+import com.alientek.qmlcomponents 1.0
+
+Window {
+    visible: true
+    width: Screen.desktopAvailableWidth     // 全屏
+    height: Screen.desktopAvailableHeight
+    id: window
+    x: 0
+    y: 0
+    color: &quot;transparent&quot;
+
+    Client { programmerName: &quot;template&quot; }   // 公共框架:与桌面通信+悬浮返回按钮
+
+    InputPanel {                             // 虚拟键盘(可选)
+        id: inputPanel
+        z: 99
+        width: window.width
+        states: State { ... }                 // 弹出动画
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;&lt;code&gt;Client&lt;/code&gt; 是关键&lt;/strong&gt;：它来自 &lt;code&gt;client/Client.qml&lt;/code&gt;（公共框架），做了两件事：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;与 systemui 通信（收到&quot;显示&quot;命令就显示本窗口，收到&quot;退出&quot;就退出）&lt;/li&gt;
+&lt;li&gt;画一个可拖动的&lt;strong&gt;悬浮返回球&lt;/strong&gt;（点击回桌面）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;3. AppMainBody —— App 的真正入口界面&lt;/h2&gt;
+&lt;p&gt;桌面启动 App 后，&lt;code&gt;Client&lt;/code&gt; 内部会实例化 &lt;code&gt;AppMainBody.qml&lt;/code&gt;（这是约定：&lt;strong&gt;每个 App 必须有 AppMainBody.qml&lt;/strong&gt;）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Item {
+    anchors.fill: parent
+    property real scaleFactor: window.width / 1024   // 按屏幕宽度缩放
+
+    Loader {           // 动态加载实际界面
+        active: true
+        asynchronous: true
+        anchors.fill: parent
+        source: &quot;MainLayout.qml&quot;    // 实际界面文件
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;4. 桌面框架（systemui）与 remoteobjects&lt;/h2&gt;
+&lt;h3&gt;4.1 三进程协作&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;┌──────────────┐  QtRemoteObjects  ┌──────────────┐
+│  systemui    │◄─────────────────►│   App 进程    │
+│ (桌面/窗口管理)│  local:interfaces │ (camera/led…) │
+└──────────────┘                    └──────────────┘
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;systemui&lt;/strong&gt; 是服务端（&lt;code&gt;server/systemuicommonapiserver.cpp&lt;/code&gt;），注册了 &lt;code&gt;SystemUICommonApi&lt;/code&gt; 接口&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;每个 App&lt;/strong&gt; 通过 &lt;code&gt;client/systemuicommonapiclient.cpp&lt;/code&gt; 连接同一个接口&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.2 接口定义（Repcs/systemuicommonapi.rep）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;class SystemUICommonApi
+{
+    SIGNAL(serverSendVariant(const QByteArray &amp;amp;ba))   // 服务端 -&amp;gt; 客户端
+    SLOT(void onServerVariant(const QByteArray &amp;amp;ba))  // 客户端 -&amp;gt; 服务端
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Qt RemoteObjects 根据 &lt;code&gt;.rep&lt;/code&gt; 生成 &lt;code&gt;replica&lt;/code&gt;（客户端）和 &lt;code&gt;source&lt;/code&gt;（服务端），两端通过 &lt;code&gt;QByteArray&lt;/code&gt; 传&lt;strong&gt;序列化的消息字典&lt;/strong&gt;（键值对：appName、appState、command…）。&lt;/p&gt;
+&lt;h3&gt;4.3 App 如何让桌面隐藏自己&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;client/Client.qml&lt;/code&gt; 中：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;SystemUICommonApiClient {
+    id: systemUICommonApiClient
+    appName: programmerName
+    onActionCommand: {
+        if (cmd === SystemUICommonApiClient.Show) {
+            // 桌面要显示了 -&amp;gt; 请求桌面把自己藏起来
+            systemUICommonApiClient.askSystemUItohideOrShow(SystemUICommonApiClient.Hide)
+            appMainBody.visible = true
+            window.show()
+        }
+        if (cmd === SystemUICommonApiClient.Quit)
+            Qt.quit()
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;流程：&lt;strong&gt;桌面点击图标 → systemui 启动 App 进程 → App 回报&quot;Active&quot; → systemui 隐藏桌面 → App 显示&lt;/strong&gt;。这就是为什么从桌面进入 App 时桌面会&quot;缩回去&quot;。&lt;/p&gt;
+&lt;h3&gt;4.4 桌面 cfg 文件（App 列表）&lt;/h3&gt;
+&lt;p&gt;systemui 从 &lt;code&gt;/opt/ui/src/ATK-IMX6U/apk1.cfg&lt;/code&gt; 等文件读 App 列表，每行：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;appicons/puzzle.png 游戏 mytest
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;格式：&lt;code&gt;图标路径 显示名 程序名&lt;/code&gt;。程序名对应 &lt;code&gt;/opt/ui/src/apps/&amp;lt;程序名&amp;gt;&lt;/code&gt; 可执行文件。想给桌面加 App，就把二进制放进 &lt;code&gt;apps/&lt;/code&gt; 并在 cfg 加一行。&lt;/p&gt;
+&lt;h2&gt;5. 编译与部署&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;# 交叉编译(在 PC 上)
+source /opt/fsl-imx-x11/4.1.15-2.1.0/environment-setup-cortexa7hf-neon-poky-linux-gnueabi
+cd qt_dev/template
+qmake template.pro
+make -j16
+
+# 传输到板子(本仓库脚本)
+python3 my_code/appflash.py transfer qt_dev/template/template /opt/ui/src/apps/template
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;板端运行环境变量（&lt;code&gt;/etc/profile&lt;/code&gt; 已设）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;export QT_QPA_PLATFORM=linuxfb:tty=/dev/fb0   # 用 framebuffer 显示
+export QT_QPA_FB_TSLIB=1                        # 启用 tslib 触摸屏
+export TSLIB_TSDEVICE=/dev/input/event1        # 触摸屏设备
+export QT_QPA_FONTDIR=/usr/share/fonts/ttf     # 字体目录
+&lt;/code&gt;&lt;/pre&gt;
+</content:encoded></item><item><title>Qt 开发：02 QML 核心与常用组件</title><link>https://lnxlnxlnx.github.io/posts/qt/02-qml%E6%A0%B8%E5%BF%83%E7%BB%84%E4%BB%B6/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/02-qml%E6%A0%B8%E5%BF%83%E7%BB%84%E4%BB%B6/</guid><description>QML 语法、布局、常用组件与 API、动画、Canvas、Loader。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;02 QML 核心与常用组件&lt;/h1&gt;
+&lt;p&gt;QML 是一种&lt;strong&gt;声明式&lt;/strong&gt;语言：你&quot;描述&quot;界面长什么样，Qt 负责画出来。语法类似 JSON + JavaScript。&lt;/p&gt;
+&lt;h2&gt;1. 基础语法&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick 2.12                    // 导入模块(几乎每个文件都要)
+
+Rectangle {                            // 类型名 { } = 创建一个对象
+    width: 100                         // 属性: 值
+    height: 100
+    color: &quot;red&quot;
+    radius: 10                         // 圆角
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;每个元素都有类型、id、属性&lt;/strong&gt;。&lt;code&gt;id&lt;/code&gt; 用来在别处引用它。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;属性可以绑定表达式&lt;/strong&gt;：&lt;code&gt;width: parent.width * 0.5&lt;/code&gt;，当父宽度变化时自动跟随（这就是&quot;绑定&quot;，比命令式方便太多）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;信号处理&lt;/strong&gt;：&lt;code&gt;onClicked: { ... }&lt;/code&gt; 对应 &lt;code&gt;clicked&lt;/code&gt; 信号。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;2. 布局与容器&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;组件&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;th&gt;例子&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Item&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;最基础容器（透明，不绘制）&lt;/td&gt;
+&lt;td&gt;组合多个元素&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Rectangle&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;带颜色/圆角/边框的矩形&lt;/td&gt;
+&lt;td&gt;背景、按钮底&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Image&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;显示图片&lt;/td&gt;
+&lt;td&gt;图标、照片&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Row&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;水平排布子元素&lt;/td&gt;
+&lt;td&gt;一行按钮&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Column&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;垂直排布子元素&lt;/td&gt;
+&lt;td&gt;菜单列表&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Grid&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;网格排布&lt;/td&gt;
+&lt;td&gt;九宫格拼图&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;StackLayout&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;叠放，一次显示一个&lt;/td&gt;
+&lt;td&gt;页面切换&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Flickable&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;可滑动区域&lt;/td&gt;
+&lt;td&gt;长列表&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;ListView&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;数据列表（配合 model）&lt;/td&gt;
+&lt;td&gt;排行榜&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;GridView&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;数据网格&lt;/td&gt;
+&lt;td&gt;相册&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Repeater&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;按 model 重复生成&lt;/td&gt;
+&lt;td&gt;卡片&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;Row / Column 示例&lt;/strong&gt;（来自拼图游戏）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Column {
+    anchors.centerIn: parent
+    spacing: 14                       // 子元素间距
+    Text { text: &quot;拼图&quot;; font.pixelSize: 32; color: &quot;#2e7d32&quot; }
+    Row {
+        spacing: 20
+        Button { text: &quot;打乱&quot; }
+        Button { text: &quot;返回&quot; }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;anchors（锚点）&lt;/strong&gt; 是最常用的定位方式：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Rectangle {
+    anchors.fill: parent              // 填满父
+    anchors.centerIn: parent          // 居中
+    anchors.left: parent.left
+    anchors.leftMargin: 16            // 左边距
+    anchors.verticalCenter: parent.verticalCenter
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;3. 常用显示组件&lt;/h2&gt;
+&lt;h3&gt;Text —— 文字&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;Text {
+    text: &quot;得分 &quot; + score             // 可拼接, score 变化自动更新
+    color: &quot;#ffd54f&quot;
+    font.pixelSize: 24                // 像素字号(嵌入式常用)
+    font.bold: true
+    font.family: &quot;Times&quot;
+    anchors.horizontalCenter: parent.horizontalCenter
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;嵌入式没有高 DPI 缩放，用 &lt;code&gt;font.pixelSize&lt;/code&gt; 比 &lt;code&gt;pointSize&lt;/code&gt; 更可控。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3&gt;Image —— 图片&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;Image {
+    source: &quot;qrc:/photo/mushroom1.png&quot;   // 资源里的图
+    width: 40; height: 40
+    fillMode: Image.PreserveAspectFit    // 保持比例
+}
+// 从 C++ 提供动态图(摄像头预览): 用 ImageProvider
+Image { source: &quot;image://digitpreview/frame&quot; }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Button —— 按钮（QtQuick.Controls 2）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick.Controls 2.12
+Button {
+    text: &quot;开始&quot;
+    width: 240; height: 60
+    font.pixelSize: 26
+    onClicked: { ... }                // 点击
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;输入类&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;TextField { width: 220; height: 40; text: &quot;玩家&quot; }      // 单行文本(配虚拟键盘)
+TextInput  { }                                           // 底层文本输入
+Switch { checked: true }                                 // 开关
+Slider { from: 0; to: 100; value: 50 }                   // 滑条(音量/亮度)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;4. 鼠标/触摸交互&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;MouseArea {
+    anchors.fill: parent
+    hoverEnabled: true
+    onClicked: root.tryMove(index)        // 点击
+    onPressed: root.touchFire = 1         // 按下
+    onReleased: root.touchFire = 0        // 松开
+    onPositionChanged: { ... }            // 拖动
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;触摸屏底层由 tslib 转成鼠标事件，所以 QML 里 &lt;code&gt;MouseArea&lt;/code&gt; 同时处理触摸和鼠标。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;5. 动态加载 Loader 与页面切换&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;Loader&lt;/code&gt; 按需加载 QML 文件，是&quot;多页面 App&quot;的骨架。mytest 的小游戏切换：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;property string page: &quot;menu&quot;
+Loader {
+    id: loader
+    anchors.fill: parent
+    source: p === &quot;puzzle&quot; ? &quot;PuzzleGame.qml&quot;
+          : p === &quot;mine&quot;   ? &quot;MinesweeperGame.qml&quot;
+          : &quot;&quot;
+    onLoaded: {                          // 加载完成
+        if (item &amp;amp;&amp;amp; item.backToMenu)     // 连接子页面的返回信号
+            item.backToMenu.connect(function() { root.showPage(&quot;menu&quot;) })
+    }
+}
+function showPage(p) { root.page = p; loader.source = ... }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;子页面（如 PuzzleGame.qml）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Item {
+    signal backToMenu()                  // 声明返回信号
+    Button { text: &quot;返回&quot;; onClicked: root.backToMenu() }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;这就是 App 内多页面的标准做法&lt;/strong&gt;：Loader + 信号。&lt;/p&gt;
+&lt;h2&gt;6. 状态 State 与动画&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;Rectangle {
+    id: box
+    states: State {
+        name: &quot;big&quot;
+        PropertyChanges { target: box; width: 200; height: 200 }
+    }
+    transitions: Transition {            // 状态切换动画
+        NumberAnimation { properties: &quot;width,height&quot;; duration: 200 }
+    }
+}
+// 触发: box.state = &quot;big&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;数字动画&lt;/strong&gt;（逐帧驱动游戏/进度）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;NumberAnimation { target: obj; property: &quot;x&quot;; to: 300; duration: 1000 }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Timer 定时器&lt;/strong&gt;（游戏循环的核心）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Timer {
+    interval: 16                         // 16ms ≈ 60fps
+    repeat: true
+    running: true
+    onTriggered: { /* 每帧更新逻辑 */ }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;SequentialAnimation + Behavior&lt;/strong&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Behavior on scale { NumberAnimation { duration: 90 } }   // 属性变化时平滑过渡
+SequentialAnimation on height { loops: Animation.Infinite  // 循环动画
+    NumberAnimation { to: 8; duration: 120 }
+    NumberAnimation { to: 16; duration: 120 }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;7. Canvas —— 2D 绘制&lt;/h2&gt;
+&lt;p&gt;Qt Quick 自带 Canvas（类似 HTML5 Canvas），用来画游戏场景、图表（性能好，嵌入式可跑到 30fps）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Canvas {
+    width: 300; height: 300
+    onPaint: {
+        var ctx = getContext(&quot;2d&quot;)
+        ctx.clearRect(0, 0, width, height)
+        ctx.fillStyle = &quot;#43a047&quot;
+        ctx.fillRect(10, 10, 50, 50)          // 画方块
+        ctx.beginPath()
+        ctx.arc(150, 150, 40, 0, Math.PI*2)   // 画圆
+        ctx.fill()
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;更新画面：改数据后调 &lt;code&gt;canvas.requestPaint()&lt;/code&gt;。&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;案例：mytest 的贪吃蛇/俄罗斯方块/太空射击全部用 Canvas 画棋盘和精灵，比堆 Rectangle 高效得多（单核 A7 上关键）。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;8. 屏幕适配&lt;/h2&gt;
+&lt;p&gt;板子屏幕 800x480，但设计稿常用 1024 宽度基准：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;property real scaleFactor: window.width / 1024   // 换算系数
+// 用到尺寸的地方: width: 300 * scaleFactor
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;或用 &lt;code&gt;anchors.fill&lt;/code&gt; + 百分比（&lt;code&gt;parent.width * 0.5&lt;/code&gt;）自适应。&lt;/p&gt;
+&lt;h2&gt;9. 模块化：组件 component / 独立 QML 文件&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;独立文件即组件&lt;/strong&gt;（同目录自动可见）：如 &lt;code&gt;mytest/TouchBtn.qml&lt;/code&gt; 定义了按钮，别处直接 &lt;code&gt;TouchBtn { text: &quot;A&quot; }&lt;/code&gt;。&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;⚠️ Qt 5.12 不支持 &lt;code&gt;component Xxx:&lt;/code&gt; 内联组件语法（那是 5.15 才有）。要复用组件就&lt;strong&gt;写成独立 .qml 文件&lt;/strong&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+</content:encoded></item><item><title>Qt 开发：03 QML 与 C++ 混合编程</title><link>https://lnxlnxlnx.github.io/posts/qt/03-qml%E4%B8%8Ec%E4%BA%A4%E4%BA%92/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/03-qml%E4%B8%8Ec%E4%BA%A4%E4%BA%92/</guid><description>qmlRegisterType/contextProperty、Q_PROPERTY、信号槽、多线程。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;03 QML 与 C++ 混合编程&lt;/h1&gt;
+&lt;p&gt;嵌入式 App 的规律：&lt;strong&gt;界面用 QML 画，硬件/系统能力用 C++ 写，再把 C++ 暴露给 QML&lt;/strong&gt;。本章讲三种暴露方式 + 多线程。&lt;/p&gt;
+&lt;h2&gt;1. 三种暴露方式&lt;/h2&gt;
+&lt;h3&gt;方式一：qmlRegisterType —— 注册一个类型（最常用）&lt;/h3&gt;
+&lt;p&gt;C++ 头文件（以 led 的 &lt;code&gt;ledcontrol.h&lt;/code&gt; 为例）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QObject&amp;gt;
+class LedControl : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(int ledState READ ledState WRITE setLedState NOTIFY ledStateChanged)
+public:
+    explicit LedControl(QObject *parent = nullptr);
+    int ledState() const;
+public slots:
+    void setLedState(int state);
+signals:
+    void ledStateChanged(int state);
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;main.cpp 注册：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;qmlRegisterType&amp;lt;LedControl&amp;gt;(&quot;com.alientek.qmlcomponents&quot;, 1, 0, &quot;LedControl&quot;);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 里使用：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import com.alientek.qmlcomponents 1.0
+LedControl {
+    id: led
+    onLedStateChanged: console.log(&quot;灯状态&quot;, ledState)
+}
+Button { text: &quot;开灯&quot;; onClicked: led.setLedState(1) }   // 调 C++ 槽
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;方式二：setContextProperty —— 注册为全局单例&lt;/h3&gt;
+&lt;p&gt;适合&quot;整个 App 只有一个&quot;的对象（如摄像头识别器）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;DigitRecognizer digitRecognizer;
+engine.rootContext()-&amp;gt;setContextProperty(&quot;digitRecognizer&quot;, &amp;amp;digitRecognizer);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 里直接 &lt;code&gt;digitRecognizer.xxx&lt;/code&gt;，任何文件都能用，不用 &lt;code&gt;id&lt;/code&gt;。&lt;/p&gt;
+&lt;h3&gt;方式三：ImageProvider —— 提供动态图片&lt;/h3&gt;
+&lt;p&gt;把 C++ 算出的图像（如摄像头帧、识别结果）实时给 QML 的 Image 显示：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;engine.addImageProvider(&quot;digitpreview&quot;, new DigitPreviewProvider(&amp;amp;digitRecognizer));
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML：&lt;code&gt;Image { source: &quot;image://digitpreview/frame&quot; }&lt;/code&gt;，每次 source 变化 Qt 回调 C++ 的 &lt;code&gt;requestImage&lt;/code&gt; 返回 &lt;code&gt;QImage&lt;/code&gt;。&lt;/p&gt;
+&lt;h2&gt;2. Q_PROPERTY 与信号槽（C++ 类的核心三件套）&lt;/h2&gt;
+&lt;p&gt;一个标准的&quot;给 QML 用的 C++ 类&quot;必须有：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;class Demo : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int value READ value WRITE setValue NOTIFY valueChanged)  // 属性
+public:
+    int value() const { return m_value; }
+public slots:
+    void setValue(int v) { if (v != m_value) { m_value = v; emit valueChanged(v); } }
+signals:
+    void valueChanged(int value);     // 变化信号(QML 用 onValueChanged 接收)
+private:
+    int m_value = 0;
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Q_PROPERTY 参数&lt;/th&gt;
+&lt;th&gt;含义&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;READ value&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;QML 读 &lt;code&gt;obj.value&lt;/code&gt; 时调 &lt;code&gt;value()&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;WRITE setValue&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;QML 写 &lt;code&gt;obj.value = x&lt;/code&gt; 时调 &lt;code&gt;setValue(x)&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;NOTIFY valueChanged&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;值变了发信号，QML 绑定会自动更新&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;blockquote&gt;
+&lt;p&gt;QML 里 &lt;code&gt;property int x&lt;/code&gt; 是 QML 自己的属性；C++ 的 &lt;code&gt;Q_PROPERTY&lt;/code&gt; 是给 QML 的属性。两者都能被绑定。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;3. QML 调 C++ 函数&lt;/h2&gt;
+&lt;p&gt;C++ 里用 &lt;code&gt;public slots:&lt;/code&gt;（或 &lt;code&gt;Q_INVOKABLE&lt;/code&gt;）声明的方法，QML 可直接调用：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;public slots:
+    void setLedState(int state);
+    QString getDeviceInfo();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML：&lt;code&gt;led.setLedState(1)&lt;/code&gt;、&lt;code&gt;sensor.getDeviceInfo()&lt;/code&gt;。&lt;/p&gt;
+&lt;h2&gt;4. C++ 调 QML（信号连接）&lt;/h2&gt;
+&lt;p&gt;C++ 里拿到 QML 对象：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QObject *root = engine.rootObjects().first();
+QObject *winOverlay = root-&amp;gt;findChild&amp;lt;QObject*&amp;gt;(&quot;winOverlay&quot;);  // QML 里 objectName 标记
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;或 QML 里连接 C++ 信号（推荐，更简单）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;LedControl {
+    id: led
+    onLedStateChanged: {              // C++ 的 signal -&amp;gt; QML 的 onXxx
+        tipText.text = (ledState ? &quot;已开&quot; : &quot;已关&quot;)
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;5. 多线程：QThread 读取硬件（传感器案例）&lt;/h2&gt;
+&lt;p&gt;硬件读取（I2C 传感器、串口）不能卡住 UI 线程，用 &lt;code&gt;QThread&lt;/code&gt; 后台读。sensor 的 &lt;code&gt;Ap3216cThread&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;class Ap3216cThread : public QThread {
+    Q_OBJECT
+    Q_PROPERTY(int interval READ interval WRITE setInterval NOTIFY intervalChanged)
+    Q_PROPERTY(QString alsData READ alsData NOTIFY alsDataChanged)   // 暴露给 QML
+protected:
+    void run() override;    // 线程主体
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code&gt;void Ap3216cThread::run() {
+    // 打开 /dev/... 传感器设备, 循环读
+    while (!isInterruptionRequested()) {
+        QString v = readAlsData();        // 读光感
+        setAlsData(v);                    // 更新属性 -&amp;gt; QML 收到 onAlsDataChanged
+        msleep(200);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 里：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Ap3216cThread { id: als; onAlsDataChanged: txt.text = als.alsData }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;原则：&lt;strong&gt;耗时 IO 放子线程&lt;/strong&gt;，线程里只更新 QObject 属性，UI 线程自动刷新。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;6. 我们自己项目的手柄集成（QML + C++ + 外部进程）&lt;/h2&gt;
+&lt;p&gt;mytest 的手柄是三层协作，很有代表性：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[手柄 USB] --usbfs--&amp;gt; [gamepadd 守护进程(C)] --Unix socket /tmp/gamepad.sock--&amp;gt;
+[GamepadClient(C++)] --Q_PROPERTY--&amp;gt; [QML gamepad.btnA / gamepad.axisLX]
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;C++ &lt;code&gt;GamepadClient&lt;/code&gt; 用 &lt;code&gt;QLocalSocket&lt;/code&gt; 连 socket，读到一行行手柄状态：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 协议: lx,ly,rx,ry,lt,rt,A,B,X,Y,LB,RB,Start,Back,LS,RS,Up,Down,Left,Right
+void GamepadClient::parseLine(const QByteArray &amp;amp;line) {
+    const QList&amp;lt;QByteArray&amp;gt; f = line.split(&apos;,&apos;);
+    m_a = f[6].toInt() != 0;
+    ...
+    emit changed();      // 触发 QML 的 onChanged, 20 个属性更新
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;main.cpp 注册为全局单例：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;GamepadClient gamepadClient;
+engine.rootContext()-&amp;gt;setContextProperty(&quot;gamepad&quot;, &amp;amp;gamepadClient);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 游戏里轮询：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Timer {
+    interval: 16; repeat: true
+    onTriggered: {
+        if (gamepad.btnA) shoot()                 // 手柄 A 键开火
+        if (gamepad.axisLX &amp;lt; -6000) moveLeft()    // 摇杆
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;完整链路&lt;/strong&gt;：硬件 → 守护进程(读 raw USB) → socket → C++ 解析 → Q_PROPERTY → QML。这是嵌入式里&quot;C 驱动 + Qt 界面&quot;的典型架构。&lt;/p&gt;
+&lt;h2&gt;7. main.cpp 标准模板（带摄像头 + 识别器的完整版）&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QGuiApplication&amp;gt;
+#include &amp;lt;QQmlApplicationEngine&amp;gt;
+#include &amp;lt;QQmlContext&amp;gt;
+#include &quot;scorestorage.h&quot;
+#include &quot;digitrecognizer.h&quot;
+#include &quot;gamepadclient.h&quot;
+
+int main(int argc, char *argv[])
+{
+    QGuiApplication app(argc, argv);
+    // 1. 注册类型
+    qmlRegisterType&amp;lt;ScoreStorage&amp;gt;(&quot;com.alientek.qmlcomponents&quot;, 1, 0, &quot;ScoreStorage&quot;);
+    qmlRegisterType&amp;lt;Camera&amp;gt;(&quot;com.alientek.qmlcomponents&quot;, 1, 0, &quot;Camera&quot;);
+    // 2. 注册全局单例
+    QQmlApplicationEngine engine;
+    DigitRecognizer digitRecognizer;
+    engine.rootContext()-&amp;gt;setContextProperty(&quot;digitRecognizer&quot;, &amp;amp;digitRecognizer);
+    GamepadClient gamepadClient;
+    engine.rootContext()-&amp;gt;setContextProperty(&quot;gamepad&quot;, &amp;amp;gamepadClient);
+    gamepadClient.connectToServer();
+    // 3. 注册图片提供器
+    engine.addImageProvider(&quot;digitpreview&quot;, new DigitPreviewProvider(&amp;amp;digitRecognizer));
+    // 4. 加载 QML
+    engine.load(QUrl(&quot;qrc:/main.qml&quot;));
+    return app.exec();
+}
+&lt;/code&gt;&lt;/pre&gt;
+</content:encoded></item><item><title>Qt 开发：04 硬件交互详解</title><link>https://lnxlnxlnx.github.io/posts/qt/04-%E7%A1%AC%E4%BB%B6%E4%BA%A4%E4%BA%92/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/04-%E7%A1%AC%E4%BB%B6%E4%BA%A4%E4%BA%92/</guid><description>GPIO、按键、传感器、摄像头、音频、触摸屏、虚拟键盘的 Qt 交互。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;04 硬件交互详解&lt;/h1&gt;
+&lt;p&gt;嵌入式 Qt 和 PC Qt 最大的区别：&lt;strong&gt;要直接操作硬件&lt;/strong&gt;。本章按硬件分类，全部结合 qt_dev 实例，给出 C++ 代码和对应 QML。&lt;/p&gt;
+&lt;h2&gt;0. 硬件在 Linux 里的呈现&lt;/h2&gt;
+&lt;p&gt;IMX6ULL 上的硬件大多以&lt;strong&gt;文件&lt;/strong&gt;形式暴露，Qt 只需读写文件/打开设备：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;硬件&lt;/th&gt;
+&lt;th&gt;Linux 接口&lt;/th&gt;
+&lt;th&gt;操作方式&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;LED&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/sys/class/leds/sys-led/brightness&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;写 &lt;code&gt;0/1&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;蜂鸣器&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/sys/class/leds/beep/brightness&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;写 &lt;code&gt;0/1&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;GPIO 按键&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/dev/input/eventX&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;读 input 事件&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;光感/陀螺仪&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/dev/ap3216c&lt;/code&gt;、&lt;code&gt;/dev/icm20608&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;open + read&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;摄像头&lt;/td&gt;
+&lt;td&gt;V4L2（Qt Multimedia 封装）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Camera&lt;/code&gt; + &lt;code&gt;VideoOutput&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;音频&lt;/td&gt;
+&lt;td&gt;ALSA（Qt Multimedia 封装）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Audio&lt;/code&gt; 等&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;触摸屏&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/dev/input/event1&lt;/code&gt; + tslib&lt;/td&gt;
+&lt;td&gt;框架自动转鼠标事件&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;LCD&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/dev/fb0&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;框架自动绘制&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;1. GPIO 输出 —— LED（led app）&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;led/ledcontrol.cpp&lt;/code&gt; 完整展示了&quot;读写 sysfs + 文件监听&quot;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QFile&amp;gt;
+LedControl::LedControl()
+{
+    this-&amp;gt;addPath(&quot;/sys/class/leds/sys-led/brightness&quot;);  // 监听这个文件
+    connect(this, SIGNAL(fileChanged(QString)), this, SLOT(onFileChanged(QString)));
+    system(&quot;echo none &amp;gt; /sys/class/leds/sys-led/trigger&quot;); // 关掉内核默认触发器
+}
+
+void LedControl::setLedState(int state)   // QML 调用: led.setLedState(1)
+{
+    QFile file(&quot;/sys/class/leds/sys-led/brightness&quot;);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        file.write(state &amp;gt; 0 ? &quot;1&quot; : &quot;0&quot;);   // 写 sysfs 就是控制 GPIO
+        file.close();
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;对应 QML&lt;/strong&gt;（led/LedLayout.qml）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import com.alientek.qmlcomponents 1.0
+LedControl { id: ledControl }
+Image {
+    source: ledControl.ledState ? &quot;qrc:/icons/led_on.png&quot; : &quot;qrc:/icons/led_off.png&quot;
+}
+MouseArea {
+    anchors.fill: parent
+    onClicked: ledControl.setLedState(ledControl.ledState ? 0 : 1)  // 切换
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;API 要点：&lt;code&gt;QFile&lt;/code&gt; 写 &lt;code&gt;/sys/class/...&lt;/code&gt; 就是操作 GPIO；&lt;code&gt;QFileSystemWatcher&lt;/code&gt; 可监听内核改动（如硬件状态变化）反向更新界面。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;2. 按键/GPIO 输入（key app）&lt;/h2&gt;
+&lt;p&gt;按键输入在 &lt;code&gt;/dev/input/eventX&lt;/code&gt;。用 &lt;code&gt;read()&lt;/code&gt; 读 &lt;code&gt;struct input_event&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;linux/input.h&amp;gt;
+#include &amp;lt;fcntl.h&amp;gt;
+#include &amp;lt;unistd.h&amp;gt;
+
+int fd = open(&quot;/dev/input/event1&quot;, O_RDONLY | O_NONBLOCK);  // 触摸屏
+struct input_event ev;
+if (read(fd, &amp;amp;ev, sizeof(ev)) &amp;gt; 0) {
+    if (ev.type == EV_KEY &amp;amp;&amp;amp; ev.value == 1) {   // 按下
+        qDebug() &amp;lt;&amp;lt; &quot;键码&quot; &amp;lt;&amp;lt; ev.code;
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;更省事：screenview 用 &lt;code&gt;KeyInputEventThread&lt;/code&gt;（QThread）后台循环读事件，通过信号把键值发给主线程，避免 UI 卡顿。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;3. I2C 传感器（sensor app）&lt;/h2&gt;
+&lt;p&gt;光感 AP3216C、陀螺仪 ICM20608 是 I2C 设备，内核驱动暴露为 &lt;code&gt;/dev/ap3216c&lt;/code&gt;、&lt;code&gt;/dev/icm20608&lt;/code&gt;。读取放子线程：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;void Ap3216cThread::run() {
+    int fd = open(&quot;/dev/ap3216c&quot;, O_RDONLY);
+    while (!isInterruptionRequested()) {
+        QByteArray buf(6, 0);
+        read(fd, buf.data(), 6);              // 读传感器原始数据
+        setAlsData(QString(&quot;光照: %1&quot;).arg(...));   // 更新 Q_PROPERTY
+        msleep(200);
+    }
+    close(fd);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 显示：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Ap3216cThread { id: als; onAlsDataChanged: lightText.text = als.alsData }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;核心模式：&lt;strong&gt;QThread + Q_PROPERTY(NOTIFY)&lt;/strong&gt;，子线程读硬件，界面自动刷新。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;4. 摄像头（camera app）—— Qt Multimedia&lt;/h2&gt;
+&lt;p&gt;摄像头用 Qt Multimedia 的 &lt;code&gt;Camera&lt;/code&gt; + &lt;code&gt;VideoOutput&lt;/code&gt;，Qt 内部用 V4L2 驱动。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;C++&lt;/strong&gt;（camera/camera.cpp）负责枚举设备、选择分辨率：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QCamera&amp;gt;
+class Camera : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QStringList cameraList READ cameraList NOTIFY cameraListChanged)
+public:
+    QStringList cameraList() const;
+    QStringList availableCameras() const {
+        // QCameraInfo::availableCameras() 列出摄像头
+    }
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;QML&lt;/strong&gt;（camera/CameraLayout.qml）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtMultimedia 5.0
+Camera {
+    id: camera
+    deviceId: cameraDevice              // 切换设备
+    // 摄像头图像直接出到 VideoOutput
+}
+VideoOutput {
+    source: camera                       // 把相机画面画到这里
+    anchors.fill: parent
+}
+Button {
+    text: &quot;拍照&quot;
+    onClicked: {
+        var img = imageCapture.capture()  // 截图
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;API 要点：&lt;code&gt;Camera&lt;/code&gt;（设备）、&lt;code&gt;VideoOutput&lt;/code&gt;（显示）、&lt;code&gt;ImageCapture&lt;/code&gt;（拍照）、&lt;code&gt;QCameraInfo::availableCameras()&lt;/code&gt;（枚举）。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;strong&gt;mytest 的手写数字识别&lt;/strong&gt;更进阶：&lt;code&gt;DigitRecognizer&lt;/code&gt; 用 C++ 从 &lt;code&gt;VideoOutput&lt;/code&gt; 抓帧 → 神经网络推理 → 通过 &lt;code&gt;ImageProvider&lt;/code&gt; 把识别图回传给 QML 显示：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Image { source: &quot;image://digitpreview/frame&quot; }   // 实时识别画面
+Text { text: digitRecognizer.predictedLabel }     // 识别结果
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;5. 音频（music / audio app）&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;播放音乐&lt;/strong&gt;用 Qt Multimedia：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtMultimedia 5.0
+Audio {
+    id: player
+    source: &quot;file:///home/root/music.mp3&quot;
+    volume: volumeSlider.value / 100
+    onStatusChanged: if (status === Audio.EndOfMedia) next()
+}
+Slider { id: volumeSlider; from: 0; to: 100; value: 60 }
+Button { text: player.playing ? &quot;暂停&quot; : &quot;播放&quot;; onClicked: player.playing ? player.pause() : player.play() }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;录音/音频分析&lt;/strong&gt;（audio app）：用 &lt;code&gt;AudioRecorder&lt;/code&gt; + &lt;code&gt;QAudioInput&lt;/code&gt; 采集，&lt;code&gt;QAudioProbe&lt;/code&gt; 抓 PCM 帧画波形。&lt;/p&gt;
+&lt;h2&gt;6. 触摸屏与虚拟键盘&lt;/h2&gt;
+&lt;h3&gt;触摸屏&lt;/h3&gt;
+&lt;p&gt;底层由 tslib 驱动，Qt 启动时设：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QT_QPA_PLATFORM=linuxfb:tty=/dev/fb0
+QT_QPA_FB_TSLIB=1
+TSLIB_TSDEVICE=/dev/input/event1
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 层&lt;strong&gt;不用写任何触摸代码&lt;/strong&gt;，&lt;code&gt;MouseArea&lt;/code&gt; 自动接收触摸。&lt;/p&gt;
+&lt;h3&gt;屏幕虚拟键盘（notepad / settings / mytest）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;QT += virtualkeyboard
+&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick.VirtualKeyboard 2.4
+import QtQuick.VirtualKeyboard.Settings 1.2
+InputPanel {
+    id: inputPanel
+    z: 99
+    width: window.width
+    // 有焦点时从底部弹起(动画)
+    states: State {
+        name: &quot;visible&quot;
+        when: inputPanel.active
+        PropertyChanges { target: inputPanel; y: window.height - inputPanel.height }
+    }
+}
+Binding {   // 中英文
+    target: VirtualKeyboardSettings
+    property: &quot;activeLocales&quot;
+    value: [&quot;zh_CN&quot;, &quot;en_US&quot;]
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;输入框 &lt;code&gt;TextField&lt;/code&gt; 获得焦点时键盘自动弹出。&lt;/p&gt;
+&lt;h2&gt;7. 蜂鸣器（beep app）与简单 IO&lt;/h2&gt;
+&lt;p&gt;beep 与 LED 完全同模式（sysfs）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QFile f(&quot;/sys/class/leds/beep/brightness&quot;);
+f.open(QIODevice::WriteOnly); f.write(&quot;1&quot;);   // 响
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 里按钮控制，可做&quot;滴答&quot;反馈。&lt;/p&gt;
+&lt;h2&gt;8. 进程内启动外部命令&lt;/h2&gt;
+&lt;p&gt;嵌入式常直接调系统命令（GPIO/网络/脚本）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;system(&quot;echo 1 &amp;gt; /sys/class/gpio/gpioX/value&quot;);
+system(&quot;wpa_cli -i wlan0 scan&quot;);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Qt 更推荐 &lt;code&gt;QProcess&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QProcess p;
+p.start(&quot;sh&quot;, {&quot;-c&quot;, &quot;echo none &amp;gt; /sys/class/leds/sys-led/trigger&quot;});
+p.waitForFinished();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;桌面墙纸、WiFi 等常这么干（settings 里操作 wpa_supplicant）。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;9. 硬件交互总结（模式速查）&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;需求&lt;/th&gt;
+&lt;th&gt;用什么&lt;/th&gt;
+&lt;th&gt;关键 API&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;控制 GPIO/LED&lt;/td&gt;
+&lt;td&gt;sysfs 写文件&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;QFile&lt;/code&gt; 写 &lt;code&gt;/sys/class/...&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;读按键&lt;/td&gt;
+&lt;td&gt;input 事件&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;open(&quot;/dev/input/eventX&quot;)&lt;/code&gt; + &lt;code&gt;read&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;读 I2C 传感器&lt;/td&gt;
+&lt;td&gt;子线程 + 文件&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;QThread::run&lt;/code&gt; + &lt;code&gt;open/read&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;摄像头&lt;/td&gt;
+&lt;td&gt;Qt Multimedia&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Camera&lt;/code&gt;+&lt;code&gt;VideoOutput&lt;/code&gt;+&lt;code&gt;ImageCapture&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;音频播放/录音&lt;/td&gt;
+&lt;td&gt;Qt Multimedia&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Audio&lt;/code&gt;/&lt;code&gt;AudioRecorder&lt;/code&gt;/&lt;code&gt;QAudioProbe&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;触摸屏&lt;/td&gt;
+&lt;td&gt;tslib + 框架&lt;/td&gt;
+&lt;td&gt;无需写代码, &lt;code&gt;MouseArea&lt;/code&gt; 直接用&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;屏幕键盘&lt;/td&gt;
+&lt;td&gt;virtualkeyboard&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;InputPanel&lt;/code&gt; + 焦点&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;硬件状态变化&lt;/td&gt;
+&lt;td&gt;文件监听&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;QFileSystemWatcher&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;执行命令&lt;/td&gt;
+&lt;td&gt;QProcess&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;QProcess::start&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>Qt 开发：05 网络与远程通信</title><link>https://lnxlnxlnx.github.io/posts/qt/05-%E7%BD%91%E7%BB%9C%E9%80%9A%E4%BF%A1/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/05-%E7%BD%91%E7%BB%9C%E9%80%9A%E4%BF%A1/</guid><description>MQTT、TCP 投屏、Qt RemoteObjects、Unix Socket 手柄通信。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;05 网络与远程通信&lt;/h1&gt;
+&lt;p&gt;嵌入式 Qt 里的&quot;通信&quot;通常有四种：&lt;strong&gt;MQTT 上云&lt;/strong&gt;、&lt;strong&gt;TCP/套接字设备互联&lt;/strong&gt;、&lt;strong&gt;Qt RemoteObjects 进程间通信&lt;/strong&gt;、&lt;strong&gt;本地 Unix Socket&lt;/strong&gt;。本章全部结合 qt_dev 实例。&lt;/p&gt;
+&lt;h2&gt;1. MQTT 智能控制（iot_control app）&lt;/h2&gt;
+&lt;p&gt;iot_control 用 MQTT 协议远程控制开发板（手机发指令 → 板子执行 → 上报状态）。核心是 &lt;code&gt;MqttControl&lt;/code&gt;（C++，用 paho.mqtt.c 库）。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;C++ 类暴露给 QML&lt;/strong&gt;（iot_control/mqttcontrol.h）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;class MqttControl : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
+    Q_PROPERTY(QString topicPrefix READ topicPrefix WRITE setTopicPrefix NOTIFY topicPrefixChanged)
+    Q_PROPERTY(QString logText READ logText NOTIFY logTextChanged)
+public slots:
+    void connectToBroker(const QString &amp;amp;host, int port);   // 连服务器
+    void publish(const QString &amp;amp;topic, const QString &amp;amp;payload, bool retained); // 发消息
+signals:
+    void messageReceived(const QString &amp;amp;topic, const QString &amp;amp;payload);
+    void connectedChanged(bool connected);
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;QML&lt;/strong&gt;（iot_control 界面）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import com.alientek.qmlcomponents 1.0
+MqttControl {
+    id: mqtt
+    topicPrefix: &quot;atk/led&quot;
+    onConnectedChanged: { statusText.text = mqtt.connected ? &quot;已连接&quot; : &quot;未连接&quot; }
+    onMessageReceived: {
+        // 收到手机指令, 控制硬件
+        if (topic.endsWith(&quot;/cmd&quot;) &amp;amp;&amp;amp; payload === &quot;on&quot;) ledControl.setLedState(1)
+    }
+}
+Button { text: &quot;开灯&quot;; onClicked: mqtt.publish(mqtt.topicPrefix + &quot;/cmd&quot;, &quot;on&quot;, false) }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;MQTT 适合&quot;板子上云 + 手机远程控制&quot;。paho 库需自行交叉编译进 rootfs。&lt;code&gt;publish&lt;/code&gt; 发指令，&lt;code&gt;messageReceived&lt;/code&gt; 收指令。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;2. TCP 投屏（screenview app，QWidget 版）&lt;/h2&gt;
+&lt;p&gt;screenview 是纯 Widgets 应用，用 TCP 接收 PC 推来的 MJPEG 视频流并显示。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QTcpServer&amp;gt;
+#include &amp;lt;QTcpSocket&amp;gt;
+#include &amp;lt;QImage&amp;gt;
+
+// 主窗口里
+m_server = new QTcpServer(this);
+connect(m_server, &amp;amp;QTcpServer::newConnection, this, &amp;amp;MainWindow::onNewConnection);
+m_server-&amp;gt;listen(QHostAddress::Any, 9999);   // 监听 9999 端口
+
+void MainWindow::onReadyRead() {
+    QByteArray data = m_sock-&amp;gt;readAll();
+    m_jpegBuf.append(data);
+    // 从流里切出完整 JPEG 帧
+    int start = m_jpegBuf.indexOf(&quot;\xff\xd8&quot;);   // JPEG 起始标记
+    int end   = m_jpegBuf.indexOf(&quot;\xff\xd9&quot;);   // JPEG 结束标记
+    if (start &amp;gt;= 0 &amp;amp;&amp;amp; end &amp;gt; start) {
+        QByteArray jpg = m_jpegBuf.mid(start, end - start + 2);
+        QImage img = QImage::fromData(jpg, &quot;JPG&quot;);  // 解码
+        m_img = img;
+        update();                                 // 触发 paintEvent 绘制
+    }
+}
+void MainWindow::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    p.drawImage(0, 0, m_img);                    // 全屏画视频帧
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;API 要点：&lt;code&gt;QTcpServer::listen&lt;/code&gt; 监听、&lt;code&gt;newConnection&lt;/code&gt; 接客、&lt;code&gt;QTcpSocket::readyRead&lt;/code&gt; 收数据、&lt;code&gt;QImage::fromData&lt;/code&gt; 解码 MJPEG。&lt;strong&gt;投屏 = TCP 收流 + QPainter 绘制&lt;/strong&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;3. Qt RemoteObjects 进程间通信（systemui ↔ App）&lt;/h2&gt;
+&lt;p&gt;systemui 桌面框架的通信机制，用 &lt;code&gt;.rep&lt;/code&gt; 文件定义接口，Qt 自动生成两端代码。&lt;/p&gt;
+&lt;h3&gt;定义接口（Repcs/systemuicommonapi.rep）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;class SystemUICommonApi {
+    SIGNAL(serverSendVariant(const QByteArray &amp;amp;ba))
+    SLOT(void onServerVariant(const QByteArray &amp;amp;ba))
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;服务端（systemui）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;m_remoteObjectHost-&amp;gt;setHostUrl(QUrl(&quot;local:interfaces&quot;));  // 本地地址
+m_remoteObjectHost-&amp;gt;enableRemoting(this);                   // 对外暴露接口
+// 收到 App 的消息:
+void SystemUICommonApiServer::onServerVariant(const QByteArray &amp;amp;ba) {
+    auto msg = deserialize(ba);
+    if (msg[&quot;appState&quot;] == &quot;Active&quot;) {
+        emit requestVisibilityChange(Command::Hide);  // 隐藏桌面
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;客户端（每个 App 的 client）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;m_remoteObjectNode = new QRemoteObjectNode(this);
+m_remoteObjectNode-&amp;gt;connectToNode(QUrl(&quot;local:interfaces&quot;));
+m_replica = m_remoteObjectNode-&amp;gt;acquire&amp;lt;SystemUICommonApiReplica&amp;gt;();  // 拿副本
+connect(m_replica, &amp;amp;Replica::serverSendVariant, this, &amp;amp;Client::onServerVariant);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;API 要点：&lt;code&gt;QRemoteObjectNode::connectToNode(&quot;local:interfaces&quot;)&lt;/code&gt; 连接本机服务、&lt;code&gt;acquire&amp;lt;Replica&amp;gt;()&lt;/code&gt; 拿代理、&lt;code&gt;enableRemoting(this)&lt;/code&gt; 暴露。消息统一打包成 &lt;code&gt;QByteArray&lt;/code&gt;（QDataStream 序列化键值对）。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;4. 本地 Unix Socket（我们的手柄方案）&lt;/h2&gt;
+&lt;p&gt;手柄守护进程 &lt;code&gt;gamepadd&lt;/code&gt;（纯 C）把 USB 手柄状态广播到 &lt;code&gt;/tmp/gamepad.sock&lt;/code&gt;，Qt 的 &lt;code&gt;GamepadClient&lt;/code&gt; 用 &lt;code&gt;QLocalSocket&lt;/code&gt; 连上读取。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;C 守护进程端&lt;/strong&gt;（controller_dev/gamepadd.c）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+bind(listen_fd, (struct sockaddr*)&amp;amp;addr, sizeof(addr));  // addr.sun_path=&quot;/tmp/gamepad.sock&quot;
+listen(listen_fd, 8);
+// 每帧: accept 客户端, 向所有客户端 write 一行 &quot;lx,ly,...,Up,Down,Left,Right&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Qt 端&lt;/strong&gt;（mytest/gamepadclient.cpp）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QLocalSocket&amp;gt;
+m_socket = new QLocalSocket(this);
+connect(m_socket, &amp;amp;QLocalSocket::readyRead, this, &amp;amp;GamepadClient::onReadyRead);
+m_socket-&amp;gt;connectToServer(&quot;/tmp/gamepad.sock&quot;);   // 连 Unix socket
+connect(m_socket, &amp;amp;QLocalSocket::disconnected, this, [this]{ reconnect(); }); // 断线重连
+
+void GamepadClient::onReadyRead() {
+    m_buffer.append(m_socket-&amp;gt;readAll());
+    int idx;
+    while ((idx = m_buffer.indexOf(&apos;\n&apos;)) &amp;gt;= 0) {   // 按行解析
+        QByteArray line = m_buffer.left(idx).trimmed();
+        m_buffer.remove(0, idx + 1);
+        parseLine(line);   // 更新 20 个 Q_PROPERTY, emit changed()
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;API 要点：&lt;code&gt;QLocalSocket&lt;/code&gt; = Unix domain socket 的 Qt 封装（比 TCP 快且本机安全）。&lt;strong&gt;读一行 → split(&apos;,&apos;) → 更新属性&lt;/strong&gt; 是设备状态推送的标准套路。断开信号 &lt;code&gt;disconnected&lt;/code&gt; 触发重连（游戏手柄热插拔）。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;5. 串口通信（预留，参考 ref_code）&lt;/h2&gt;
+&lt;p&gt;虽然 qt_dev 现有 App 没直接用 &lt;code&gt;QSerialPort&lt;/code&gt;，但它是嵌入式必备，方法一样：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QT += serialport
+&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;QSerialPort&amp;gt;
+QSerialPort sp;
+sp.setPortName(&quot;/dev/ttymxc0&quot;);
+sp.setBaudRate(115200);
+sp.open(QIODevice::ReadWrite);
+connect(&amp;amp;sp, &amp;amp;QSerialPort::readyRead, [&amp;amp;]{
+    qDebug() &amp;lt;&amp;lt; sp.readAll();   // 收数据
+});
+sp.write(&quot;AT\r\n&quot;);             // 发数据
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;6. 通信方式选择速查&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;场景&lt;/th&gt;
+&lt;th&gt;方案&lt;/th&gt;
+&lt;th&gt;优点&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;手机远程控制&lt;/td&gt;
+&lt;td&gt;MQTT&lt;/td&gt;
+&lt;td&gt;上云、跨网络、有 broker 中转&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;PC↔板子传数据/投屏&lt;/td&gt;
+&lt;td&gt;TCP socket&lt;/td&gt;
+&lt;td&gt;简单、流式&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;板内多个 Qt 进程通信&lt;/td&gt;
+&lt;td&gt;Qt RemoteObjects&lt;/td&gt;
+&lt;td&gt;类型安全、自动生成&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;本机进程传状态&lt;/td&gt;
+&lt;td&gt;Unix socket&lt;/td&gt;
+&lt;td&gt;最快、无 TCP 开销&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;外设串口/RS485&lt;/td&gt;
+&lt;td&gt;QSerialPort&lt;/td&gt;
+&lt;td&gt;直接操作 UART&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>Qt 开发：06 图形效果与 3D、主题</title><link>https://lnxlnxlnx.github.io/posts/qt/06-%E5%9B%BE%E5%BD%A2%E6%95%88%E6%9E%9C%E4%B8%8E3d/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/06-%E5%9B%BE%E5%BD%A2%E6%95%88%E6%9E%9C%E4%B8%8E3d/</guid><description>QtGraphicalEffects、Qt 3D 仪表盘、Material/Fluid 主题。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;06 图形效果与 3D、主题&lt;/h1&gt;
+&lt;p&gt;Qt Quick 在&quot;好看&quot;这件事上有三层工具：&lt;strong&gt;QtGraphicalEffects&lt;/strong&gt;（2D 特效）、&lt;strong&gt;Qt Quick 3D / Qt 3D&lt;/strong&gt;（3D）、&lt;strong&gt;主题系统&lt;/strong&gt;（Material、Fluid）。&lt;/p&gt;
+&lt;h2&gt;1. QtGraphicalEffects —— 2D 特效&lt;/h2&gt;
+&lt;p&gt;systemui、camera、mytest 都 import 了它，用来做&lt;strong&gt;阴影、模糊、颜色调整&lt;/strong&gt;。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtGraphicalEffects 1.12
+
+// 给图片加阴影
+Item {
+    Image { id: icon; source: &quot;qrc:/xxx.png&quot; }
+    DropShadow {
+        anchors.fill: icon
+        source: icon
+        radius: 8                    // 阴影半径
+        samples: 16
+        color: &quot;#80000000&quot;           // 半透明黑
+        opacity: 0.8
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;其他常用效果：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;Blur&lt;/code&gt;（高斯模糊，弹窗背景）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;OpacityMask&lt;/code&gt;（按通道裁剪）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Colorize&lt;/code&gt;（上色）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;BrightnessContrast&lt;/code&gt;（亮度对比度，扫雷暗色处理）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;FastBlur&lt;/code&gt;（快但质量略低）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;2. Qt Quick 3D —— 3D 仪表盘（dashboard app）&lt;/h2&gt;
+&lt;p&gt;dashboard 用 Qt 3D 画汽车仪表盘（转速表/车速表/油量表），是 3D 场景嵌入 QML 的示例。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QT += 3dcore 3drender 3dinput 3dquick 3dquickextras
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;QML 顶层是一个 &lt;code&gt;Entity&lt;/code&gt;（3D 场景根）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick 2.12
+import Qt3D.Core 2.12
+import Qt3D.Render 2.12
+import Qt3D.Input 2.12
+import QtQuick.Scene3D 2.0
+
+Item {
+    Scene3D {                       // 把 3D 场景嵌进 2D 界面
+        anchors.fill: parent
+        Entity {                    // 3D 场景根
+            // 相机
+            Camera {
+                id: camera
+                projectionType: CameraLens.PerspectiveProjection
+                fieldOfView: 45
+                aspectRatio: 16/9
+                nearPlane: 0.1; farPlane: 100
+                position: Qt.vector3d(0, 0, 20)
+                upVector: Qt.vector3d(0, 1, 0)
+            }
+            // 渲染配置(场景表面/相机/窗口大小)
+            RenderSettings { activeFrameGraph: ForwardRenderer { camera: camera } }
+            // 输入(允许鼠标旋转视角)
+            InputSettings {}
+            // 你的 3D 模型/网格 + 材质 + 变换
+            CuboidMesh { id: boxMesh }
+            PhongMaterial { id: mat; diffuse: &quot;#2196f3&quot; }
+            Transform { id: tr; rotation: fromAxisAndAngle(Qt.vector3d(0,1,0), 45) }
+            MeshObject {
+                mesh: boxMesh
+                material: mat
+                transform: tr
+            }
+        }
+    }
+    // 2D 覆盖层: 用 Slider/Text 控制 3D
+    Slider { value: 45; onValueChanged: tr.rotation = ... }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;概念：&lt;code&gt;Entity&lt;/code&gt;(对象) = &lt;code&gt;Mesh&lt;/code&gt;(几何) + &lt;code&gt;Material&lt;/code&gt;(材质) + &lt;code&gt;Transform&lt;/code&gt;(位置/旋转)，&lt;code&gt;Camera&lt;/code&gt; 定视角，&lt;code&gt;RenderSettings&lt;/code&gt; 管渲染，&lt;code&gt;Scene3D&lt;/code&gt; 把 3D 嵌进 QML。
+性能提示：A7 单核软渲染跑真 3D 会吃力，dashboard 用低面数模型+简单材质。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;3. Material 主题（fluid_demo）&lt;/h2&gt;
+&lt;p&gt;fluid_demo 用 Qt Quick Controls 2 的 Material 风格（Google 设计语言）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick.Controls 2.3
+import QtQuick.Controls.Material 2.3
+
+ApplicationWindow {
+    Material.theme: Material.Dark        // 深色主题
+    Material.accent: Material.Pink       // 强调色
+    Button { text: &quot;按钮&quot; }               // 自动带 Material 样式
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;再配合 &lt;code&gt;Fluid.Controls&lt;/code&gt;（开源组件库）里的 &lt;code&gt;AppBar&lt;/code&gt;、&lt;code&gt;Card&lt;/code&gt;、&lt;code&gt;NavigationBar&lt;/code&gt; 等，快速搭出现代界面。&lt;/p&gt;
+&lt;h2&gt;4. 自定义主题与统一风格&lt;/h2&gt;
+&lt;p&gt;mytest 的美化示例——统一用&quot;颜色常量 + 半透明卡片 + 圆角&quot;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 卡片: 白底圆角 + 彩色边框
+Rectangle {
+    radius: 18
+    color: &quot;#ffffff&quot;
+    border.color: &quot;#66ffd54f&quot;
+    border.width: 2
+    // 悬浮/按下缩放反馈
+    scale: mouse.pressed ? 0.96 : (mouse.containsMouse ? 1.03 : 1.0)
+    Behavior on scale { NumberAnimation { duration: 90 } }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;常用美化套路：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;渐变背景&lt;/strong&gt;：&lt;code&gt;Rectangle { gradient: Gradient { GradientStop{...} } }&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;半透明遮罩&lt;/strong&gt;：&lt;code&gt;color: &quot;#cc000000&quot;&lt;/code&gt;（#AARRGGBB）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;圆角 + 阴影&lt;/strong&gt;：&lt;code&gt;radius&lt;/code&gt; + &lt;code&gt;DropShadow&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;文字描边&lt;/strong&gt;：&lt;code&gt;style: Text.Outline; styleColor: &quot;#00000088&quot;&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;5. 动画让界面&quot;活&quot;起来&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;NumberAnimation&lt;/code&gt;：数字/位置渐变&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;SequentialAnimation&lt;/code&gt; + &lt;code&gt;loops: Animation.Infinite&lt;/code&gt;：循环动画（加载圈、尾焰）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Behavior on 属性&lt;/code&gt;：属性一变就平滑过渡&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PropertyAnimation&lt;/code&gt; / &lt;code&gt;QPropertyAnimation&lt;/code&gt;（C++ 里也能用，见 mypushbutton 的按钮弹跳）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;mypushbutton 的&quot;按钮点击弹一下&quot;（C++ 动画）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;QPropertyAnimation *animation = new QPropertyAnimation(this, &quot;geometry&quot;);
+animation-&amp;gt;setDuration(200);
+animation-&amp;gt;setStartValue(QRect(x(), y(), width(), height()));
+animation-&amp;gt;setEndValue(QRect(x(), y() + 10, width(), height()));  // 下移 10
+animation-&amp;gt;setEasingCurve(QEasingCurve::OutBounce);
+animation-&amp;gt;start();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;6. 性能注意事项（单核 A7）&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;动画/定时器别太多&lt;/strong&gt;：全局 16ms 定时器 2~3 个即可&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;大图尽量缩放绘制&lt;/strong&gt;：&lt;code&gt;paintEvent&lt;/code&gt; 里 &lt;code&gt;painter.scale&lt;/code&gt; 而非加载大图&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Canvas 优先于大量 Rectangle&lt;/strong&gt;：游戏场景用 Canvas 单画布，别堆几百个元素&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;避免高分辨率模糊/阴影&lt;/strong&gt;：软渲染下 DropShadow 大半径很费&lt;/li&gt;
+&lt;/ul&gt;
+</content:encoded></item><item><title>Qt 开发：07 App 实战全解析</title><link>https://lnxlnxlnx.github.io/posts/qt/07-app%E5%AE%9E%E6%88%98%E8%A7%A3%E6%9E%90/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/qt/07-app%E5%AE%9E%E6%88%98%E8%A7%A3%E6%9E%90/</guid><description>逐个 App 的组件清单、结构、关键代码逐行讲解。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;07 App 实战全解析（逐个 App）&lt;/h1&gt;
+&lt;p&gt;本章把 &lt;code&gt;qt_dev/&lt;/code&gt; 里每个 App 都拆开看：&lt;strong&gt;用了哪些组件、什么结构、怎么碰硬件、关键代码&lt;/strong&gt;。按功能分组。&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h2&gt;框架类&lt;/h2&gt;
+&lt;h3&gt;systemui —— 桌面系统&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Window&lt;/code&gt; + &lt;code&gt;SwipeView&lt;/code&gt;(左右滑桌面) + &lt;code&gt;BottomApp&lt;/code&gt;(底部任务栏) + &lt;code&gt;PageIndicator&lt;/code&gt;(页点) + &lt;code&gt;Image&lt;/code&gt;/&lt;code&gt;Rectangle&lt;/code&gt; + &lt;code&gt;Connections&lt;/code&gt; + &lt;code&gt;Timer&lt;/code&gt; + &lt;code&gt;SystemTime&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;职责&lt;/strong&gt;：管理 App 列表（apk*.cfg）、点击图标 &lt;code&gt;QProcess&lt;/code&gt; 启动 App、通过 remoteobjects 协调显示/隐藏、悬浮球返回&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键机制&lt;/strong&gt;：&lt;code&gt;apklistmodel.cpp&lt;/code&gt; 读 cfg → &lt;code&gt;LaunchIntent::lauchApp(appName)&lt;/code&gt; 启动二进制&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;SwipeView {          // 桌面可左右滑动
+    Page1 {} ; Page2 {}
+    PageIndicator { count: SwipeView.count; currentIndex: SwipeView.currentIndex }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;client / Client.qml —— App 公共框架&lt;/h3&gt;
+&lt;p&gt;每个 App 的 main.qml 都 &lt;code&gt;Client { programmerName: &quot;xxx&quot; }&lt;/code&gt;。它：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;内置 &lt;code&gt;SystemUICommonApiClient&lt;/code&gt; 与桌面通信（Show/Hide/Quit）&lt;/li&gt;
+&lt;li&gt;实例化 &lt;code&gt;AppMainBody&lt;/code&gt;（App 入口）&lt;/li&gt;
+&lt;li&gt;画&lt;strong&gt;悬浮返回球&lt;/strong&gt;（可拖拽，点击回桌面）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code&gt;Item {
+    property string programmerName
+    SystemUICommonApiClient {
+        id: systemUICommonApiClient
+        appName: programmerName
+        onActionCommand: {
+            if (cmd === SystemUICommonApiClient.Show) {
+                systemUICommonApiClient.askSystemUItohideOrShow(SystemUICommonApiClient.Hide)
+                window.show()
+            }
+            if (cmd === SystemUICommonApiClient.Quit) Qt.quit()
+        }
+    }
+    AppMainBody { anchors.fill: parent; id: appMainBody; visible: true }
+    RoundButton { /* 悬浮返回球 */ onClicked: { /* 隐藏自己, 显示桌面 */ } }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;template —— 空白模板&lt;/h3&gt;
+&lt;p&gt;复制它就能开始新 App：&lt;code&gt;main.cpp&lt;/code&gt;(空注册) + &lt;code&gt;main.qml&lt;/code&gt;(Window+Client) + &lt;code&gt;AppMainBody.qml&lt;/code&gt;(Loader 加载 &lt;code&gt;MainLayout.qml&lt;/code&gt;)。照着加你的 QML 和 C++ 即可。&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h2&gt;硬件控制类&lt;/h2&gt;
+&lt;h3&gt;led —— LED 控制&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;结构&lt;/strong&gt;：&lt;code&gt;AppMainBody&lt;/code&gt; → &lt;code&gt;LedLayout.qml&lt;/code&gt; + C++ &lt;code&gt;LedControl&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Image&lt;/code&gt;(灯泡图) + &lt;code&gt;MouseArea&lt;/code&gt; + &lt;code&gt;Text&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：写 &lt;code&gt;/sys/class/leds/sys-led/brightness&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键代码&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;LedControl { id: ledControl }
+Image { source: ledControl.ledState ? &quot;qrc:/icons/led_on.png&quot; : &quot;qrc:/icons/led_off.png&quot; }
+MouseArea { anchors.fill: parent; onClicked: ledControl.setLedState(ledControl.ledState ? 0 : 1) }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;beep —— 蜂鸣器&lt;/h3&gt;
+&lt;p&gt;同 LED，写 &lt;code&gt;/sys/class/leds/beep/brightness&lt;/code&gt;。可做&quot;按下滴答&quot;反馈。&lt;/p&gt;
+&lt;h3&gt;key —— 按键检测&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：读 &lt;code&gt;/dev/input/eventX&lt;/code&gt; 的 &lt;code&gt;EV_KEY&lt;/code&gt; 事件&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Image&lt;/code&gt;(按键位图) + &lt;code&gt;MouseArea&lt;/code&gt; + &lt;code&gt;Text&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;用子线程轮询，避免卡 UI（参考 screenview 的 KeyInputEventThread）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;sensor —— 传感器（I2C）&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;结构&lt;/strong&gt;：&lt;code&gt;SensorLayout.qml&lt;/code&gt; + &lt;code&gt;Ap3216cThread&lt;/code&gt;(光感) + &lt;code&gt;Icm20608Thread&lt;/code&gt;(陀螺仪)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Text&lt;/code&gt; 显示数值、&lt;code&gt;RowLayout&lt;/code&gt;/&lt;code&gt;Column&lt;/code&gt; 排版、图标 &lt;code&gt;Image&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：&lt;code&gt;QThread::run()&lt;/code&gt; 里 open+read &lt;code&gt;/dev/ap3216c&lt;/code&gt;、&lt;code&gt;/dev/icm20608&lt;/code&gt;，&lt;code&gt;Q_PROPERTY NOTIFY&lt;/code&gt; 刷新界面&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;Ap3216cThread { id: als; onAlsDataChanged: alsText.text = als.alsData }
+Icm20608Thread { id: gyro; onIcmDataChanged: gyroText.text = gyro.icmData }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;pcba / keil —— 测试工具&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Grid&lt;/code&gt;/&lt;code&gt;GridLayout&lt;/code&gt; 排按钮、&lt;code&gt;Button&lt;/code&gt;、&lt;code&gt;Text&lt;/code&gt;、&lt;code&gt;Rectangle&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;主要调系统命令/GPIO 做板级自检。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;location —— 定位（GPS/传感器融合）&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;用 &lt;code&gt;Column&lt;/code&gt;/&lt;code&gt;Text&lt;/code&gt;/图标展示经纬度等定位信息，C++ 侧读定位设备。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;多媒体类&lt;/h2&gt;
+&lt;h3&gt;camera —— 摄像头&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Camera&lt;/code&gt;(设备) + &lt;code&gt;VideoOutput&lt;/code&gt;(画面) + &lt;code&gt;Row&lt;/code&gt;/&lt;code&gt;Text&lt;/code&gt;(提示) + &lt;code&gt;Image&lt;/code&gt;(拍照预览)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;C++&lt;/strong&gt;：&lt;code&gt;Camera&lt;/code&gt; 类封装 &lt;code&gt;QCameraInfo::availableCameras()&lt;/code&gt; 枚举 + 分辨率设置&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键 QML&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;Camera { id: camera; deviceId: cameraDevice }
+VideoOutput { source: camera; anchors.fill: parent }
+Button { text: &quot;拍照&quot;; onClicked: imageCapture.capture() }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;music —— 音乐播放&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Audio&lt;/code&gt;(播放) + &lt;code&gt;Slider&lt;/code&gt;(进度/音量) + &lt;code&gt;ListView&lt;/code&gt;(歌曲列表) + &lt;code&gt;Button&lt;/code&gt;(上一首/播放/下一首) + &lt;code&gt;Text&lt;/code&gt;(歌名)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键 QML&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;import QtMultimedia 5.0
+Audio { id: player; source: listModel.get(currentIndex).url }
+Button { text: player.playing ? &quot;暂停&quot; : &quot;播放&quot;; onClicked: player.playing ? player.pause() : player.play() }
+Slider { from:0; to:100; value:60; onValueChanged: player.volume = value/100 }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;audio —— 音频分析（录音 + 波形）&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：&lt;code&gt;QAudioInput&lt;/code&gt;/&lt;code&gt;AudioRecorder&lt;/code&gt; 采音，&lt;code&gt;QAudioProbe&lt;/code&gt; 抓帧&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Canvas&lt;/code&gt;(画波形)、&lt;code&gt;Text&lt;/code&gt;(频率/音量)、&lt;code&gt;Button&lt;/code&gt;(开始/停止)&lt;/li&gt;
+&lt;li&gt;帧率不够时用 Canvas 画动态波形是嵌入式最佳选择。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;player —— 视频播放&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;MediaPlayer&lt;/code&gt; + &lt;code&gt;VideoOutput&lt;/code&gt;(画面) + &lt;code&gt;Slider&lt;/code&gt;(进度) + &lt;code&gt;Button&lt;/code&gt;(播放/暂停/全屏) + &lt;code&gt;ListView&lt;/code&gt;(片源)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键 QML&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;import QtMultimedia 5.0
+MediaPlayer { id: mp; source: &quot;file:///home/root/video.mp4&quot; }
+VideoOutput { source: mp; anchors.fill: parent }
+Button { text: mp.playbackState === MediaPlayer.PlayingState ? &quot;暂停&quot; : &quot;播放&quot;
+         onClicked: mp.playbackState === MediaPlayer.PlayingState ? mp.pause() : mp.play() }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;photoview —— 图片浏览器&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;GridView&lt;/code&gt;(缩略图墙) + &lt;code&gt;Image&lt;/code&gt;(大图) + &lt;code&gt;ListView&lt;/code&gt;(目录) + &lt;code&gt;FolderListModel&lt;/code&gt;(读目录) + &lt;code&gt;Dialog&lt;/code&gt;(对话框)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键 QML&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;import Qt.labs.folderlistmodel 2.1
+FolderListModel { id: folderModel; folder: &quot;file:///home/root&quot;; nameFilters: [&quot;*.jpg&quot;,&quot;*.png&quot;] }
+GridView {
+    model: folderModel
+    cellWidth: 100; cellHeight: 100
+    delegate: Image {
+        source: filePath
+        MouseArea { anchors.fill: parent; onClicked: bigImage.source = filePath }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;hr /&gt;
+&lt;h2&gt;系统工具类&lt;/h2&gt;
+&lt;h3&gt;notepad —— 记事本（虚拟键盘）&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;TextArea&lt;/code&gt;/&lt;code&gt;TextField&lt;/code&gt; + &lt;code&gt;InputPanel&lt;/code&gt;(虚拟键盘) + &lt;code&gt;Button&lt;/code&gt;(保存/清空) + &lt;code&gt;Text&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：&lt;code&gt;QFile&lt;/code&gt; 读写 &lt;code&gt;/home/root/note.txt&lt;/code&gt;；屏幕键盘靠 &lt;code&gt;QT += virtualkeyboard&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;settings —— 系统设置&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;SwipeView&lt;/code&gt; + &lt;code&gt;ListView&lt;/code&gt;(设置项) + &lt;code&gt;Switch&lt;/code&gt;(开关) + &lt;code&gt;Slider&lt;/code&gt;(亮度) + &lt;code&gt;TextField&lt;/code&gt;(输入) + &lt;code&gt;InputPanel&lt;/code&gt; + &lt;code&gt;Connman&lt;/code&gt;(WiFi)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：调用 &lt;code&gt;wpa_supplicant&lt;/code&gt;/&lt;code&gt;connman&lt;/code&gt; 管 WiFi 蓝牙，&lt;code&gt;system()&lt;/code&gt; 调系统命令&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;import Connman 0.2
+Connman { id: connman }
+ListView { model: connman.networks; delegate: Text { text: model.name } }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;fileview —— 文件浏览器&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;ListView&lt;/code&gt; + &lt;code&gt;FolderListModel&lt;/code&gt; + &lt;code&gt;Button&lt;/code&gt;(返回/复制) + &lt;code&gt;Text&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;纯文件 IO，无硬件。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;clock —— 时钟&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;Rectangle&lt;/code&gt;(表盘) + &lt;code&gt;Canvas&lt;/code&gt;(画指针) + &lt;code&gt;Timer&lt;/code&gt;(每秒刷新) + &lt;code&gt;Text&lt;/code&gt;(日期)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;关键 QML&lt;/strong&gt;：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;Timer { interval: 1000; repeat: true; onTriggered: canvas.requestPaint() }
+Canvas { onPaint: { /* 按当前时间画时针/分针/秒针 */ } }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;background —— 壁纸&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;把选中的图片设为桌面壁纸（写配置/调 systemui 接口），组件用 &lt;code&gt;GridView&lt;/code&gt; + &lt;code&gt;Image&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;网络类&lt;/h2&gt;
+&lt;h3&gt;iot_control —— MQTT 智能控制&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;MqttControl&lt;/code&gt;(C++) + &lt;code&gt;Switch&lt;/code&gt;(灯) + &lt;code&gt;Text&lt;/code&gt;(状态) + &lt;code&gt;TextField&lt;/code&gt;(服务器/主题)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;硬件&lt;/strong&gt;：MQTT 协议 → 手机指令控制 GPIO&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;MqttControl { id: mqtt; topicPrefix: &quot;atk/led&quot;
+  onMessageReceived: if (payload===&quot;on&quot;) led.setLedState(1) }
+Switch { onToggled: mqtt.publish(mqtt.topicPrefix+&quot;/cmd&quot;, checked?&quot;on&quot;:&quot;off&quot;, false) }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;screenview —— 投屏（QWidget 版）&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;技术&lt;/strong&gt;：&lt;code&gt;QTcpServer&lt;/code&gt;+&lt;code&gt;QTcpSocket&lt;/code&gt; 收 MJPEG，&lt;code&gt;QPainter::drawImage&lt;/code&gt; 画帧&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;结构&lt;/strong&gt;：QWidget（&lt;code&gt;paintEvent&lt;/code&gt;）而非 QML，是 qt_dev 里少有的 Widgets 应用&lt;/li&gt;
+&lt;li&gt;还接了 &lt;code&gt;KeyInputEventThread&lt;/code&gt;（按键退出）和 &lt;code&gt;SystemUICommonApiClient&lt;/code&gt;（进桌面框架）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;fluid_demo —— Fluid 组件库演示&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;组件&lt;/strong&gt;：&lt;code&gt;FluidControls.AppBar&lt;/code&gt;/&lt;code&gt;Card&lt;/code&gt;/&lt;code&gt;NavigationBar&lt;/code&gt; + &lt;code&gt;Material&lt;/code&gt; 主题&lt;/li&gt;
+&lt;li&gt;学习用，展示开源组件库接入方式&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;游戏类（mytest）&lt;/h2&gt;
+&lt;p&gt;mytest 是 qt_dev 里最丰富的 App，融合了&lt;strong&gt;摄像头识别 + 纯 QML 游戏 + 手柄&lt;/strong&gt;：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;页面&lt;/th&gt;
+&lt;th&gt;技术&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;拼图&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Grid&lt;/code&gt; + &lt;code&gt;ListModel&lt;/code&gt; + &lt;code&gt;MouseArea&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;扫雷&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Repeater&lt;/code&gt;/&lt;code&gt;GridView&lt;/code&gt; + &lt;code&gt;ListModel&lt;/code&gt; + 排行榜(&lt;code&gt;ScoreStorage&lt;/code&gt; C++)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;手写数字识别&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Camera&lt;/code&gt;+&lt;code&gt;VideoOutput&lt;/code&gt; 抓帧 → C++ 神经网络 → &lt;code&gt;ImageProvider&lt;/code&gt; 回显&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;太空射击/贪吃蛇/俄罗斯方块&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Canvas&lt;/code&gt; 单画布 + &lt;code&gt;Timer&lt;/code&gt; 游戏循环 + 手柄(&lt;code&gt;gamepad&lt;/code&gt; 全局对象)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;手柄游戏循环&lt;/strong&gt;（一个通用模板）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 全局: main.cpp 里 contextProperty 注册 gamepad
+Timer {
+    interval: 16; repeat: true; running: true
+    onTriggered: {
+        // 读手柄
+        var dir = (gamepad.axisLX &amp;lt; -6000) ? -1 : (gamepad.axisLX &amp;gt; 6000 ? 1 : 0)
+        playerX += dir * 8
+        if (gamepad.btnA) fire()              // 跳跃/开火
+        // 更新逻辑 + 重绘
+        canvas.requestPaint()
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;完整链路见《03-QML与C++交互.md》第 6 节。&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h2&gt;QWidget 与 QML 的取舍（openhome / screenview）&lt;/h2&gt;
+&lt;p&gt;qt_dev 里 95% 是 QML，只有 openhome、screenview 是纯 Widgets：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;对比&lt;/th&gt;
+&lt;th&gt;QML (Qt Quick)&lt;/th&gt;
+&lt;th&gt;QWidget&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;开发界面速度&lt;/td&gt;
+&lt;td&gt;快(声明式/绑定)&lt;/td&gt;
+&lt;td&gt;慢(命令式)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;动画/效果&lt;/td&gt;
+&lt;td&gt;丰富(内建动画/特效)&lt;/td&gt;
+&lt;td&gt;需手动 QPainter&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;触摸/嵌入式&lt;/td&gt;
+&lt;td&gt;更友好&lt;/td&gt;
+&lt;td&gt;也能用&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;适用&lt;/td&gt;
+&lt;td&gt;大多数 App&lt;/td&gt;
+&lt;td&gt;传统桌面工具、绘图/网络流&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;blockquote&gt;
+&lt;p&gt;新 App 建议直接 QML。需要底层快速绘图（如投屏逐帧解码绘制）时可考虑 Widgets 的 &lt;code&gt;paintEvent&lt;/code&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+</content:encoded></item><item><title>appflash 使用文档</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/appflash%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/appflash%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</guid><description>IMX6ULL 开发板 Linux C 应用一键交叉编译、部署、运行工具使用说明。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;appflash 使用文档&lt;/h1&gt;
+&lt;p&gt;IMX6ULL 开发板 Linux C 应用一键交叉编译、部署、运行工具使用说明。&lt;/p&gt;
+&lt;h2&gt;1. 简介&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;appflash&lt;/code&gt; 用于把 &lt;code&gt;11、Linux C应用编程例程源码/&lt;/code&gt; 下的 C 例程（或任意 &lt;code&gt;.c&lt;/code&gt; 源文件）快速放到开发板上运行。一条命令完成三件事：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;交叉编译&lt;/strong&gt;：用工具链的 &lt;code&gt;$CC&lt;/code&gt; 编译源文件，自动探测并链接所需库（tslib/jpeg/png/freetype/alsa 等）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;部署&lt;/strong&gt;：通过 tftp 把二进制推到板子的用户家目录 &lt;code&gt;/home/root/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;运行&lt;/strong&gt;：通过 ssh 在板子上启动程序并回显启动日志&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;与 &lt;code&gt;pyflash&lt;/code&gt;（裸机烧录）、&lt;code&gt;qtflash&lt;/code&gt; / &lt;code&gt;qtflash_auto&lt;/code&gt;（Qt 部署）互补：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;对象&lt;/th&gt;
+&lt;th&gt;方式&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;pyflash&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;裸机程序 &lt;code&gt;.bin&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;make + uuu USB 烧录&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash&lt;/code&gt; / &lt;code&gt;qtflash_auto&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Qt 工程&lt;/td&gt;
+&lt;td&gt;打包 ui.tar.bz2 + tftp 部署&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Linux C 应用&lt;/td&gt;
+&lt;td&gt;交叉编译 + tftp 到家目录 + ssh 运行&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;2. 环境与前提&lt;/h2&gt;
+&lt;h3&gt;2.1 网络&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;网线直连板子与电脑有线网卡&lt;/li&gt;
+&lt;li&gt;板子静态 IP：&lt;code&gt;192.168.1.20&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;电脑 IP：&lt;code&gt;192.168.1.101&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;板子 root ssh 密码：&lt;code&gt;0314&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.2 依赖服务&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;tftpd-hpa&lt;/strong&gt;（WSL 侧）：文件下载服务，根目录 = &lt;code&gt;qt_dev/&lt;/code&gt;。命令会自动检查并启动，文件经根目录下 &lt;code&gt;.appflash/&lt;/code&gt; 暂存子目录传输（避免与 Qt 工程目录同名冲突）。
+&lt;blockquote&gt;
+&lt;p&gt;若板子下载超时，检查 Windows 防火墙是否放行入站 UDP 69。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;dropbear&lt;/strong&gt;（板子侧）：ssh 服务，供自动运行使用。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.3 配置常量&lt;/h3&gt;
+&lt;p&gt;脚本 &lt;code&gt;/home/lnx/Linux_dev/imx6ull/my_code/appflash.py&lt;/code&gt; 顶部常量，换网段/换板子时修改：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;常量&lt;/th&gt;
+&lt;th&gt;默认值&lt;/th&gt;
+&lt;th&gt;含义&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;SRC_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;~/Linux_dev/imx6ull/ref_code/11、Linux C应用编程例程源码&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;C 例程根目录&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;TFTP_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;~/Linux_dev/imx6ull/qt_dev&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;tftp 根目录（&lt;code&gt;.appflash/&lt;/code&gt; 为暂存子目录）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;BOARD_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.20&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PC_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.101&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;电脑 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;BOARD_HOME&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/home/root&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子家目录（程序安装位置）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PASSWORD&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;0314&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 root ssh 密码&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;ENV_SETUP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/opt/fsl-imx-x11/.../environment-setup-...&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;交叉编译环境脚本&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;3. 一键用法（核心）&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;appflash &amp;lt;目标&amp;gt; [程序参数...]
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;&amp;lt;目标&amp;gt;&lt;/code&gt; 可以是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;目录：&lt;code&gt;appflash 15_led&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;目录 + 文件名：&lt;code&gt;appflash 17_input/read_key.c&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;相对例程根目录的路径，或绝对路径&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;程序参数直接跟在目标后面即可，参数开头的 &lt;code&gt;--&lt;/code&gt; 会被自动去掉：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;appflash 15_led off          # 板子上执行: /home/root/led off
+appflash 15_led/ --off       # 同样执行 led off(--off 自动转 off)
+appflash 17_input/read_ts.c  # 直接运行
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;若程序需要真正以 &lt;code&gt;--&lt;/code&gt; 开头的参数（如长选项），用独立的 &lt;code&gt;--&lt;/code&gt; 分隔符原样透传：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;appflash myprog -- --verbose --count 3
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;流程与输出：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[1/4] 编译 read_ts.c -&amp;gt; read_ts  库: -lts     # 自动探测库
+[*] 生成 .../read_ts (10744 B)
+[*] tftpd-hpa 运行中
+[2/4] 传输 read_ts -&amp;gt; 板子 /home/root/
+[3/4] 板子运行 /home/root/read_ts
+----- 启动日志 -----
+...
+----- 运行状态 -----
+  PID ?  00:00:01 read_ts
+[4/4] 完成!程序已启动
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;多文件目录&lt;/h3&gt;
+&lt;p&gt;目录下有多个 &lt;code&gt;.c&lt;/code&gt; 文件（如 &lt;code&gt;16_gpio&lt;/code&gt;、&lt;code&gt;17_input&lt;/code&gt;、&lt;code&gt;28_alsa-lib&lt;/code&gt;）时，会打印编号菜单让你选择要编译的源文件：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[?] .../18_tslib 下有多个 .c 文件,请选择要编译的:
+    [1] ts_read.c
+    [2] ts_read_mt.c
+选择编号:
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;更省事的方式是直接指定文件名：&lt;code&gt;appflash 28_alsa-lib/pcm_playback.c&lt;/code&gt;。&lt;/p&gt;
+&lt;h3&gt;库自动探测&lt;/h3&gt;
+&lt;p&gt;编译时扫描 &lt;code&gt;#include&lt;/code&gt;，自动加上链接库，无需手动指定：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;头文件&lt;/th&gt;
+&lt;th&gt;链接参数&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;tslib.h&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;-lts&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;jpeglib.h&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;-ljpeg&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;png.h&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;-lpng&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;ft2build.h&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;-lfreetype -I&amp;lt;sysroot&amp;gt;/usr/include/freetype2&lt;/code&gt;（有 &lt;code&gt;math.h&lt;/code&gt; 时自动加 &lt;code&gt;-lm&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;asoundlib.h&lt;/code&gt; / &lt;code&gt;alsa/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;-lasound&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;4. 子命令&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash build &amp;lt;目标&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;只交叉编译，二进制输出到源码目录（不加 &lt;code&gt;-l&lt;/code&gt; 也能看到探测到的库）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash transfer &amp;lt;本地文件&amp;gt; [板端路径]&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;任意文件推到板子并 chmod +x，默认 &lt;code&gt;/home/root/&amp;lt;文件名&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash run &amp;lt;名字&amp;gt; [参数...]&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;运行板子上 &lt;code&gt;/home/root/&amp;lt;名字&amp;gt;&lt;/code&gt;（会先 kill 旧进程，参数规则同第 3 节）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash kill &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;关闭板子上同名进程&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash log &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看板子上 &lt;code&gt;/tmp/&amp;lt;名字&amp;gt;.log&lt;/code&gt; 启动日志&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash status&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看 tftpd / 板子 ping / HOME / dropbear 状态&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;appflash list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;列出所有例程及每个目录下的源文件&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;5. 典型工作流&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;场景&lt;/th&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;编译并运行 LED 例程（点亮）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash 15_led -- on&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;运行 socket 服务器（长驻进程）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash 30_socket/socket_server.c&lt;/code&gt;，日志用 &lt;code&gt;appflash log socket_server&lt;/code&gt; 查看&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;只编译不部署&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash build 20_libjpeg/show_jpeg_image.c&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;把 PC 上的某个文件推上板子&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash transfer ./app /home/root/mytest&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;重新运行已部署的程序&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash run ts_read&lt;/code&gt;（&lt;code&gt;run&lt;/code&gt; 只接受板子家目录里的文件名）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;停掉后台程序&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;appflash kill socket_server&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;6. 交互式 / 流式程序怎么用&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;read_ts&lt;/code&gt;、&lt;code&gt;socket_server&lt;/code&gt;、&lt;code&gt;pcm_playback&lt;/code&gt; 这类程序是&lt;strong&gt;后台常驻&lt;/strong&gt;的：输出进板子的 &lt;code&gt;/tmp/&amp;lt;名字&amp;gt;.log&lt;/code&gt;，&lt;strong&gt;不会&lt;/strong&gt;回显到电脑终端。所以&quot;看不出效果&quot;多半是：程序要参数没给、或效果要靠 log 看。三步套路：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;run&lt;/strong&gt;：编译、传输、后台启动（常需要带设备/端口参数）&lt;pre&gt;&lt;code&gt;appflash 17_input/read_ts.c /dev/input/event1   # 触摸屏参数自己传(板上 goodix 触摸 = event1)
+&lt;/code&gt;&lt;/pre&gt;
+刚启动时 &lt;code&gt;----- 启动日志 -----&lt;/code&gt; 是空的，&lt;strong&gt;正常&lt;/strong&gt;——还没产生任何事件。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;交互&lt;/strong&gt;：去开发板上操作（点/划屏幕、连端口、放音乐……）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;log / kill&lt;/strong&gt;：看输出、完事停掉&lt;pre&gt;&lt;code&gt;appflash log read_ts   # 显示 按下(x,y) / 移动(x,y) / 松开
+appflash kill read_ts  # 停止常驻程序
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;常驻程序占着设备（如触摸屏），若后面要跑 Qt 桌面或另一个用同一设备的程序，记得先 &lt;code&gt;appflash kill &amp;lt;名字&amp;gt;&lt;/code&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;7. 常见问题排查&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;原因 / 处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;板子 tftp 下载超时&lt;/td&gt;
+&lt;td&gt;Windows 防火墙拦截 UDP 69。管理员 PowerShell 放行：&lt;code&gt;New-NetFirewallRule -DisplayName tftp69 -Direction Inbound -Protocol UDP -LocalPort 69 -Action Allow&lt;/code&gt;，或临时关闭防火墙&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;ssh 连接报 &lt;code&gt;no matching host key type&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 dropbear 仅支持 &lt;code&gt;ssh-rsa&lt;/code&gt;，脚本已带 &lt;code&gt;-o HostKeyAlgorithms=+ssh-rsa&lt;/code&gt; 兼容；手动 ssh 时需加同样参数&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;cannot open shared object ...&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子缺运行库。先在板子上 &lt;code&gt;ldd /home/root/&amp;lt;程序&amp;gt;&lt;/code&gt; 看缺什么，再到板子 &lt;code&gt;/usr/lib&lt;/code&gt; 确认，或从 &lt;code&gt;sysroots/cortexa7hf-neon-poky-linux-gnueabi/usr/lib/&lt;/code&gt; 对应拷贝&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;wrong ELF class&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;二进制是 x86_64（本机误用 &lt;code&gt;gcc&lt;/code&gt; 编译）或 64 位 ARM。确认输出为 &lt;code&gt;ELF 32-bit ARM&lt;/code&gt;；脚本始终走交叉编译 &lt;code&gt;$CC&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;编译报找不到 paho/MQTT 头文件&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;33_mqtt&lt;/code&gt; 例程依赖 paho.mqtt.c 库，本机与板子均未安装，脚本会明确报错提示。需要先交叉编译安装 paho 到工具链 sysroot&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;触摸例程（tslib）点了没反应&lt;/td&gt;
+&lt;td&gt;脚本运行时会自动 &lt;code&gt;export TSLIB_TSDEVICE=/dev/input/event1&lt;/code&gt;；若设备号不同，改脚本里 &lt;code&gt;TOUCH_DEV&lt;/code&gt; 常量&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;程序需要传参数&lt;/td&gt;
+&lt;td&gt;参数直接跟在目标后：&lt;code&gt;appflash 15_led --off&lt;/code&gt;（开头 &lt;code&gt;--&lt;/code&gt; 自动去掉）。需要原样保留 &lt;code&gt;--&lt;/code&gt; 前缀的长选项时用 &lt;code&gt;--&lt;/code&gt; 分隔：&lt;code&gt;appflash myprog -- --verbose&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;想改板子 ssh 密码&lt;/td&gt;
+&lt;td&gt;板子 &lt;code&gt;passwd root&lt;/code&gt; 修改，并同步更新 &lt;code&gt;appflash.py&lt;/code&gt; 的 &lt;code&gt;PASSWORD&lt;/code&gt; 常量&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>Fluid 组件库使用说明</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/fluid%E7%BB%84%E4%BB%B6%E5%BA%93%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/fluid%E7%BB%84%E4%BB%B6%E5%BA%93%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E/</guid><description>Liri Fluid（Material Design）QML 组件库在 i.MX6ULL 上的自包含式 qrc 移植说明。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;Fluid 组件库使用说明&lt;/h1&gt;
+&lt;p&gt;Liri Fluid（MPL-2.0）是一套遵循 Material Design 规范的 QtQuick/QML 组件库。本文档基于本仓库 &lt;code&gt;qt_dev/fluid_demo/&lt;/code&gt; 的实际移植（自包含式 qrc 集成，适配 i.MX6ULL 无 GPU 软件渲染）编写。&lt;/p&gt;
+&lt;h2&gt;1. 简介&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;项目&lt;/th&gt;
+&lt;th&gt;说明&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;来源&lt;/td&gt;
+&lt;td&gt;https://github.com/lirios/fluid （v1.3.0，MPL-2.0）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;移植方式&lt;/td&gt;
+&lt;td&gt;全部 QML/C++ 源码随工程打包进 qrc 资源，C++ 类型直接在 &lt;code&gt;main.cpp&lt;/code&gt; 里注册，&lt;strong&gt;不依赖&lt;/strong&gt;板子上安装额外的 QML 插件 &lt;code&gt;.so&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;演示程序&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qt_dev/fluid_demo/&lt;/code&gt;，桌面图标名 &lt;code&gt;Fluid组件演示&lt;/code&gt;，可执行文件 &lt;code&gt;fluid_demo&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;组件分成 5 个子模块，对应 QML import：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;QML 模块&lt;/th&gt;
+&lt;th&gt;import 版本&lt;/th&gt;
+&lt;th&gt;内容&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Fluid.Core&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;1.0&lt;/td&gt;
+&lt;td&gt;基础工具（&lt;code&gt;Object&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Fluid.Templates&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;1.0&lt;/td&gt;
+&lt;td&gt;模板（&lt;code&gt;Card&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Fluid.Controls&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;1.0 / 1.1&lt;/td&gt;
+&lt;td&gt;常用控件（大部分组件在这里）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Fluid.Layouts&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;1.0&lt;/td&gt;
+&lt;td&gt;布局（&lt;code&gt;AutomaticGrid&lt;/code&gt;、&lt;code&gt;ColumnFlow&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;Fluid.Effects&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;1.0&lt;/td&gt;
+&lt;td&gt;视觉效果（&lt;code&gt;Elevation&lt;/code&gt;、&lt;code&gt;BoxShadow&lt;/code&gt; 等）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;2. 工程结构&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;fluid_demo/
+├── main.cpp                  # 注册 Fluid C++ 类型 + 图片提供器
+├── main.qml                  # 主界面：AppBar + NavigationDrawer + StackView
+├── fluid_demo.pro            # 工程配置
+├── qml.qrc                   # 本程序自己的 qml/页面/图片
+├── fluid.qrc                 # Fluid 模块(qmldir+qml) + Material 图标(svg)
+├── fluid/
+│   ├── core/                 # Fluid.Core（含 C++ 插件源码）
+│   ├── templates/            # Fluid.Templates
+│   ├── controls/             # Fluid.Controls（控件 + 图标 svg + C++ 插件源码）
+│   ├── layouts/              # Fluid.Layouts
+│   └── effects/              # Fluid.Effects
+└── pages/                    # 演示页面（首页/按钮/列表/输入/对话框/底部面板/排版/卡片/图标）
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;2.1 fluid.qrc 的挂载原理&lt;/h3&gt;
+&lt;p&gt;Fluid 的 QML 模块不是安装到板子的系统目录，而是把每个模块目录做成一个 qrc 资源前缀，资源里带上 &lt;code&gt;qmldir&lt;/code&gt;，运行时靠 &lt;code&gt;engine.addImportPath(&quot;qrc:/&quot;)&lt;/code&gt; 让 import 解析到：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;&amp;lt;qresource prefix=&quot;/Fluid/Controls&quot;&amp;gt;
+    &amp;lt;file alias=&quot;qmldir&quot;&amp;gt;fluid/controls/qmldir&amp;lt;/file&amp;gt;
+    &amp;lt;file alias=&quot;AppBar11.qml&quot;&amp;gt;fluid/controls/AppBar11.qml&amp;lt;/file&amp;gt;
+    ...
+&amp;lt;/qresource&amp;gt;
+&amp;lt;qresource prefix=&quot;/liri.io/imports/Fluid/Controls&quot;&amp;gt;
+    &amp;lt;file alias=&quot;icons/action/home.svg&quot;&amp;gt;fluid/controls/icons/action/home.svg&amp;lt;/file&amp;gt;
+    ...
+&amp;lt;/qresource&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;main.cpp&lt;/code&gt; 里对应三件事（缺一不可）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;engine.addImportPath(QStringLiteral(&quot;qrc:/&quot;));                       // 1. import 路径
+engine.addImageProvider(QStringLiteral(&quot;fluidicontheme&quot;), ...);       // 2. 图标提供器
+FluidControlsPlugin().registerTypes(&quot;Fluid.Controls&quot;);                // 3. C++ 类型
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;2.2 fluid_demo.pro 关键配置&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;QT += quick quickcontrols2 svg remoteobjects
+DEFINES += FLUID_INSTALL_ICONS=0        # 图标从 qrc 加载（0=用 qrc，1=用本地文件）
+INCLUDEPATH += fluid fluid/core fluid/templates fluid/controls
+# SOURCES/HEADERS 里把 fluid/core、fluid/templates、fluid/controls 下的 .cpp/.h 全部加入
+RESOURCES += qml.qrc fluid.qrc
+include(../client/client.pri)            # 与 systemui 通信
+unix: target.path = /opt/ui/src/apps     # 部署到桌面的 apps 目录
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;3. 集成到自己的新工程&lt;/h2&gt;
+&lt;p&gt;以把 Fluid 用进一个新 App（例如 &lt;code&gt;myapp&lt;/code&gt;）为例：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;把 &lt;code&gt;fluid_demo/fluid/&lt;/code&gt; 整个目录拷贝到工程下（或直接用 &lt;code&gt;fluid_demo&lt;/code&gt; 的 pro 当模板）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;.pro&lt;/code&gt; 增加 &lt;code&gt;QT += svg&lt;/code&gt;、&lt;code&gt;DEFINES += FLUID_INSTALL_ICONS=0&lt;/code&gt;、&lt;code&gt;INCLUDEPATH&lt;/code&gt;、&lt;code&gt;fluid&lt;/code&gt; 相关 &lt;code&gt;SOURCES/HEADERS&lt;/code&gt;、&lt;code&gt;RESOURCES += fluid.qrc&lt;/code&gt;。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;main.cpp&lt;/code&gt; 注册（参考 &lt;code&gt;fluid_demo/main.cpp&lt;/code&gt;）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &quot;core/coreplugin.h&quot;
+#include &quot;templates/templatesplugin.h&quot;
+#include &quot;controls/controlsplugin.h&quot;
+#include &quot;controls/iconthemeimageprovider.h&quot;
+// ...
+QQuickStyle::setStyle(QStringLiteral(&quot;Material&quot;));   // 推荐，配合 Material 主题
+qputenv(&quot;QT_QUICK_CONTROLS_MOBILE&quot;, &quot;1&quot;);            // 小屏触摸设备行为
+FluidCorePlugin().registerTypes(&quot;Fluid.Core&quot;);
+FluidTemplatesPlugin().registerTypes(&quot;Fluid.Templates&quot;);
+FluidControlsPlugin().registerTypes(&quot;Fluid.Controls&quot;);
+engine.addImportPath(QStringLiteral(&quot;qrc:/&quot;));
+engine.addImageProvider(QStringLiteral(&quot;fluidicontheme&quot;), new IconThemeImageProvider());
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;QML 里按命名空间 import（避免与 QtQuick.Controls 的同名类型冲突）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import QtQuick 2.10
+import QtQuick.Controls 2.3
+import QtQuick.Controls.Material 2.3
+import Fluid.Controls 1.1 as FluidControls
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;用 &lt;code&gt;as FluidControls&lt;/code&gt; 别名是惯例：&lt;code&gt;FluidControls.AppBar&lt;/code&gt;、&lt;code&gt;FluidControls.ListItem&lt;/code&gt;、&lt;code&gt;FluidControls.Utils.iconUrl(...)&lt;/code&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;4. 常用组件&lt;/h2&gt;
+&lt;h3&gt;4.1 页面骨架：AppBar + NavigationDrawer + StackView&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;main.qml&lt;/code&gt; 里的经典组合（本 demo 的布局）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;ApplicationWindow {
+    // 顶部工具栏
+    FluidControls.AppBar {
+        title: window.currentPageTitle
+        leftAction: FluidControls.Action {           // 左侧菜单按钮
+            icon.source: FluidControls.Utils.iconUrl(&quot;navigation/menu&quot;)
+            onTriggered: navDrawer.open()
+        }
+        actions: [                                    // 右侧动作
+            FluidControls.Action {
+                icon.source: FluidControls.Utils.iconUrl(&quot;action/search&quot;)
+                onTriggered: searchBar.open()
+            }
+        ]
+    }
+
+    // 左侧抽屉导航
+    FluidControls.NavigationDrawer {
+        id: navDrawer
+        topContent: Item { /* 顶部用户区 */ }
+        ListView {
+            delegate: FluidControls.ListItem {
+                icon.source: FluidControls.Utils.iconUrl(model.icon)
+                text: model.title
+                onClicked: { stackView.replace(model.source); navDrawer.close() }
+            }
+        }
+    }
+
+    // 页面堆栈
+    StackView {
+        anchors.top: appBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        initialItem: Qt.resolvedUrl(&quot;qrc:/pages/HomePage.qml&quot;)
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;4.2 文本排版&lt;/h3&gt;
+&lt;p&gt;Material Design 字体层级，直接设 &lt;code&gt;text&lt;/code&gt; 即可：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;组件&lt;/th&gt;
+&lt;th&gt;用途&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.DisplayLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;大标题（&lt;code&gt;level&lt;/code&gt; 1~4）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.HeadlineLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;页头标题&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.TitleLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;标题&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.SubheadingLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;副标题&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.BodyLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;正文（&lt;code&gt;level&lt;/code&gt; 1/2）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.CaptionLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;说明文字&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FluidControls.DialogLabel&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;对话框文本&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3&gt;4.3 按钮&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;普通按钮直接用 &lt;code&gt;Button&lt;/code&gt;（Material 风格）：&lt;code&gt;highlighted&lt;/code&gt;、&lt;code&gt;flat&lt;/code&gt;、&lt;code&gt;enabled&lt;/code&gt;。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;图标按钮 &lt;code&gt;FluidControls.ToolButton&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.ToolButton {
+    icon.source: FluidControls.Utils.iconUrl(&quot;action/favorite&quot;)
+    onClicked: window.openSnackBar(&quot;收藏&quot;)
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;浮动按钮 &lt;code&gt;FluidControls.FloatingActionButton&lt;/code&gt;（&lt;code&gt;highlighted&lt;/code&gt;、&lt;code&gt;mini&lt;/code&gt; 属性）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;芯片 &lt;code&gt;FluidControls.Chip&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.Chip { text: &quot;可删除&quot;; deletable: true; onDeleted: ... }
+FluidControls.Chip { text: &quot;可选中&quot;; checkable: true; checked: true }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.4 列表&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;FluidControls.ListItem&lt;/code&gt; 是 Material 列表项，支持 &lt;code&gt;text&lt;/code&gt; / &lt;code&gt;subText&lt;/code&gt; / &lt;code&gt;valueText&lt;/code&gt; / &lt;code&gt;icon.source&lt;/code&gt; / &lt;code&gt;leftItem&lt;/code&gt; / &lt;code&gt;rightItem&lt;/code&gt; / &lt;code&gt;secondaryItem&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.ListItem {
+    icon.source: FluidControls.Utils.iconUrl(&quot;action/event&quot;)
+    text: &quot;带图标的列表项&quot;
+    subText: &quot;副标题&quot;
+    valueText: &quot;值&quot;
+    onClicked: { ... }
+}
+
+// 右侧放控件
+FluidControls.ListItem {
+    text: &quot;带开关的列表项&quot;
+    rightItem: Switch { anchors.centerIn: parent }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;配套 &lt;code&gt;FluidControls.Subheader&lt;/code&gt;（分组标题）、&lt;code&gt;FluidControls.ThinDivider&lt;/code&gt;（分隔线）、&lt;code&gt;FluidControls.NavigationListView&lt;/code&gt;（导航列表）。&lt;/p&gt;
+&lt;h3&gt;4.5 输入控件&lt;/h3&gt;
+&lt;p&gt;文本/开关/复选/单选/滑块/进度条/忙碌指示器直接用 QtQuick.Controls 原生控件（Material 风格已全局生效）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;TextField { placeholderText: &quot;请输入文本&quot; }
+Switch { text: &quot;开关&quot;; checked: true }
+CheckBox { text: &quot;复选&quot; }
+RadioButton { text: &quot;单选&quot; }
+Slider { from: 0; to: 100; value: 60 }
+ProgressBar { from: 0; to: 100; value: slider.value }
+BusyIndicator { running: true }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;4.6 对话框与提示&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;确认/消息框 &lt;code&gt;FluidControls.AlertDialog&lt;/code&gt;（&lt;code&gt;text&lt;/code&gt; + &lt;code&gt;standardButtons&lt;/code&gt; + &lt;code&gt;onAccepted&lt;/code&gt;）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;输入框 &lt;code&gt;FluidControls.InputDialog&lt;/code&gt;（&lt;code&gt;textField.text&lt;/code&gt; 取输入内容）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;底部提示条 &lt;code&gt;FluidControls.SnackBar&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.SnackBar { id: snackBar }
+// 调用
+snackBar.open(&quot;这是一条提示消息&quot;, &quot;撤销&quot;)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;空状态占位 &lt;code&gt;FluidControls.Placeholder&lt;/code&gt;：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.Placeholder {
+    icon.source: FluidControls.Utils.iconUrl(&quot;social/notifications_none&quot;)
+    text: &quot;暂无通知&quot;
+    subText: &quot;当前没有任何新的通知消息&quot;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.7 底部面板&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;FluidControls.BottomSheetList&lt;/code&gt;（列表式）和 &lt;code&gt;FluidControls.BottomSheetGrid&lt;/code&gt;（网格式）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.BottomSheetList {
+    id: listBottomSheet
+    title: &quot;保存到…&quot;
+    actions: [
+        FluidControls.Action {
+            text: &quot;文件夹&quot;
+            icon.source: FluidControls.Utils.iconUrl(&quot;file/folder&quot;)
+        },
+        FluidControls.Action {
+            text: &quot;上传 (禁用)&quot;
+            icon.source: FluidControls.Utils.iconUrl(&quot;file/file_upload&quot;)
+            enabled: false
+        }
+    ]
+}
+// 调用 listBottomSheet.open()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;4.8 卡片与图片&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;FluidControls.Card&lt;/code&gt;：圆角卡片容器，里面放任意内容。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;FluidControls.CircleImage&lt;/code&gt;：圆形图片，&lt;code&gt;source&lt;/code&gt; + &lt;code&gt;Layout.preferredWidth/Height&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.9 图标系统&lt;/h3&gt;
+&lt;p&gt;图标通过 &lt;code&gt;FluidControls.Utils.iconUrl(&quot;&amp;lt;分类&amp;gt;/&amp;lt;名字&amp;gt;&quot;)&lt;/code&gt; 得到，返回 &lt;code&gt;qrc:/liri.io/imports/Fluid/Controls/icons/&amp;lt;分类&amp;gt;/&amp;lt;名字&amp;gt;.svg&lt;/code&gt;（&lt;code&gt;FLUID_INSTALL_ICONS=0&lt;/code&gt; 时）。配合 &lt;code&gt;FluidControls.Icon&lt;/code&gt; 或控件的 &lt;code&gt;icon.source&lt;/code&gt; 使用：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;FluidControls.Icon {
+    source: FluidControls.Utils.iconUrl(&quot;action/home&quot;)
+    size: 40
+    color: Material.accent
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;当前 qrc 里打包了 38 个 Material 图标&lt;/strong&gt;（&lt;code&gt;fluid_demo/fluid.qrc&lt;/code&gt; 为准）：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;分类&lt;/th&gt;
+&lt;th&gt;图标&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;action&lt;/td&gt;
+&lt;td&gt;alarm, check_circle, delete, event, favorite, home, info, info_outline, list, print, search, settings&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;content&lt;/td&gt;
+&lt;td&gt;add, create, inbox&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;device&lt;/td&gt;
+&lt;td&gt;airplanemode_active&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;editor&lt;/td&gt;
+&lt;td&gt;format_align_left&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;file&lt;/td&gt;
+&lt;td&gt;attachment, cloud, create_new_folder, file_download, file_upload, folder, folder_shared&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;image&lt;/td&gt;
+&lt;td&gt;audiotrack, collections, color_lens, palette, tune&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;navigation&lt;/td&gt;
+&lt;td&gt;arrow_back, cancel, check, close, menu, more_vert&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;social&lt;/td&gt;
+&lt;td&gt;notifications_none, share&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;toggle&lt;/td&gt;
+&lt;td&gt;star&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;blockquote&gt;
+&lt;p&gt;注意：demo 的 &lt;code&gt;IconsPage&lt;/code&gt; 里列出了 &lt;code&gt;action/history&lt;/code&gt;、&lt;code&gt;social/person&lt;/code&gt;、&lt;code&gt;device/storage&lt;/code&gt; 等图标，这些 &lt;strong&gt;svg 没有打进 fluid.qrc&lt;/strong&gt;，显示为空白。需要用时把对应 svg 拷进 &lt;code&gt;fluid/controls/icons/&amp;lt;分类&amp;gt;/&lt;/code&gt; 并在 &lt;code&gt;fluid.qrc&lt;/code&gt; 的 &lt;code&gt;/liri.io/imports/Fluid/Controls&lt;/code&gt; 前缀下加一行 &lt;code&gt;&amp;lt;file&amp;gt;&lt;/code&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;5. i.MX6ULL 无 GPU 软渲染注意事项&lt;/h2&gt;
+&lt;p&gt;i.MX6ULL 无 GPU，Qt 走软件渲染（fbdev / linuxfb），移植 Fluid 时踩过并已修复的坑：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Material 阴影（elevation）会失效甚至白屏&lt;/strong&gt;：软件渲染下 &lt;code&gt;ElevationEffect&lt;/code&gt; 图层不可用。demo 里对 &lt;code&gt;AlertDialog&lt;/code&gt;、&lt;code&gt;InputDialog&lt;/code&gt; 都设了 &lt;code&gt;Material.elevation: 0&lt;/code&gt;。自己写对话框/弹出层时同样处理。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;Drawer&lt;/code&gt; 底部面板会触发无限重排导致 &lt;code&gt;std::bad_alloc&lt;/code&gt; 崩溃&lt;/strong&gt;：Fluid 原版 &lt;code&gt;BottomSheet&lt;/code&gt; 用 &lt;code&gt;Drawer { edge: Qt.BottomEdge }&lt;/code&gt;，在软渲染下会崩溃。移植版已改成 &lt;code&gt;Popup&lt;/code&gt; 实现（见 &lt;code&gt;fluid/controls/BottomSheet.qml&lt;/code&gt; 头注释），并把高度改成固定比例 &lt;code&gt;window.height * 0.6&lt;/code&gt;，内容不可滚动时不触发隐式尺寸递归。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;ListItem&lt;/code&gt; 的 &lt;code&gt;childrenRect&lt;/code&gt; 绑定会内存耗尽&lt;/strong&gt;：原版用 &lt;code&gt;childrenRect&lt;/code&gt; 计算图标/右栏尺寸，软渲染下部分环境触发绑定循环。移植版改为按子项隐式尺寸计算（见 &lt;code&gt;ListItem.qml&lt;/code&gt;）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;必须设置移动端行为&lt;/strong&gt;：&lt;code&gt;main.cpp&lt;/code&gt; 里 &lt;code&gt;qputenv(&quot;QT_QUICK_CONTROLS_MOBILE&quot;, &quot;1&quot;)&lt;/code&gt;，否则 &lt;code&gt;NavigationDrawer&lt;/code&gt; 会按桌面端行为常驻侧栏，无法点击弹出。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;主题&lt;/strong&gt;：&lt;code&gt;QQuickStyle::setStyle(QStringLiteral(&quot;Material&quot;))&lt;/code&gt; 全局 Material 主题；主色 &lt;code&gt;Material.primary: Material.DeepOrange&lt;/code&gt;、强调色 &lt;code&gt;Material.accent: Material.Teal&lt;/code&gt; 可整体换肤。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;图标&lt;/strong&gt;：图标全部打进 qrc，不依赖板子安装图标主题；缺图标按 4.9 节补充即可。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;6. 与 systemui 集成与部署&lt;/h2&gt;
+&lt;h3&gt;6.1 接入桌面&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;.pro&lt;/code&gt; 里 &lt;code&gt;include(../client/client.pri)&lt;/code&gt;（自带与 systemui 的 RemoteObject 通信 + 自动拷贝到 &lt;code&gt;ui/src/apps/&lt;/code&gt;）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;主 QML 里加一段 &lt;code&gt;SystemUICommonApiClient&lt;/code&gt;（&lt;code&gt;appName&lt;/code&gt; 填可执行文件名，&lt;code&gt;onActionCommand&lt;/code&gt; 里处理 Show/Quit）。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;在桌面的应用配置 &lt;code&gt;ui/src/ATK-IMX6U/apk1.cfg&lt;/code&gt; 加一行：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;appicons/fluid.png Fluid组件演示 fluid_demo
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;并把 &lt;code&gt;fluid.png&lt;/code&gt; 放到 &lt;code&gt;ui/src/appicons/&lt;/code&gt;、可执行文件放到 &lt;code&gt;ui/src/apps/&lt;/code&gt;。&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;6.2 编译与部署&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;cd ~/Linux_dev/imx6ull/my_code
+./qtflash_auto.py build fluid_demo   # 或 ./qtflash_auto.py app fluid_demo 直接编译并传到板子
+./qtflash_auto.py deploy             # 打包 ui/ 并整体部署重启桌面
+./qtflash_auto.py app fluid_demo     # 只更新单个 app（点击图标即生效）
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;编译产物经 &lt;code&gt;QMAKE_POST_LINK&lt;/code&gt; 自动 &lt;code&gt;strip&lt;/code&gt; 并拷贝到 &lt;code&gt;qt_dev/ui/src/apps/fluid_demo&lt;/code&gt;。&lt;/p&gt;
+&lt;h2&gt;7. 常见问题&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;点图标没反应 / 桌面返回&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto.py log&lt;/code&gt; 看板子日志；确认 &lt;code&gt;ui/src/apps/fluid_demo&lt;/code&gt; 已部署且 &lt;code&gt;apk1.cfg&lt;/code&gt; 程序名一致&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;对话框白屏 / 背景消失&lt;/td&gt;
+&lt;td&gt;给对话框加 &lt;code&gt;Material.elevation: 0&lt;/code&gt;（见第 5 节）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;底部面板点击卡死 / std::bad_alloc&lt;/td&gt;
+&lt;td&gt;确认用的是本仓库改过的 &lt;code&gt;BottomSheet&lt;/code&gt;（Popup 版），别用上游 Drawer 版&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;某个图标显示空白&lt;/td&gt;
+&lt;td&gt;该 svg 没进 &lt;code&gt;fluid.qrc&lt;/code&gt;，按 4.9 节补充&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;新建工程 import 报 &lt;code&gt;module Fluid.* is not installed&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;main.cpp&lt;/code&gt; 少了 &lt;code&gt;engine.addImportPath(&quot;qrc:/&quot;)&lt;/code&gt; 或 &lt;code&gt;.pro&lt;/code&gt; 少了 &lt;code&gt;fluid.qrc&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>MQTT 智能控制 App 与时钟校准使用说明</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/mqtt%E6%99%BA%E8%83%BD%E6%8E%A7%E5%88%B6%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/mqtt%E6%99%BA%E8%83%BD%E6%8E%A7%E5%88%B6%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E/</guid><description>基于 paho.mqtt.c 的公网 MQTT 控制框架：远程查看开发板状态、控制 LED，联网自动校准时钟。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;MQTT 智能控制 App 与时钟校准使用说明&lt;/h1&gt;
+&lt;p&gt;基于 &lt;strong&gt;paho.mqtt.c&lt;/strong&gt; 的公网 MQTT 控制框架：手机通过 MQTT 查看开发板状态（CPU温度 / 六轴IMU / 光感）并远程控制板上 LED；开机联网后自动校准系统时钟。&lt;/p&gt;
+&lt;h2&gt;1. 总览&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;项目&lt;/th&gt;
+&lt;th&gt;说明&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;工程&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qt_dev/iot_control/&lt;/code&gt;（可执行 &lt;code&gt;iot_control&lt;/code&gt;，桌面第二页&quot;智能控制&quot;图标）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;MQTT 库&lt;/td&gt;
+&lt;td&gt;paho.mqtt.c v1.3.8（交叉编译，库与头文件在 &lt;code&gt;qt_dev/third_party/paho/&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;broker&lt;/td&gt;
+&lt;td&gt;默认公网 &lt;code&gt;broker.emqx.io:1883&lt;/code&gt;（无需注册）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;依赖&lt;/td&gt;
+&lt;td&gt;板子 &lt;code&gt;/usr/lib/libpaho-mqtt3c.so.1&lt;/code&gt;（已部署）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;时钟校准&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/etc/wifi_auto.sh&lt;/code&gt; 联网后自动 &lt;code&gt;ntpdate&lt;/code&gt; + &lt;code&gt;hwclock -w&lt;/code&gt; 存 RTC&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;2. 架构&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;手机(MQTT app)  &amp;lt;--TCP--&amp;gt;  broker.emqx.io:1883  &amp;lt;--TCP--&amp;gt;  开发板 iot_control
+                                                                │
+                                             订阅 cmd/# 控制，发布 status/# 状态
+                                                                │
+                                              ┌──────────────┬────────────────┐
+                                              │  LED(sys-led) │ 传感器(IMU/光感) │ CPU温度
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;板端 &lt;code&gt;MqttControl&lt;/code&gt;（paho 工作线程）：连接/订阅/周期发布/断线自动重连&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;DeviceControl&lt;/code&gt;：读写 sysfs（LED、ICM20608 IMU、AP3216C 光感、CPU 温度）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;3. 配置（都可修改，无需重编译）&lt;/h2&gt;
+&lt;p&gt;配置文件：&lt;strong&gt;&lt;code&gt;/etc/iot_control.conf&lt;/code&gt;&lt;/strong&gt;（app 首次启动自动生成，按需修改后重启 app）&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[broker]
+address=broker.emqx.io        # broker 地址(仅主机名/域名)
+port=1883                     # 端口
+client_id=imx6ull_alpha       # 客户端ID(多个板子要不同)
+
+[topic]
+prefix=imx6ull/alpha          # 话题前缀(改这个即可区分多块板子)
+
+[period]
+cpu=3000                      # CPU温度上报周期(毫秒)
+imu=1000                      # IMU上报周期
+ap3216c=1000                  # 光感上报周期
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;手机 app 端订阅/发布时把前缀换成同样的值即可。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;4. 话题协议&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;话题&lt;/th&gt;
+&lt;th&gt;方向&lt;/th&gt;
+&lt;th&gt;说明&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/status/online&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板→云&lt;/td&gt;
+&lt;td&gt;retained，&quot;online&quot;；连接断开时遗嘱发 &quot;offline&quot;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/status/led&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板→云&lt;/td&gt;
+&lt;td&gt;retained，&quot;0&quot;/&quot;1&quot;，LED 状态&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/status/cpu_temp&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板→云&lt;/td&gt;
+&lt;td&gt;周期，如 &quot;60.9&quot;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/status/imu&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板→云&lt;/td&gt;
+&lt;td&gt;周期，JSON &lt;code&gt;{&quot;gx&quot;:..,&quot;gy&quot;:..,&quot;gz&quot;:..,&quot;ax&quot;:..,&quot;ay&quot;:..,&quot;az&quot;:..,&quot;temp&quot;:..}&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/status/ap3216c&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板→云&lt;/td&gt;
+&lt;td&gt;周期，JSON &lt;code&gt;{&quot;als&quot;:..,&quot;ps&quot;:..,&quot;ir&quot;:..}&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;前缀/cmd/led&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;云→板&lt;/td&gt;
+&lt;td&gt;下发 &quot;0&quot;/&quot;1&quot; 控制 LED&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;默认前缀 &lt;code&gt;imx6ull/alpha&lt;/code&gt;，手机订阅 &lt;code&gt;imx6ull/alpha/#&lt;/code&gt; 看全部状态，发布到 &lt;code&gt;imx6ull/alpha/cmd/led&lt;/code&gt; 控制。&lt;/p&gt;
+&lt;h2&gt;5. 上位机连接指南（手机 / PC 查看与控制）&lt;/h2&gt;
+&lt;p&gt;上位机用任意 MQTT 客户端连同一个公网 broker 即可查看板上信息、远程控制 LED，不需要和板子在同一个局域网。&lt;/p&gt;
+&lt;h3&gt;5.1 连接配置（&quot;名称&quot;怎么选）&lt;/h3&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;项&lt;/th&gt;
+&lt;th&gt;填什么&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;连接名称&lt;/td&gt;
+&lt;td&gt;任意，只是本地备注，如 &lt;code&gt;IMX6ULL&lt;/code&gt; / &lt;code&gt;我的开发板&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;服务器地址&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;broker.emqx.io&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;端口&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;1883&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;用户名 / 密码&lt;/td&gt;
+&lt;td&gt;留空（公共 broker 免认证）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Client ID&lt;/td&gt;
+&lt;td&gt;填个不重复的，如 &lt;code&gt;phone01&lt;/code&gt;、&lt;code&gt;pc01&lt;/code&gt;（&lt;strong&gt;不能和板子的 &lt;code&gt;imx6ull_alpha&lt;/code&gt; 相同&lt;/strong&gt;，否则会互踢）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3&gt;5.2 订阅主题（&quot;看信息&quot;）&lt;/h3&gt;
+&lt;p&gt;最省事：订阅 &lt;code&gt;imx6ull/alpha/#&lt;/code&gt;（&lt;code&gt;#&lt;/code&gt; 通配该前缀下所有话题）。或按需分开订阅：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;主题&lt;/th&gt;
+&lt;th&gt;内容&lt;/th&gt;
+&lt;th&gt;更新频率&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/status/online&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;online&lt;/code&gt;；断线自动变 &lt;code&gt;offline&lt;/code&gt;（retained）&lt;/td&gt;
+&lt;td&gt;连接变化时&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/status/led&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;0&lt;/code&gt; / &lt;code&gt;1&lt;/code&gt;（retained）&lt;/td&gt;
+&lt;td&gt;LED 变化时&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/status/cpu_temp&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;如 &lt;code&gt;60.9&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;每 3 秒&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/status/imu&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;{&quot;gx&quot;:..,&quot;gy&quot;:..,&quot;gz&quot;:..,&quot;ax&quot;:..,&quot;ay&quot;:..,&quot;az&quot;:..,&quot;temp&quot;:..}&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;每 1 秒&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/status/ap3216c&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;{&quot;als&quot;:..,&quot;ps&quot;:..,&quot;ir&quot;:..}&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;每 1 秒&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3&gt;5.3 发布主题（&quot;控制&quot;）&lt;/h3&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;主题&lt;/th&gt;
+&lt;th&gt;内容&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/cmd/led&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;1&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;开 LED&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;imx6ull/alpha/cmd/led&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;0&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;关 LED&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;板子收到后回传 &lt;code&gt;status/led&lt;/code&gt; 确认。&lt;/p&gt;
+&lt;h3&gt;5.4 不同上位机软件的具体填法&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;手机 MQTT Dashboard&lt;/strong&gt;：新建连接 → 名称随便填 → Address=&lt;code&gt;broker.emqx.io&lt;/code&gt;、Port=&lt;code&gt;1883&lt;/code&gt; → 添加订阅 &lt;code&gt;imx6ull/alpha/#&lt;/code&gt;；要控制时在发布框里主题填 &lt;code&gt;imx6ull/alpha/cmd/led&lt;/code&gt;、内容填 &lt;code&gt;1&lt;/code&gt;/&lt;code&gt;0&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;PC 端 MQTTX&lt;/strong&gt;（跨平台、界面友好）：新建连接 → 名称任意 → Host=&lt;code&gt;broker.emqx.io&lt;/code&gt;、Port=&lt;code&gt;1883&lt;/code&gt; → 订阅 &lt;code&gt;imx6ull/alpha/#&lt;/code&gt; 实时查看；发布窗口向 &lt;code&gt;cmd/led&lt;/code&gt; 发 &lt;code&gt;1&lt;/code&gt;/&lt;code&gt;0&lt;/code&gt; 控制&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;PC 端 MQTT Explorer&lt;/strong&gt;：填 Address=&lt;code&gt;broker.emqx.io&lt;/code&gt;、Port=&lt;code&gt;1883&lt;/code&gt; 建连接 → 直接添加订阅 &lt;code&gt;imx6ull/alpha/#&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;若改过板子 &lt;code&gt;/etc/iot_control.conf&lt;/code&gt; 的 &lt;code&gt;prefix&lt;/code&gt;，把上面所有 &lt;code&gt;imx6ull/alpha&lt;/code&gt; 换成新前缀即可；客户端 ID 每次都要和板子 &lt;code&gt;client_id&lt;/code&gt; 不同。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;6. 开机联网自动时钟校准&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;已写入 &lt;code&gt;/etc/wifi_auto.sh&lt;/code&gt;：wifi 连上外网后自动执行 &lt;code&gt;ntpdate&lt;/code&gt;（阿里/公网NTP 依次尝试）并把时间写入 RTC（&lt;code&gt;hwclock -w&lt;/code&gt;），之后每约 50 分钟校时一次&lt;/li&gt;
+&lt;li&gt;验证：重启后板子上执行 &lt;code&gt;date&lt;/code&gt; 看时间是否正确；&lt;code&gt;hwclock -r&lt;/code&gt; 看 RTC&lt;/li&gt;
+&lt;li&gt;若想改 NTP 服务器：编辑 &lt;code&gt;/etc/wifi_auto.sh&lt;/code&gt; 里的 &lt;code&gt;sync_time()&lt;/code&gt; 函数&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;7. 编译与部署&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;cd ~/Linux_dev/imx6ull/my_code
+./qtflash_auto.py build iot_control    # 编译(输出到 ui/src/apps)
+./qtflash_auto.py app iot_control      # 编译 + 传输到板子
+# 或整体部署桌面(会把 apk2.cfg/图标一起带上):
+./qtflash_auto.py deploy
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;首次部署还需把 paho 库放到板子（已部署过可跳过）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;scp qt_dev/third_party/paho/lib/libpaho-mqtt3c.so.1.3.8 root@192.168.1.20:/usr/lib/
+ssh root@192.168.1.20 &quot;ln -sf libpaho-mqtt3c.so.1.3.8 /usr/lib/libpaho-mqtt3c.so.1; ldconfig&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h2&gt;8. 常见问题&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;手机连不上 broker&lt;/td&gt;
+&lt;td&gt;确认手机能上网；地址填 &lt;code&gt;broker.emqx.io&lt;/code&gt; 端口 &lt;code&gt;1883&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;板子 app 显示未连接&lt;/td&gt;
+&lt;td&gt;板子需已联网（wifi 连上 &lt;code&gt;lnx&lt;/code&gt;）；&lt;code&gt;/etc/iot_control.conf&lt;/code&gt; 检查地址；查看 app 内日志&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;多块板子冲突&lt;/td&gt;
+&lt;td&gt;每块板子改 &lt;code&gt;/etc/iot_control.conf&lt;/code&gt; 的 &lt;code&gt;client_id&lt;/code&gt; 和 &lt;code&gt;prefix&lt;/code&gt; 为不同值&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;LED 没反应&lt;/td&gt;
+&lt;td&gt;先看 &lt;code&gt;status/led&lt;/code&gt; 是否回传；确认 &lt;code&gt;cmd/led&lt;/code&gt; 发的是 &lt;code&gt;1&lt;/code&gt;/&lt;code&gt;0&lt;/code&gt; 文本&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;改配置后不生效&lt;/td&gt;
+&lt;td&gt;修改 &lt;code&gt;/etc/iot_control.conf&lt;/code&gt; 后重启 app（退出再点图标打开）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;时间还是老的&lt;/td&gt;
+&lt;td&gt;检查 wifi 是否联网（&lt;code&gt;ping 8.8.8.8&lt;/code&gt;）；&lt;code&gt;ntpdate -q ntp.aliyun.com&lt;/code&gt; 手动测&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>qtflash 使用文档</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/qtflash%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/qtflash%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</guid><description>IMX6ULL 开发板 Qt 快速部署工具使用说明（qtflash 手动 / qtflash_auto 全自动）。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;qtflash 使用文档&lt;/h1&gt;
+&lt;p&gt;IMX6ULL 开发板 Qt 快速部署工具使用说明。&lt;/p&gt;
+&lt;h2&gt;1. 简介&lt;/h2&gt;
+&lt;p&gt;项目中提供了两个命令，用于把 Qt 工程从 WSL 编译打包并部署到开发板运行：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;模式&lt;/th&gt;
+&lt;th&gt;定位&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;手动&lt;/td&gt;
+&lt;td&gt;打包/编译 + &lt;strong&gt;打印板子端命令&lt;/strong&gt;，你自己复制到串口或 ssh 执行&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;自动&lt;/td&gt;
+&lt;td&gt;打包/编译 + &lt;strong&gt;通过 ssh 全自动&lt;/strong&gt;部署并重启，一条命令搞定&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;两者共用相同的打包、tftp、构建逻辑，&lt;code&gt;qtflash_auto&lt;/code&gt; 额外依赖板子上的 ssh 服务。&lt;/p&gt;
+&lt;h2&gt;2. 环境与前提&lt;/h2&gt;
+&lt;h3&gt;2.1 网络&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;网线直连板子与电脑有线网卡&lt;/li&gt;
+&lt;li&gt;板子静态 IP：&lt;code&gt;192.168.1.20&lt;/code&gt;（开机由 &lt;code&gt;/etc/rc.local&lt;/code&gt; 自动设置）&lt;/li&gt;
+&lt;li&gt;电脑/WSL IP：&lt;code&gt;192.168.1.101&lt;/code&gt;（Windows 有线网卡手动配置，WSL2 mirrored 模式共享该 IP）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.2 依赖服务&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;tftpd-hpa&lt;/strong&gt;（WSL 侧）：文件下载服务，根目录 = &lt;code&gt;qt_dev/&lt;/code&gt;。命令会自动检查并启动。
+&lt;blockquote&gt;
+&lt;p&gt;若板子下载超时，检查 Windows 防火墙是否放行入站 UDP 69。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;dropbear&lt;/strong&gt;（板子侧）：ssh 服务，供 &lt;code&gt;qtflash_auto&lt;/code&gt; 使用。root 密码即 &lt;code&gt;qtflash_auto.py&lt;/code&gt; 里 &lt;code&gt;PASSWORD&lt;/code&gt; 常量。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.3 配置常量&lt;/h3&gt;
+&lt;p&gt;两个脚本顶部有常量，换网段/换板子时修改：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;常量&lt;/th&gt;
+&lt;th&gt;文件&lt;/th&gt;
+&lt;th&gt;默认值&lt;/th&gt;
+&lt;th&gt;含义&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QT_DEV&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;qtflash.py&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;~/Linux_dev/imx6ull/qt_dev&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Qt 工程根目录（tftp 根目录）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;BOARD_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;qtflash.py&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.20&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PC_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;qtflash.py&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.101&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;电脑 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;TOUCH_DEV&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;qtflash.py&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/dev/input/event1&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;触摸屏设备（goodix）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PASSWORD&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;qtflash_auto.py&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;0314&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 root ssh 密码&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;qtflash_auto.py&lt;/code&gt; 通过 &lt;code&gt;import qtflash&lt;/code&gt; 复用后者的 &lt;code&gt;QT_DEV/BOARD_IP/PC_IP/TOUCH_DEV&lt;/code&gt;，只需额外改 &lt;code&gt;PASSWORD&lt;/code&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;3. &lt;code&gt;qtflash&lt;/code&gt; —— 手动模式&lt;/h2&gt;
+&lt;p&gt;只在本机执行，把需要你在板子上执行的命令&lt;strong&gt;打印出来&lt;/strong&gt;。&lt;/p&gt;
+&lt;h3&gt;3.1 &lt;code&gt;qtflash&lt;/code&gt;（默认 deploy）&lt;/h3&gt;
+&lt;p&gt;打包 &lt;code&gt;ui/&lt;/code&gt; 为 &lt;code&gt;ui.tar.bz2&lt;/code&gt; → 确认 tftpd 运行 → 打印板子端命令：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;killall QDesktop systemui 2&amp;gt;/dev/null
+tftp -g -r ui.tar.bz2 192.168.1.101
+tar xjf ui.tar.bz2 -C /opt
+chmod +x /opt/ui/systemui
+source /etc/profile
+export TSLIB_TSDEVICE=/dev/input/event1
+nohup /opt/ui/systemui &amp;gt; /tmp/systemui.log 2&amp;gt;&amp;amp;1 &amp;amp;
+sleep 3
+tail -5 /tmp/systemui.log
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;把这段复制到板子串口执行即可。&lt;code&gt;source /etc/profile&lt;/code&gt; 保证触摸（&lt;code&gt;QT_QPA_FB_TSLIB=1&lt;/code&gt;）等出厂环境生效。&lt;/p&gt;
+&lt;h3&gt;3.2 &lt;code&gt;qtflash build [工程]&lt;/code&gt;&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;无参数：调用 &lt;code&gt;qt_dev/build.sh all&lt;/code&gt; 编译全部 Qt 工程&lt;/li&gt;
+&lt;li&gt;带工程名：只编译指定工程，如 &lt;code&gt;qtflash build beep&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;3.3 &lt;code&gt;qtflash app &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;编译单个 app（如 &lt;code&gt;qtflash app beep&lt;/code&gt;），把二进制放到 tftp 根目录 &lt;code&gt;app.bin&lt;/code&gt;，并打印更新板子 &lt;code&gt;/opt/ui/src/apps/&amp;lt;名字&amp;gt;&lt;/code&gt; 的命令。systemui 每次点击图标时才加载 app，更新后无需重启桌面。&lt;/p&gt;
+&lt;h3&gt;3.4 &lt;code&gt;qtflash transfer &amp;lt;本地文件&amp;gt; [板子目标路径]&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;把任意本地文件复制到 tftp 根目录 &lt;code&gt;transfer.bin&lt;/code&gt;，打印推到板子的命令。目标路径默认 &lt;code&gt;/opt/&amp;lt;文件名&amp;gt;&lt;/code&gt;。&lt;/p&gt;
+&lt;h3&gt;3.5 &lt;code&gt;qtflash run [板子路径]&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;打印带触摸环境运行程序的命令。默认运行 &lt;code&gt;/opt/ui/systemui&lt;/code&gt;；传路径则运行指定程序（独立 Qt 工程用）。日志写到 &lt;code&gt;/tmp/systemui.log&lt;/code&gt;（默认）或 &lt;code&gt;/tmp/app.log&lt;/code&gt;（指定路径）。&lt;/p&gt;
+&lt;h3&gt;3.6 其它子命令&lt;/h3&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash pack&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;仅重新打包 &lt;code&gt;ui.tar.bz2&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash libqro&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;重新生成库修复包 &lt;code&gt;libqro.tar.gz&lt;/code&gt;（从工具链 sysroot 取 ARM32 &lt;code&gt;libQt5RemoteObjects&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash status&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看 tftpd 状态、板子 ping、部署包信息&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash staticip&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;打印板子静态 IP 配置说明&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;4. &lt;code&gt;qtflash_auto&lt;/code&gt; —— 自动模式&lt;/h2&gt;
+&lt;p&gt;通过 ssh 连接板子，自动完成传输、解压、重启、抓日志，日常开发主力。&lt;/p&gt;
+&lt;h3&gt;4.1 &lt;code&gt;qtflash_auto&lt;/code&gt;（默认 deploy）&lt;/h3&gt;
+&lt;p&gt;一键部署：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;打包 &lt;code&gt;ui/&lt;/code&gt; → &lt;code&gt;ui.tar.bz2&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;确认 tftpd 运行&lt;/li&gt;
+&lt;li&gt;ssh 校准板子时钟 → tftp 拉取 → 解压到 &lt;code&gt;/opt&lt;/code&gt; → chmod +x&lt;/li&gt;
+&lt;li&gt;kill 旧进程 → &lt;code&gt;source /etc/profile&lt;/code&gt; + &lt;code&gt;TSLIB_TSDEVICE&lt;/code&gt; → nohup 重启 systemui&lt;/li&gt;
+&lt;li&gt;抓取启动日志，自动判断是否有关键报错（缺库/ELF 错误/段错误等）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;4.2 &lt;code&gt;qtflash_auto app &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;只更新单个 app：编译 → 传输到 &lt;code&gt;/opt/ui/src/apps/&amp;lt;名字&amp;gt;&lt;/code&gt; → chmod +x。点击图标即用新程序。&lt;/p&gt;
+&lt;h3&gt;4.3 &lt;code&gt;qtflash_auto transfer &amp;lt;本地文件&amp;gt; [板子目标路径]&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;任意文件推送到板子，自动 chmod +x。默认目标 &lt;code&gt;/opt/&amp;lt;文件名&amp;gt;&lt;/code&gt;。&lt;/p&gt;
+&lt;h3&gt;4.4 &lt;code&gt;qtflash_auto run [板子路径]&lt;/code&gt;&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;无参数：重启 systemui（默认 &lt;code&gt;/opt/ui/systemui&lt;/code&gt;）&lt;/li&gt;
+&lt;li&gt;带路径：kill 掉 QDesktop/systemui 后运行指定程序，如 &lt;code&gt;qtflash_auto run /opt/mytest&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.5 其它子命令&lt;/h3&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto build [工程]&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;编译全部或指定工程（同 qtflash）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto kill&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;关闭板子上的 QDesktop / systemui&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto log&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看板子 &lt;code&gt;systemui.log&lt;/code&gt; 和 &lt;code&gt;app.log&lt;/code&gt; 启动日志&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto status&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 ping / eth0 IP / dropbear 状态&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;5. 典型工作流&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;场景&lt;/th&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;改完整体代码，重新部署桌面&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;只改某个 app（如 beep）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto app beep&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;独立 Qt 工程上板运行&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto transfer 我的程序 &amp;amp;&amp;amp; qtflash_auto run /opt/我的程序&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;不想用 ssh，手动操作&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash&lt;/code&gt; + 复制打印的命令到串口&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;查看启动报错&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto log&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;重新编译全部&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtflash_auto build&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;6. 新增 App 指南&lt;/h2&gt;
+&lt;p&gt;从模板新建一个 app（以 &lt;code&gt;mytest&lt;/code&gt; 为例）：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;复制模板&lt;/strong&gt;：&lt;pre&gt;&lt;code&gt;cp -r qt_dev/template qt_dev/mytest
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;清理构建产物&lt;/strong&gt;并重命名工程文件（否则 qmake 仍按 &lt;code&gt;template&lt;/code&gt; 生成）：&lt;pre&gt;&lt;code&gt;cd qt_dev/mytest
+rm -f Makefile .qmake.stash template *.o moc_* qrc_* rep_*
+mv template.pro mytest.pro
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;改身份&lt;/strong&gt;：编辑 &lt;code&gt;main.qml&lt;/code&gt;，&lt;code&gt;programmerName: &quot;template&quot;&lt;/code&gt; 改为 &lt;code&gt;&quot;mytest&quot;&lt;/code&gt;（必须与 apk cfg 中的 app 名一致）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;写界面&lt;/strong&gt;：在 &lt;code&gt;AppMainBody.qml&lt;/code&gt; 里放你的测试 UI（Client 外壳自带标题栏和返回桌面按钮）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;加图标&lt;/strong&gt;：复制一个现有图标，如 &lt;code&gt;cp qt_dev/ui/src/appicons/pcba.png qt_dev/ui/src/appicons/mytest.png&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;注册到桌面&lt;/strong&gt;：在 &lt;code&gt;qt_dev/ui/src/ATK-IMX6U/apkN.cfg&lt;/code&gt; 末尾加一行（格式：&lt;code&gt;图标 显示名 app名&lt;/code&gt;）。应用页共 4 页，对应 &lt;code&gt;apk1.cfg&lt;/code&gt;~&lt;code&gt;apk4.cfg&lt;/code&gt;，底部快捷栏用 &lt;code&gt;apk5.cfg&lt;/code&gt;；新应用通常加在 &lt;code&gt;apk4.cfg&lt;/code&gt;：&lt;pre&gt;&lt;code&gt;appicons/mytest.png 我的测试 mytest
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;编译 + 部署&lt;/strong&gt;：&lt;pre&gt;&lt;code&gt;qtflash_auto build mytest   # 编译，二进制自动进 ui/src/apps/mytest
+qtflash_auto deploy         # 整包部署 + 重启 systemui
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;在屏幕上点击新图标验证。之后小改只需 &lt;code&gt;qtflash_auto app mytest&lt;/code&gt;。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;7. 常见问题排查&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;原因 / 处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;板子 tftp 下载超时&lt;/td&gt;
+&lt;td&gt;Windows 防火墙拦截 UDP 69。管理员 PowerShell 放行：&lt;code&gt;New-NetFirewallRule -DisplayName tftp69 -Direction Inbound -Protocol UDP -LocalPort 69 -Action Allow&lt;/code&gt;，或临时关闭防火墙&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;ssh 连接报 &lt;code&gt;no matching host key type&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 dropbear 仅支持 &lt;code&gt;ssh-rsa&lt;/code&gt;，脚本已带 &lt;code&gt;-o HostKeyAlgorithms=+ssh-rsa&lt;/code&gt; 兼容；手动 ssh 时需加同样参数&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;界面显示了但点不动&lt;/td&gt;
+&lt;td&gt;触摸环境未生效：必须 &lt;code&gt;source /etc/profile&lt;/code&gt; 且 &lt;code&gt;export TSLIB_TSDEVICE=/dev/input/event1&lt;/code&gt;（goodix）。若仍无效可改用 &lt;code&gt;QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event1&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;解压时大量 &lt;code&gt;time stamp ... in the future&lt;/code&gt; 告警&lt;/td&gt;
+&lt;td&gt;板子时钟不准。&lt;code&gt;qtflash_auto deploy&lt;/code&gt; 会自动校准（&lt;code&gt;date -s&lt;/code&gt; 设置系统时间并 &lt;code&gt;hwclock -w&lt;/code&gt; 写入 RTC，重启后保持）；手动模式下板子执行 &lt;code&gt;date -s &quot;YYYY-MM-DD HH:MM:SS&quot; &amp;amp;&amp;amp; hwclock -w&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;libQt5RemoteObjects.so.5: wrong ELF class&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子上该库是 64 位版本。用 &lt;code&gt;qtflash_auto transfer&lt;/code&gt; 推送工具链里的 ARM32 库并替换，或 &lt;code&gt;qtflash libqro&lt;/code&gt; 重新打包&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;error while loading shared libraries&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子缺库。用 &lt;code&gt;ldd&lt;/code&gt; 在板子上看缺什么，从 &lt;code&gt;/opt/fsl-imx-x11/.../sysroots/cortexa7hf-neon-poky-linux-gnueabi/usr/lib/&lt;/code&gt; 对应拷贝&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;想改板子 ssh 密码&lt;/td&gt;
+&lt;td&gt;板子 &lt;code&gt;passwd root&lt;/code&gt; 修改，并同步更新 &lt;code&gt;qtflash_auto.py&lt;/code&gt; 的 &lt;code&gt;PASSWORD&lt;/code&gt; 常量&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>qtmini_auto 使用文档</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/qtmini_auto%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/qtmini_auto%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/</guid><description>IMX6ULL 开发板 Qt 小例程一键交叉编译、依赖修补、部署、运行工具使用说明。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;qtmini_auto 使用文档&lt;/h1&gt;
+&lt;p&gt;IMX6ULL 开发板 Qt 小例程一键交叉编译、依赖修补、部署、运行工具使用说明。&lt;/p&gt;
+&lt;h2&gt;1. 简介&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;qtmini_auto&lt;/code&gt; 用于把 &lt;code&gt;ref_code/Qt_ref/Qt/&lt;/code&gt; 下的 Qt 小例程（或任意目录下的 &lt;code&gt;.pro&lt;/code&gt; 工程）快速放到开发板上运行。与 &lt;code&gt;qtflash&lt;/code&gt; / &lt;code&gt;qtflash_auto&lt;/code&gt;（桌面 app 打包部署）定位不同，它是针对&lt;strong&gt;独立 Widgets 小工程&lt;/strong&gt;的：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;对象&lt;/th&gt;
+&lt;th&gt;特点&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtflash&lt;/code&gt; / &lt;code&gt;qtflash_auto&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qt_dev/&lt;/code&gt; 桌面集成 app&lt;/td&gt;
+&lt;td&gt;打包 ui.tar.bz2 + 重启桌面 systemui&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;Qt_ref/&lt;/code&gt; 及任意独立 Qt 工程&lt;/td&gt;
+&lt;td&gt;单工程交叉编译 + 杀掉桌面独立全屏运行&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;一条命令完成四件事：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;依赖修补&lt;/strong&gt;：扫描源码，缺哪个 Qt 模块（network/charts/serialport/sql…）自动补进 &lt;code&gt;.pro&lt;/code&gt;；缺 &lt;code&gt;FORMS&lt;/code&gt;/&lt;code&gt;RESOURCES&lt;/code&gt;/&lt;code&gt;C++11&lt;/code&gt; 也自动补&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;交叉编译&lt;/strong&gt;：用工具链 qmake + make 编译，失败时从错误日志反推缺的模块再补再编（最多 3 轮）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;部署&lt;/strong&gt;：通过 tftp 把二进制推到板子用户家目录 &lt;code&gt;/home/root/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;运行&lt;/strong&gt;：通过 ssh 杀掉桌面后带触摸环境启动程序并回显启动日志&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2&gt;2. 环境与前提&lt;/h2&gt;
+&lt;h3&gt;2.1 网络&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;网线直连板子与电脑有线网卡&lt;/li&gt;
+&lt;li&gt;板子静态 IP：&lt;code&gt;192.168.1.20&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;电脑 IP：&lt;code&gt;192.168.1.101&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;板子 root ssh 密码：&lt;code&gt;0314&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.2 依赖服务&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;tftpd-hpa&lt;/strong&gt;（WSL 侧）：文件下载服务，根目录 = &lt;code&gt;qt_dev/&lt;/code&gt;。命令会自动检查并启动，文件经根目录下 &lt;code&gt;.qtmini/&lt;/code&gt; 暂存子目录传输（与 Qt 工程目录隔离）。
+&lt;blockquote&gt;
+&lt;p&gt;若板子下载超时，检查 Windows 防火墙是否放行入站 UDP 69。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;dropbear&lt;/strong&gt;（板子侧）：ssh 服务，供自动运行使用。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.3 配置常量&lt;/h3&gt;
+&lt;p&gt;脚本 &lt;code&gt;/home/lnx/Linux_dev/imx6ull/my_code/qtmini_auto.py&lt;/code&gt; 顶部常量，换网段/换板子时修改：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;常量&lt;/th&gt;
+&lt;th&gt;默认值&lt;/th&gt;
+&lt;th&gt;含义&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QT_REF_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;~/Linux_dev/imx6ull/ref_code/Qt_ref/Qt&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Qt 小例程根目录（&lt;code&gt;list&lt;/code&gt; 与名字查找的搜索范围）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;TFTP_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;~/Linux_dev/imx6ull/qt_dev&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;tftp 根目录（&lt;code&gt;.qtmini/&lt;/code&gt; 为暂存子目录）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;BOARD_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.20&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PC_IP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;192.168.1.101&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;电脑 IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;BOARD_HOME&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/home/root&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子家目录（程序安装位置）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;PASSWORD&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;0314&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 root ssh 密码&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;ENV_SETUP&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;/opt/fsl-imx-x11/.../environment-setup-...&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;交叉编译环境脚本&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;MAX_FIX_ROUNDS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;3&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;编译失败后自动补依赖的最大重试轮数&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;3. 一键用法（核心）&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;qtmini_auto &amp;lt;工程&amp;gt; [程序参数...]
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;&amp;lt;工程&amp;gt;&lt;/code&gt; 可以是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Qt_ref 下的目录路径&lt;/strong&gt;：&lt;code&gt;qtmini_auto 04/01_smarthome&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;名字&lt;/strong&gt;（自动在 &lt;code&gt;Qt_ref/Qt&lt;/code&gt; 下递归查找）：&lt;code&gt;qtmini_auto 01_hello_world&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;任意绝对/相对路径&lt;/strong&gt;：&lt;code&gt;qtmini_auto /home/lnx/.../qt_dev/mytest&lt;/code&gt;（不限于 Qt_ref）&lt;/li&gt;
+&lt;li&gt;若目录下&lt;strong&gt;没有 &lt;code&gt;.pro&lt;/code&gt;&lt;/strong&gt;，会自动向下找子工程；有多个子工程时打印编号菜单让你选择（如 &lt;code&gt;04/05_video_surveillance&lt;/code&gt; 下有 &lt;code&gt;video_client&lt;/code&gt;、&lt;code&gt;video_server&lt;/code&gt;）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;程序参数直接跟在工程后面，开头的 &lt;code&gt;--&lt;/code&gt; 会被自动去掉；需要原样透传 &lt;code&gt;--&lt;/code&gt; 开头参数时用独立的 &lt;code&gt;--&lt;/code&gt; 分隔符：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;qtmini_auto 09_tcpclient -- 127.0.0.1   # 板子上执行: /home/root/09_tcpclient 127.0.0.1
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;流程与输出：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;[*] 已自动修补 09_tcpclient.pro: QT += network   # 缺依赖时才会出现
+[1/4] 编译 09_tcpclient
+[*] tftpd-hpa 运行中
+[2/4] 传输 09_tcpclient -&amp;gt; 板子 /home/root/
+[3/4] 板子运行 /home/root/09_tcpclient
+----- 启动日志 -----
+...
+----- 运行状态 -----
+  PID ?  00:00:01 09_tcpclient
+[4/4] 完成!程序已启动
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;注意&lt;/strong&gt;：Qt 小例程是独立 Widgets 程序，运行时脚本会&lt;strong&gt;杀掉桌面的 QDesktop / systemui&lt;/strong&gt;，全屏运行该程序。跑完想回桌面，用 &lt;code&gt;qtmini_auto run systemui&lt;/code&gt; 或直接重启。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;4. 依赖自动修补&lt;/h2&gt;
+&lt;p&gt;这是 qtmini_auto 区别于手动 qmake 编译的核心能力，分两层：&lt;/p&gt;
+&lt;h3&gt;4.1 编译前静态扫描&lt;/h3&gt;
+&lt;p&gt;扫描工程内所有 &lt;code&gt;.cpp/.h/.ui&lt;/code&gt;，根据&quot;类名 → Qt 模块&quot;映射表检查 &lt;code&gt;.pro&lt;/code&gt; 是否声明：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;用到的类&lt;/th&gt;
+&lt;th&gt;自动补的模块&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QTcpSocket / QTcpServer / QUdpSocket / QHostInfo / QNetworkAccessManager&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;network&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QSerialPort / QSerialPortInfo&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;serialport&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QCanBus / QCanBusDevice / QCanBusFrame&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;serialbus&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QChart / QChartView / QLineSeries / QBarSeries&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;charts&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QMediaPlayer / QMediaRecorder / QAudioInput&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;multimedia&lt;/code&gt;（&lt;code&gt;QVideoWidget&lt;/code&gt; 补 &lt;code&gt;multimediawidgets&lt;/code&gt;）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QSqlDatabase / QSqlQuery / QSqlTableModel&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;sql&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QBluetoothSocket / QBluetoothDeviceDiscoveryAgent&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;bluetooth&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QWebSocket / QWebSocketServer&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;websockets&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QMqttClient / QMqttSubscription&lt;/code&gt; 等&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;mqtt&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;QApplication / QMainWindow / QWidget / QDialog&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;widgets&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;目录有 &lt;code&gt;.ui&lt;/code&gt; 但 &lt;code&gt;.pro&lt;/code&gt; 没写 &lt;code&gt;FORMS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;补 &lt;code&gt;FORMS +=&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;目录有 &lt;code&gt;.qrc&lt;/code&gt; 但 &lt;code&gt;.pro&lt;/code&gt; 没写 &lt;code&gt;RESOURCES&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;补 &lt;code&gt;RESOURCES +=&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;.pro&lt;/code&gt; 缺 C++11&lt;/td&gt;
+&lt;td&gt;补 &lt;code&gt;CONFIG += c++11&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;只改 &lt;code&gt;.pro&lt;/code&gt;，绝不改源码&lt;/strong&gt;；修补前会把改动内容打印出来。系统里不存在的模块（如某些 04 组用到的 OpenCV）不会误补。&lt;/p&gt;
+&lt;h3&gt;4.2 编译失败兜底&lt;/h3&gt;
+&lt;p&gt;静态扫描覆盖不到的情况（例如通过 &lt;code&gt;.pri&lt;/code&gt; 引用了兄弟目录的源码、或代码里用了映射表外的类）→ 编译失败时解析错误日志：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;fatal error: QtNetwork/...: No such file&lt;/code&gt; → 补 &lt;code&gt;network&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;cannot find -lQt5Xxx&lt;/code&gt; → 补对应模块&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;QTcpSocket: No such file&lt;/code&gt; 之类的类名错误 → 补对应模块&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;补完 &lt;code&gt;.pro&lt;/code&gt; 重新编译，最多 &lt;code&gt;MAX_FIX_ROUNDS&lt;/code&gt; 轮。仍失败则打印完整错误日志退出。&lt;/p&gt;
+&lt;h2&gt;5. 子命令&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;th&gt;作用&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto build &amp;lt;工程&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;只交叉编译（含依赖修补），不部署&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto fix &amp;lt;工程&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;只检查并修补 &lt;code&gt;.pro&lt;/code&gt; 依赖，不编译&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto transfer &amp;lt;本地文件&amp;gt; [板端路径]&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;任意文件推到板子并 chmod +x，默认 &lt;code&gt;/home/root/&amp;lt;文件名&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto run &amp;lt;名字&amp;gt; [参数...]&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;运行板子上 &lt;code&gt;/home/root/&amp;lt;名字&amp;gt;&lt;/code&gt;（会先杀掉桌面和同名进程）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto kill &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;关闭板子上 QDesktop / systemui / 同名进程&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto log &amp;lt;名字&amp;gt;&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看板子上 &lt;code&gt;/tmp/&amp;lt;名字&amp;gt;.log&lt;/code&gt; 启动日志&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto status&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;查看 tftpd / 板子 ping / HOME / dropbear 状态&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;按组列出 Qt_ref 下所有工程（方便查名字）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;6. 典型工作流&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;场景&lt;/th&gt;
+&lt;th&gt;命令&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;编译并运行 hello world&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto 01_hello_world&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;编译并运行 TCP 客户端（带参数）&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto 09_tcpclient -- 192.168.1.20&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;只编译串口例程，不上板&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto build 03_serialport&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;只检查某个工程缺什么依赖&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto fix 02/04_qtchart&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;多个子工程选一个编译&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto 04/05_video_surveillance&lt;/code&gt;（提示选择 video_client / video_server）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;把 PC 上某个文件推上板子&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto transfer ./a.png /opt/a.png&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;回桌面 / 看日志 / 停程序&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;qtmini_auto run systemui&lt;/code&gt;、&lt;code&gt;qtmini_auto log 09_tcpclient&lt;/code&gt;、&lt;code&gt;qtmini_auto kill 09_tcpclient&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2&gt;7. 综合例程的修复说明&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;04&lt;/code&gt; 组三个综合例程原本 &lt;code&gt;.pro&lt;/code&gt; 用 &lt;code&gt;include(../webapi/webapi.pri)&lt;/code&gt;、源码用 &lt;code&gt;#include &quot;../webapi/webapi.h&quot;&lt;/code&gt;，把 &lt;code&gt;webapi/slidepage/appdemo/ocr&lt;/code&gt; 当作&lt;strong&gt;主工程的平级目录&lt;/strong&gt;，而实际它们是&lt;strong&gt;子目录&lt;/strong&gt;，导致无法编译。已统一改为子目录引用（&lt;code&gt;.pri&lt;/code&gt; 内部改用 &lt;code&gt;$$PWD/&lt;/code&gt;）：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;04/01_smarthome&lt;/code&gt;（webapi）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;04/03_appmainview&lt;/code&gt;（slidepage、appdemo）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;04/04_lpr_demo&lt;/code&gt;（ocr）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;修复后这三个工程可直接 &lt;code&gt;qtmini_auto 04/01_smarthome&lt;/code&gt; 一键编译上板。&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;其余 &lt;code&gt;04&lt;/code&gt; 组个别工程（如 &lt;code&gt;05_opencv_camera&lt;/code&gt;）依赖外部库（OpenCV）或板子未装，编译失败属正常，脚本不会误补，按第 8 节排查。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2&gt;8. 常见问题排查&lt;/h2&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;原因 / 处理&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;板子 tftp 下载超时&lt;/td&gt;
+&lt;td&gt;Windows 防火墙拦截 UDP 69。管理员 PowerShell 放行：&lt;code&gt;New-NetFirewallRule -DisplayName tftp69 -Direction Inbound -Protocol UDP -LocalPort 69 -Action Allow&lt;/code&gt;，或临时关闭防火墙&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;ssh 连接报 &lt;code&gt;no matching host key type&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子 dropbear 仅支持 &lt;code&gt;ssh-rsa&lt;/code&gt;，脚本已带 &lt;code&gt;-o HostKeyAlgorithms=+ssh-rsa&lt;/code&gt; 兼容；手动 ssh 时需加同样参数&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;运行后屏幕黑屏 / 桌面没了&lt;/td&gt;
+&lt;td&gt;独立 Widgets 程序会杀掉 systemui 全屏运行，属正常。回桌面用 &lt;code&gt;qtmini_auto run systemui&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;cannot open shared object ...&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;板子缺运行库。先在板子上 &lt;code&gt;ldd /home/root/&amp;lt;程序&amp;gt;&lt;/code&gt; 看缺什么，再从 &lt;code&gt;sysroots/cortexa7hf-neon-poky-linux-gnueabi/usr/lib/&lt;/code&gt; 对应拷贝，或用 &lt;code&gt;qtmini_auto transfer&lt;/code&gt; 推上去&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;wrong ELF class&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;二进制不是 ARM32（本机误用 &lt;code&gt;gcc&lt;/code&gt; 编译）。脚本始终走工具链 qmake，确认输出为 &lt;code&gt;ELF 32-bit ARM&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;编译失败且脚本提示&quot;无法自动修补&quot;&lt;/td&gt;
+&lt;td&gt;缺的不是常见 Qt 模块（如 OpenCV 的 &lt;code&gt;PKGCONFIG&lt;/code&gt;）。手动 &lt;code&gt;source&lt;/code&gt; 环境后 &lt;code&gt;qmake &amp;amp;&amp;amp; make&lt;/code&gt; 看完整错误定位&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;界面显示但点不动&lt;/td&gt;
+&lt;td&gt;触摸环境未生效。脚本运行时已 &lt;code&gt;source /etc/profile&lt;/code&gt; 并 &lt;code&gt;export TSLIB_TSDEVICE=/dev/input/event1&lt;/code&gt;；若设备号不同改脚本 &lt;code&gt;TOUCH_DEV&lt;/code&gt; 常量&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;程序需要传参数&lt;/td&gt;
+&lt;td&gt;参数直接跟在工程后：&lt;code&gt;qtmini_auto 09_tcpclient -- 127.0.0.1&lt;/code&gt;（&lt;code&gt;--&lt;/code&gt; 后原样透传）&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;想改板子 ssh 密码&lt;/td&gt;
+&lt;td&gt;板子 &lt;code&gt;passwd root&lt;/code&gt; 修改，并同步更新 &lt;code&gt;qtmini_auto.py&lt;/code&gt; 的 &lt;code&gt;PASSWORD&lt;/code&gt; 常量&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+</content:encoded></item><item><title>嵌入式 Linux 开发心得（IMX6ULL 实战总结）</title><link>https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/%E5%B5%8C%E5%85%A5%E5%BC%8Flinux%E5%BC%80%E5%8F%91%E5%BF%83%E5%BE%97/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91/%E5%B5%8C%E5%85%A5%E5%BC%8Flinux%E5%BC%80%E5%8F%91%E5%BF%83%E5%BE%97/</guid><description>IMX6ULL 嵌入式 Linux 开发的踩坑经验总结：交叉编译、显示系统、外设、性能优化、调试方法论。</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;嵌入式 Linux 开发心得（IMX6ULL 实战总结）&lt;/h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;本文基于本仓库 &lt;code&gt;qt_dev/&lt;/code&gt;、&lt;code&gt;SuperMario-main/&lt;/code&gt;、&lt;code&gt;controller_dev/&lt;/code&gt;、&lt;code&gt;openmugen_dev/&lt;/code&gt; 等项目的实际开发过程总结。
+板卡：正点原子 IMX6ULL（Cortex-A7 单核 528MHz，256MB DDR，800×480 RGB LCD）
+系统：Yocto Linux（buildroot 风格 rootfs），Qt 5.12.9&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;这不是 API 手册，而是&quot;踩过坑之后才知道&quot;的工程经验。适合有一定 C/C++ 基础、想入门嵌入式 Linux 开发的人阅读。&lt;/p&gt;
+&lt;h2&gt;目录&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;a href=&quot;#1-%E6%95%B4%E4%BD%93%E8%AE%A4%E7%9F%A5%E5%B5%8C%E5%85%A5%E5%BC%8F%E5%BC%80%E5%8F%91%E5%88%B0%E5%BA%95%E5%9C%A8%E5%B9%B2%E4%BB%80%E4%B9%88&quot;&gt;整体认知：嵌入式开发到底在干什么&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#2-%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E4%B8%89%E6%9D%BF%E6%96%A7%E4%BA%A4%E5%8F%89%E7%BC%96%E8%AF%91--%E4%BC%A0%E8%BE%93--%E8%B0%83%E8%AF%95&quot;&gt;开发环境三板斧：交叉编译 / 传输 / 调试&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#3-%E6%98%BE%E7%A4%BA%E7%B3%BB%E7%BB%9Fframebuffer--qt--%E5%88%86%E8%BE%A8%E7%8E%87%E9%80%82%E9%85%8D&quot;&gt;显示系统：framebuffer / Qt / 分辨率适配&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#4-%E5%A4%96%E8%AE%BE%E4%B8%8E%E8%BE%93%E5%85%A5gpio--%E8%A7%A6%E6%91%B8--usb-%E6%89%8B%E6%9F%84&quot;&gt;外设与输入：GPIO / 触摸 / USB 手柄&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#5-%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E5%8D%95%E6%A0%B8-528mhz-%E7%9A%84%E7%94%9F%E5%AD%98%E4%B9%8B%E9%81%93&quot;&gt;性能优化：单核 528MHz 的生存之道&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#6-ui%E4%BA%A4%E4%BA%92%E8%AE%BE%E8%AE%A1%E5%B0%8F%E5%B1%8F%E4%B8%8A%E7%9A%84%E5%8F%AF%E7%94%A8%E6%80%A7&quot;&gt;UI/交互设计：小屏上的可用性&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#7-%E8%B0%83%E8%AF%95%E6%8E%92%E9%9A%9C%E6%96%B9%E6%B3%95%E8%AE%BA&quot;&gt;调试排障方法论&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#8-%E5%B8%B8%E7%94%A8%E7%9A%84%E6%9D%BF%E7%AB%AF%E5%91%BD%E4%BB%A4%E9%80%9F%E6%9F%A5&quot;&gt;常用的板端命令速查&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#9-%E5%BF%83%E5%BE%97%E4%BD%93%E4%BC%9A&quot;&gt;心得体会&lt;/a&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr /&gt;
+&lt;h2&gt;1. 整体认知：嵌入式开发到底在干什么&lt;/h2&gt;
+&lt;p&gt;嵌入式 Linux 开发和 PC 开发最大的区别：&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;维度&lt;/th&gt;
+&lt;th&gt;PC 开发&lt;/th&gt;
+&lt;th&gt;嵌入式 Linux&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;编译&lt;/td&gt;
+&lt;td&gt;本机编译本机跑&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;交叉编译&lt;/strong&gt;，目标平台跑&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;资源&lt;/td&gt;
+&lt;td&gt;内存按 GB 算&lt;/td&gt;
+&lt;td&gt;内存按 MB 算，单核&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;显示&lt;/td&gt;
+&lt;td&gt;X11/Wayland 桌面&lt;/td&gt;
+&lt;td&gt;多数是 &lt;strong&gt;framebuffer&lt;/strong&gt; 裸显&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;部署&lt;/td&gt;
+&lt;td&gt;装包/拷文件&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;板端覆盖&lt;/strong&gt;，注意占用/只读&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;调试&lt;/td&gt;
+&lt;td&gt;本地 IDE 断点&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;串口/SSH + 日志 + 文件轮询&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;核心心法：开发板就是一台&quot;有显示器的、资源很少的 Linux 电脑&quot;，一切 PC 上的 Linux 知识都适用，只是要时刻注意资源上限。&lt;/strong&gt;&lt;/p&gt;
+&lt;h3&gt;必须掌握的基础知识清单&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;交叉编译&lt;/strong&gt;：工具链、&lt;code&gt;sysroot&lt;/code&gt;、&lt;code&gt;-march&lt;/code&gt;/&lt;code&gt;-mfpu&lt;/code&gt; 目标架构、动态链接库依赖（这是入门第一关）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Linux 文件系统&lt;/strong&gt;：&lt;code&gt;/dev&lt;/code&gt;（设备节点）、&lt;code&gt;/sys&lt;/code&gt;/&lt;code&gt;/proc&lt;/code&gt;（内核接口）、挂载、读写权限、rootfs 只读分区&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;构建系统&lt;/strong&gt;：&lt;code&gt;qmake&lt;/code&gt;/&lt;code&gt;Makefile&lt;/code&gt;/&lt;code&gt;CMake&lt;/code&gt;，至少要能看懂 .pro 和 Makefile&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;进程管理&lt;/strong&gt;：&lt;code&gt;kill&lt;/code&gt;/&lt;code&gt;nohup&lt;/code&gt;/&lt;code&gt;ps&lt;/code&gt;，板子上没有 systemd，自启动靠 &lt;code&gt;rc.local&lt;/code&gt; 或 systemui&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;基本网络&lt;/strong&gt;：&lt;code&gt;ssh&lt;/code&gt;/&lt;code&gt;scp&lt;/code&gt;/&lt;code&gt;ifconfig&lt;/code&gt;/&lt;code&gt;ping&lt;/code&gt;，用于部署和远程调试&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;字符编码&lt;/strong&gt;：嵌入式常用 UTF-8，中文字体要显式指定路径&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;2. 开发环境三板斧：交叉编译 / 传输 / 调试&lt;/h2&gt;
+&lt;h3&gt;2.1 交叉编译&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;核心工具链&lt;/strong&gt;（本项目）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;source /opt/fsl-imx-x11/4.1.15-2.1.0/environment-setup-cortexa7hf-neon-poky-linux-gnueabi
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;source 之后会设置 &lt;code&gt;CC&lt;/code&gt;/&lt;code&gt;CXX&lt;/code&gt;/&lt;code&gt;CFLAGS&lt;/code&gt;/&lt;code&gt;LDFLAGS&lt;/code&gt; 等，&lt;code&gt;make&lt;/code&gt; 直接能用。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;几个关键点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;架构匹配&lt;/strong&gt;：IMX6ULL 是 &lt;strong&gt;armv7-a + hard float + neon&lt;/strong&gt;。写汇编/内嵌汇编时不能用 v8 指令；&lt;code&gt;-march&lt;/code&gt; 必须匹配，否则指令不识别或性能差。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;动态链接&lt;/strong&gt;：板端 lib 版本必须和 sysroot 一致。移植 PC 软件（如 SDL 1.2）时，&lt;strong&gt;不要链接板端已有的系统库的版本冲突项&lt;/strong&gt;，要么静态链接要么整个依赖一起带上。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;qmake 交叉编译&lt;/strong&gt;：Qt 项目用现成 sysroot 里的 qmake（&lt;code&gt;qt5&lt;/code&gt; 环境的），不要用宿主机 qmake。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;在板上要看是否缺 .so&lt;/strong&gt;：跑起来报 &lt;code&gt;cannot open shared object&lt;/code&gt;，&lt;code&gt;ldd&lt;/code&gt;（或 &lt;code&gt;readelf -d&lt;/code&gt;）确认依赖。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;2.2 传输部署（最常用操作）&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;# SSH 免密码自动化脚本(项目里 appflash.py 就是这么做的)
+sshpass -p 密码 scp ./myapp root@192.168.1.20:/home/root/
+
+# 覆盖 /opt/ui/src/apps/ 下的程序前, 先杀掉占用进程, 否则 &quot;Text file busy&quot;
+killall -9 mytest supermary; cp new /opt/ui/src/apps/mytest
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;血泪教训&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Text file busy&lt;/strong&gt;：正在运行的 ELF 文件不能覆盖。先 &lt;code&gt;killall&lt;/code&gt; 再 &lt;code&gt;cp&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;目标路径写不进&lt;/strong&gt;：某些目录只读或权限不够，先传到 &lt;code&gt;/home/root/&lt;/code&gt; 再 &lt;code&gt;cp&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输/校验&lt;/strong&gt;：小屏设备部署后，&lt;code&gt;ls -la&lt;/code&gt; 对比大小确认传完整。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;2.3 调试三板斧&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;日志&lt;/strong&gt;：板端 &lt;code&gt;nohup ./app &amp;gt; /tmp/log 2&amp;gt;&amp;amp;1 &amp;amp;&lt;/code&gt;，再 &lt;code&gt;ssh tail -f /tmp/log&lt;/code&gt;。QML 的 &lt;code&gt;console.log&lt;/code&gt; 会进 stderr。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;grep 过滤&lt;/strong&gt;：&lt;code&gt;grep -a &quot;关键字&quot; /tmp/log | tail&lt;/code&gt;，日志量大时按关键字筛。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;进程状态&lt;/strong&gt;：&lt;code&gt;ps -o pid,args&lt;/code&gt; 确认进程活着、&lt;code&gt;top&lt;/code&gt; 看 CPU。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;调试方法论：改代码 → 交叉编译 → 传板 → 跑 → 看日志 → 再改。&lt;/strong&gt; 板端没有断点调试的条件（除非接 gdbserver），所以&lt;strong&gt;日志点要打得多、打得准&lt;/strong&gt;，尤其怀疑&quot;某个分支没走到&quot;时，直接 &lt;code&gt;qDebug()/console.log&lt;/code&gt; 打标记。&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h2&gt;3. 显示系统：framebuffer / Qt / 分辨率适配&lt;/h2&gt;
+&lt;h3&gt;3.1 三层显示栈&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;App(Qt/QML) → Qt 平台插件(linuxfb) → /dev/fb0(framebuffer) → LCD 控制器
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;板子 800×480，&lt;strong&gt;无 X11/Wayland&lt;/strong&gt;，Qt 用 &lt;code&gt;linuxfb&lt;/code&gt; 平台直接画到 framebuffer。&lt;/li&gt;
+&lt;li&gt;查看分辨率：&lt;code&gt;cat /sys/class/graphics/fb0/virtual_size&lt;/code&gt; 或 &lt;code&gt;fbset&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;启动 Qt 程序固定平台参数：&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;export QT_QPA_PLATFORM=linuxfb:tty=/dev/fb0
+export QT_QPA_FONTDIR=/usr/share/fonts/ttf   # 中文字体路径
+./mytest fight
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;3.2 移植游戏/软件时的分辨率适配（核心经验）&lt;/h3&gt;
+&lt;p&gt;原版是 800×545 或 640×480 的游戏，要适配 800×480 屏幕，有三种做法，&lt;strong&gt;从简单到复杂&lt;/strong&gt;：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;整体缩放&lt;/strong&gt;：&lt;code&gt;painter.scale()&lt;/code&gt; 把画布压到屏幕尺寸。简单但&lt;strong&gt;比例失真&lt;/strong&gt;（游戏会被压扁/拉伸）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;坐标裁剪&lt;/strong&gt;：固定显示区域，裁掉不可见部分。适合场景本身比屏幕大。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;相机/视口平移&lt;/strong&gt;：世界坐标不变，用一个 camera 偏移量控制&quot;看哪里&quot;。这是 2D 横版游戏的标准做法。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;本例实战&lt;/strong&gt;（&lt;code&gt;gamescene.cpp&lt;/code&gt; paintEvent）：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 1. 相机带死区: 玩家在屏幕中间 110px 内移动, 画面不动, 超出才平滑跟随
+//    消除&quot;画面跟着人物一抖一抖&quot;
+// 2. 垂直锚定地面: 跳跃时画面不上下晃
+// 3. 锚点缩放: translate(ax,ay); scale(1.25); translate(-ax,-ay) 实现局部放大
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;心得&lt;/strong&gt;：游戏画面&quot;小、晃、被压扁&quot;是最常见的三个观感问题，分别对应缩放、相机死区、宽高比三个概念。&lt;/p&gt;
+&lt;h3&gt;3.3 Qt 字体与中文&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;不设字体目录：中文全是方块。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;QT_QPA_FONTDIR&lt;/code&gt; 指向含中文字体的目录；程序里 &lt;code&gt;QFont(&quot;Times&quot;, ...)&lt;/code&gt; 对中文可能无效，要指定支持中文的字体。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;嵌入小屏不要用超大字号&lt;/strong&gt;：HUD 用 22px 就很清晰，40px+ 会相互重叠（本项目踩过&quot;第X关&quot;和&quot;时间&quot;文字重叠的坑）。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;4. 外设与输入：GPIO / 触摸 / USB 手柄&lt;/h2&gt;
+&lt;h3&gt;4.1 触摸屏&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;设备节点：&lt;code&gt;/dev/input/event1&lt;/code&gt;（&lt;code&gt;cat /proc/bus/input/devices&lt;/code&gt; 确认）。&lt;/li&gt;
+&lt;li&gt;Qt 里要设 &lt;code&gt;TSLIB_TSDEVICE=/dev/input/event1&lt;/code&gt;、&lt;code&gt;QT_QPA_FB_TSLIB=1&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;触摸点不匹配屏幕&lt;/strong&gt;：调 &lt;code&gt;/etc/pointercal&lt;/code&gt; 或 tslib 校准。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;4.2 USB 手柄（本项目最大坑）&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;硬件&lt;/strong&gt;：XBOX360 克隆手柄，USB 直连。问题：固件和板子的 &lt;code&gt;ci_hdrc&lt;/code&gt; USB 控制器间歇性不兼容，SDK 读到的事件可能错乱。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;方案（通用思路）&lt;/strong&gt;：&lt;strong&gt;不要让每个 App 直接读 USB，让一个常驻守护进程独占设备，把状态写文件/广播给所有 App。&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;gamepadd(守护进程, 独占USB) ──&amp;gt; /tmp/gamepad.sock (本地socket)
+                               └──&amp;gt; /tmp/pad_state  (文本文件, 供SDL等程序读)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;Qt 侧：&lt;code&gt;QLocalSocket&lt;/code&gt; 连 &lt;code&gt;/tmp/gamepad.sock&lt;/code&gt;，按行解析 20 个字段。&lt;/li&gt;
+&lt;li&gt;SDL/其它程序：&lt;strong&gt;不要复用 socket fd&lt;/strong&gt;（SDL 会误关 fd），改为&lt;strong&gt;轮询读 &lt;code&gt;/tmp/pad_state&lt;/code&gt; 文件&lt;/strong&gt;。&lt;/li&gt;
+&lt;li&gt;手柄数据格式：&lt;code&gt;lx,ly,rx,ry,lt,rt,a,b,x,y,lb,rb,start,back,ls,rs,up,down,left,right&lt;/code&gt;，20 个字段。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;摇杆有正负&lt;/strong&gt;：&lt;code&gt;LY 上推为正(+32767)，下推为负(-32768)&lt;/code&gt;，写游戏判断方向时别搞反。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;通用心法：外设驱动这件事，优先&quot;一个进程独占+对外广播状态&quot;，而不是&quot;每个程序都抢设备&quot;。&lt;/strong&gt;&lt;/p&gt;
+&lt;h3&gt;4.3 按键输入要统一抽象&lt;/h3&gt;
+&lt;p&gt;小屏设备输入法很杂（触摸、手柄、键盘），&lt;strong&gt;每个页面必须同时支持至少两种&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;菜单/按钮：触摸 &lt;code&gt;onClicked&lt;/code&gt; + 手柄 &lt;code&gt;A 确认 / 方向导航&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;游戏内：手柄 + 触摸按钮叠加&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;手柄导航要用&quot;边缘触发&quot;&lt;/strong&gt;（按下瞬间移动一次），不要按住连跳，否则用户稍一长按就到底了。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;5. 性能优化：单核 528MHz 的生存之道&lt;/h2&gt;
+&lt;h3&gt;5.1 先测再说&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;移植过来的引擎/游戏，&lt;strong&gt;先在板子上跑个基准&lt;/strong&gt;（&lt;code&gt;top&lt;/code&gt; 看 CPU、帧率计数器），确认瓶颈。&lt;/li&gt;
+&lt;li&gt;本项目 OpenMugen 能跑 60fps，但发现角色控制器表大多为 NULL（引擎功能不完整），说明&quot;能跑&quot;≠&quot;能用&quot;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;5.2 优化手段（按性价比排序）&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;降低绘制分辨率&lt;/strong&gt;：用 &lt;code&gt;painter.scale()&lt;/code&gt; 绘制比每像素精确绘制快得多。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;减少每帧全量重绘&lt;/strong&gt;：QML Canvas 全屏重绘在单核上很贵；考虑分区域或降低刷新频率。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;定时器频率&lt;/strong&gt;：游戏循环 &lt;code&gt;interval&lt;/code&gt; 从 15ms→20ms 视觉几乎无差但 CPU 省 25%。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;动画用 QML 内置 Behavior/NumberAnimation&lt;/strong&gt;（QPainter/引擎合成），不要每帧手写 update()。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;静态资源预先缓存&lt;/strong&gt;：图片/字体只加载一次，别在 paintEvent 里 &lt;code&gt;QPixmap(&quot;:/...&quot;)&lt;/code&gt; 每次新建。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;5.3 手感与性能的平衡&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;攻击判定、击退、受伤无敌帧等&quot;手感&quot;参数，&lt;strong&gt;先用调参工具&lt;/strong&gt;（把值写文件，程序热读），满意后再固化。&lt;/li&gt;
+&lt;li&gt;AI 太强/太准会让玩家沮丧：给 AI 加&lt;strong&gt;随机失误（挥空概率）、更长攻击间隔、发呆动作&lt;/strong&gt;，观感立刻真实。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;6. UI/交互设计：小屏上的可用性&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;按钮要大&lt;/strong&gt;：800×480 上最小可点区域 ≥60×40，本项目 TouchBtn 默认 72×72。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;文字要小、要分行&lt;/strong&gt;：HUD 信息多时，字体 20-24px，不同信息分行，&lt;strong&gt;别把两个数值画在相邻很近的位置&lt;/strong&gt;（重叠是必然）。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;触摸 + 手柄都要支持&lt;/strong&gt;：用户会换着用，单一输入会让设备&quot;很奇怪&quot;。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;游戏内要能随时退出&lt;/strong&gt;：暂停/退出按钮要常驻可见，不要指望用户记得某个手柄键。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;菜单层级&lt;/strong&gt;：选关、暂停、返回的层级要浅，1-2 级即可。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr /&gt;
+&lt;h2&gt;7. 调试排障方法论&lt;/h2&gt;
+&lt;h3&gt;7.1 经典问题速查&lt;/h3&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;现象&lt;/th&gt;
+&lt;th&gt;原因&lt;/th&gt;
+&lt;th&gt;排查&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Text file busy&lt;/td&gt;
+&lt;td&gt;程序正在运行&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;killall&lt;/code&gt; 后再覆盖&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;画面被压扁&lt;/td&gt;
+&lt;td&gt;宽高比不匹配&lt;/td&gt;
+&lt;td&gt;用相机/裁剪而非纯 scale&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;中文方块&lt;/td&gt;
+&lt;td&gt;没设字体目录&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;QT_QPA_FONTDIR&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;触摸无反应&lt;/td&gt;
+&lt;td&gt;设备节点/校准&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;cat /proc/bus/input/devices&lt;/code&gt;、tslib&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;手柄数据错乱&lt;/td&gt;
+&lt;td&gt;USB 协议不兼容&lt;/td&gt;
+&lt;td&gt;守护进程独占 + 重连/复位&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;摇杆方向反了&lt;/td&gt;
+&lt;td&gt;轴正负理解错&lt;/td&gt;
+&lt;td&gt;打印裸值确认&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;程序闪退&lt;/td&gt;
+&lt;td&gt;缺 .so 或段错误&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;ldd&lt;/code&gt;、stderr 日志&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;长按菜单连跳&lt;/td&gt;
+&lt;td&gt;无边缘触发&lt;/td&gt;
+&lt;td&gt;加 prev 状态判断&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;游戏结束无反应&lt;/td&gt;
+&lt;td&gt;事件被遮挡/分支没走到&lt;/td&gt;
+&lt;td&gt;加 console.log 标记&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3&gt;7.2 调试原则&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;一次只改一个变量&lt;/strong&gt;：尤其手感/性能类问题。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;加日志确认&quot;走到了&quot;&lt;/strong&gt;：怀疑分支，直接打标记，别猜。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;先本地复现再上板&lt;/strong&gt;：PC 上先把逻辑调通，板子只做移植验证。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;保留对比&lt;/strong&gt;：改之前 &lt;code&gt;git diff&lt;/code&gt;/备份，改坏了能回退。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;读 dmesg&lt;/strong&gt;：USB、驱动类问题 &lt;code&gt;dmesg | tail&lt;/code&gt; 往往直接给出答案。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr /&gt;
+&lt;h2&gt;8. 常用的板端命令速查&lt;/h2&gt;
+&lt;pre&gt;&lt;code&gt;# 环境
+cat /etc/os-release /proc/cpuinfo /proc/meminfo
+# 网络
+ifconfig; ping 192.168.1.1
+# 部署
+killall -9 mytest; cp new /opt/ui/src/apps/mytest; chmod +x ...
+# 进程
+ps -o pid,args; top
+# 显示
+cat /sys/class/graphics/fb0/virtual_size
+# 输入设备
+cat /proc/bus/input/devices
+# 日志
+nohup ./app &amp;gt; /tmp/log 2&amp;gt;&amp;amp;1 &amp;amp;; tail -f /tmp/log
+grep -a &quot;关键字&quot; /tmp/log | tail
+# USB
+dmesg | grep -i usb
+# 调试依赖
+readelf -d ./app | grep NEEDED
+&lt;/code&gt;&lt;/pre&gt;
+&lt;hr /&gt;
+&lt;h2&gt;9. 心得体会&lt;/h2&gt;
+&lt;h3&gt;9.1 关于&quot;移植&quot;&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;移植不是&quot;复制代码&quot;，而是&quot;理解它的世界坐标系、事件循环、资源加载，然后在目标平台上重画一遍&quot;。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;本项目移植 SuperMario 的经验：核心是搞懂它的&lt;strong&gt;坐标体系&lt;/strong&gt;（800×545 世界坐标、相机如何跟随）、&lt;strong&gt;事件来源&lt;/strong&gt;（键盘事件 vs 手柄轮询）、&lt;strong&gt;绘图时机&lt;/strong&gt;（定时器驱动 update）。这三件事搞通了，加功能（选关、暂停、退出）都只是往正确的位置插代码。&lt;/p&gt;
+&lt;h3&gt;9.2 关于&quot;学习路径&quot;&lt;/h3&gt;
+&lt;p&gt;对 IMX6ULL 这类入门板，&lt;strong&gt;正确的路径&lt;/strong&gt;是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;先跑通一个最小例程&lt;/strong&gt;（GPIO 点灯 / Qt 显示一张图），建立&quot;编译→部署→运行&quot;的闭环。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;读懂一个中型项目&lt;/strong&gt;（如本项目 qt_dev 的 systemui + 一个 App），理解工程结构。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;自己动手改&lt;/strong&gt;（加个按钮、换个颜色），感受&quot;改一处→重新编译→传板→看效果&quot;的节奏。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;再挑战移植/自研&lt;/strong&gt;：把 PC 上的一个游戏或库搬到板子上，会踩光所有的坑，也就学会了。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;9.3 关于&quot;调试心态&quot;&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;嵌入式调试&lt;strong&gt;慢&lt;/strong&gt;，一次迭代可能 1-2 分钟，所以要&lt;strong&gt;减少迭代次数&lt;/strong&gt;：多打印、多想、少盲改。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;别跟设备较劲&lt;/strong&gt;：硬件/固件的问题（如 USB 兼容）该绕过就绕过，用软件方案（守护进程、轮询文件）规避。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;性能问题先量化&lt;/strong&gt;：一上来就&quot;优化&quot;往往瞎忙，先确认瓶颈在哪。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;9.4 最后&lt;/h3&gt;
+&lt;p&gt;嵌入式 Linux 开发的核心，无非是&quot;&lt;strong&gt;交叉编译 + 资源受限 + 真机调试&lt;/strong&gt;&quot;三个关键词。把这三点变成肌肉记忆，剩下的就是普通 Linux + C/C++ + 具体框架（Qt/GTK/裸机）的知识积累。&lt;strong&gt;看得懂原理、上手能跑、踩坑能扛&lt;/strong&gt;，这就是这门手艺的全部。&lt;/p&gt;
 </content:encoded></item><item><title>马原材料题万能答题模板</title><link>https://lnxlnxlnx.github.io/posts/%E9%A9%AC%E5%85%8B%E6%80%9D%E4%B8%BB%E4%B9%89%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86/%E7%AD%94%E9%A2%98%E6%A8%A1%E6%9D%BF/</link><guid isPermaLink="true">https://lnxlnxlnx.github.io/posts/%E9%A9%AC%E5%85%8B%E6%80%9D%E4%B8%BB%E4%B9%89%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86/%E7%AD%94%E9%A2%98%E6%A8%A1%E6%9D%BF/</guid><description>马原材料/论述题万能通用模板与套话，分模块考场默写。</description><pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;马原材料/论述题万能通用模板+套话（分模块，考场直接默写，踩分点齐全）&lt;/h1&gt;
 &lt;h2&gt;一、万能开篇（任何题第一句必写，2分保底）&lt;/h2&gt;
 &lt;ol&gt;

@@ -34,6 +34,11 @@ enum I18nKey {
 
 	themeColor = "themeColor",
 
+	// 特效设置
+	effects = "effects",
+	sakuraEffect = "sakuraEffect",
+	mouseTrailEffect = "mouseTrailEffect",
+
 	lightMode = "lightMode",
 	darkMode = "darkMode",
 	systemMode = "systemMode",

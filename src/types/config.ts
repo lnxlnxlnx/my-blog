@@ -357,6 +357,7 @@ export type SidebarLayoutConfig = {
 
 export type SakuraConfig = {
 	enable: boolean; // 是否启用樱花特效
+	switchable: boolean; // 是否允许用户在前台开关樱花特效
 	sakuraNum: number; // 樱花数量，默认21
 	limitTimes: number; // 樱花越界限制次数，-1为无限循环
 	size: {
@@ -380,6 +381,27 @@ export type SakuraConfig = {
 		fadeSpeed: number; // 消失速度，不应大于最小不透明度
 	};
 	zIndex: number; // 层级，确保樱花在合适的层级显示
+};
+
+// 鼠标拖尾特效配置
+export type MouseTrailConfig = {
+	enable: boolean; // 是否启用鼠标拖尾特效
+	switchable: boolean; // 是否允许用户在前台开关鼠标拖尾特效
+	particleCount: number; // 粒子数量
+	size: {
+		min: number; // 粒子最小尺寸
+		max: number; // 粒子最大尺寸
+	};
+	speed: {
+		min: number; // 粒子最小扩散速度
+		max: number; // 粒子最大扩散速度
+	};
+	opacity: {
+		start: number; // 粒子起始不透明度
+		end: number; // 粒子最终不透明度（0 完全消失）
+	};
+	fadeSpeed: number; // 粒子淡出速度（越小越持久）
+	zIndex: number; // 层级
 };
 
 // Spine 看板娘配置

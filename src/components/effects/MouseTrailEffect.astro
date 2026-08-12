@@ -1,0 +1,29 @@
+---
+import { mouseTrailConfig } from "@/config";
+
+// 硬开关：配置关闭时不渲染整个组件
+const trailEnabled = mouseTrailConfig?.enable === true;
+---
+
+{trailEnabled && (
+	<script>
+		import { initTrail, toggleTrail } from "@/utils/trail-manager";
+		import { mouseTrailConfig } from "@/config";
+
+		// 页面加载完成后初始化鼠标拖尾（根据 localStorage + 配置判断）
+		const applyTrail = () => {
+			initTrail(mouseTrailConfig);
+		};
+
+		// 响应前台开关事件（由 DisplaySettings 派发）
+		window.addEventListener("trail-toggle", () => {
+			toggleTrail(mouseTrailConfig);
+		});
+
+		if (document.readyState === "loading") {
+			document.addEventListener("DOMContentLoaded", applyTrail);
+		} else {
+			applyTrail();
+		}
+	</script>
+)}

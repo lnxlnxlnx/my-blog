@@ -42,6 +42,10 @@ export const en: Translation = {
 	[Key.postsCount]: "posts",
 
 	[Key.themeColor]: "Theme Color",
+	// Effects
+	[Key.effects]: "Effects",
+	[Key.sakuraEffect]: "Cherry Blossoms",
+	[Key.mouseTrailEffect]: "Mouse Trail",
 
 	[Key.lightMode]: "Light",
 	[Key.darkMode]: "Dark",

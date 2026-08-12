@@ -1,4 +1,8 @@
 import type { SakuraConfig } from "../types/config";
+import {
+	isSakuraEnabled,
+	setSakuraEnabled,
+} from "./effect-utils";
 
 // 樱花对象类
 class Sakura {
@@ -215,7 +219,7 @@ export class SakuraManager {
 
 		// 创建图片对象
 		this.img = new Image();
-		this.img.src = "/sakura.png"; // 使用樱花图片
+		this.img.src = `${import.meta.env.BASE_URL}assets/images/sakura.png`; // 使用樱花图片
 
 		// 等待图片加载完成
 		await new Promise<void>((resolve, reject) => {
@@ -362,22 +366,31 @@ export class SakuraManager {
 // 创建全局樱花管理器实例
 let globalSakuraManager: SakuraManager | null = null;
 
-// 初始化樱花特效
+// 初始化樱花特效（尊重 localStorage 的启用状态）
 export function initSakura(config: SakuraConfig): void {
+	if (!config.enable) {
+		return;
+	}
+	if (!isSakuraEnabled(config)) {
+		return;
+	}
 	if (globalSakuraManager) {
 		globalSakuraManager.updateConfig(config);
 	} else {
 		globalSakuraManager = new SakuraManager(config);
-		if (config.enable) {
-			globalSakuraManager.init();
-		}
+		globalSakuraManager.init();
 	}
 }
 
-// 切换樱花特效
-export function toggleSakura(): void {
-	if (globalSakuraManager) {
-		globalSakuraManager.toggle();
+// 切换樱花特效（切换时同时持久化到 localStorage）
+export function toggleSakura(config: SakuraConfig): void {
+	if (globalSakuraManager?.getIsRunning()) {
+		globalSakuraManager.stop();
+		globalSakuraManager = null;
+		setSakuraEnabled(false);
+	} else {
+		setSakuraEnabled(true);
+		initSakura(config);
 	}
 }
 
