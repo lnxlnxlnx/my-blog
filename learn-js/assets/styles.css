@@ -1,0 +1,266 @@
+/* learn-js 共享样式 — 所有 lesson 和 reference 统一使用，保证课程风格一致 */
+
+:root {
+  --bg: #faf9f6;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --accent: #b45309;
+  --accent-soft: #fef3c7;
+  --code-bg: #1f2328;
+  --code-fg: #e6edf3;
+  --border: #e5e7eb;
+  --card: #ffffff;
+  --good: #166534;
+  --bad: #991b1b;
+  --link: #1d4ed8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111315;
+    --fg: #e6edf3;
+    --muted: #9ca3af;
+    --border: #2a2f36;
+    --card: #1b1f24;
+    --accent-soft: #3b2e14;
+    --code-bg: #0d1117;
+    --link: #7aa2f7;
+    --good: #4ade80;
+    --bad: #f87171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 17px;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 46rem;
+  padding: 2.5rem 1.25rem 6rem;
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.75;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.3;
+  margin-top: 2.2em;
+}
+
+h1 {
+  font-size: 2rem;
+  border-bottom: 3px solid var(--accent);
+  padding-bottom: 0.35em;
+}
+
+h2 {
+  font-size: 1.4rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25em;
+}
+
+h3 {
+  font-size: 1.15rem;
+}
+
+a {
+  color: var(--link);
+}
+
+code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
+  font-size: 0.88em;
+  background: var(--accent-soft);
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: #ffffff;
+  color: #1f2328;
+  padding: 1.1rem 1.2rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
+
+/* 带行号的代码块 */
+.code-block {
+  position: relative;
+}
+
+.code-block .code-lines {
+  counter-reset: line;
+  white-space: normal;
+}
+
+.code-block .code-lines > span {
+  display: block;
+  white-space: pre;
+}
+
+.code-block .code-lines > span::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 2.2em;
+  margin-right: 1em;
+  color: #6b7280;
+  user-select: none;
+  text-align: right;
+}
+
+.callout {
+  border-left: 4px solid var(--accent);
+  background: var(--card);
+  border-radius: 0 8px 8px 0;
+  padding: 0.8rem 1rem;
+  margin: 1.4rem 0;
+}
+
+.callout.warn {
+  border-left-color: var(--bad);
+}
+
+.callout.good {
+  border-left-color: var(--good);
+}
+
+.callout p {
+  margin: 0.25rem 0;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+}
+
+th {
+  background: var(--card);
+}
+
+/* 练习/测验区 */
+.exercise {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin: 1.5rem 0;
+}
+
+.exercise details {
+  margin-top: 0.6rem;
+}
+
+.exercise summary {
+  cursor: pointer;
+  color: var(--link);
+  font-weight: 600;
+}
+
+/* 测验组件 */
+.quiz {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin: 1.5rem 0;
+}
+
+.quiz .quiz-q {
+  font-weight: 700;
+  margin: 0 0 0.6rem;
+}
+
+.quiz button[data-answer] {
+  display: block;
+  width: 100%;
+  margin: 0.35rem 0;
+  padding: 0.5rem 0.8rem;
+  text-align: left;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.quiz button[data-answer]:hover {
+  border-color: var(--accent);
+}
+
+.quiz button[data-answer]:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.quiz .quiz-fb {
+  margin: 0.6rem 0 0;
+  font-weight: 600;
+}
+
+.quiz .quiz-fb.good {
+  color: var(--good);
+}
+
+.quiz .quiz-fb.bad {
+  color: var(--bad);
+}
+
+/* 代码中的高亮标记 */
+.hl {
+  color: #d97706;
+}
+
+.cmt {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.str {
+  color: #15803d;
+}
+
+.kw {
+  color: #1d4ed8;
+}
+
+.fn {
+  color: #9333ea;
+}
+
+@media print {
+  body {
+    max-width: none;
+  }
+  .exercise details {
+    display: block;
+  }
+}

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0001 — 认识 JS：读第一段真实代码</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0001 · 认识 JavaScript，读第一段真实代码</h1>
+
+<p>欢迎。你已经有编程基础（变量、函数、循环、条件都懂），所以我们不从头讲"什么是 if"，而是直接带着 JS 特有的语法，去读博客里一段真实的代码。<br>
+<b>今天这节课的收获：</b>能看懂 <code>src/scripts/theme-manager.js</code> 的前 40 行——它在管博客的暗色/亮色主题。</p>
+
+<div class="callout good">
+<p><b>学习计划总览：</b>整个课程会沿着这条路走：JS 语法速览 → 浏览器环境（DOM/事件）→ 模块与 import/export → TypeScript 标注 → Astro 文件 → Svelte 组件 → 通读博客各模块。</p>
+</div>
+
+<h2>1. JS 在这个项目里出现在哪里</h2>
+
+<p>这个博客（Firefly）根目录下有好几种代码文件。先知道它们是什么，后面才不会迷路：</p>
+
+<table>
+<tr><th>文件后缀</th><th>是什么</th><th>举几个例子</th></tr>
+<tr><td><code>.js</code></td><td>纯 JavaScript，浏览器或 Node 直接跑</td><td><code>src/scripts/theme-manager.js</code></td></tr>
+<tr><td><code>.ts</code></td><td>TypeScript = JS + 类型标注（后面专门学）</td><td><code>src/utils/date-utils.ts</code></td></tr>
+<tr><td><code>.astro</code></td><td>Astro 页面文件，一段 JS + 一段 HTML 模板混合</td><td><code>src/pages/about.astro</code></td></tr>
+<tr><td><code>.svelte</code></td><td>Svelte 组件，带响应式的 UI 组件</td><td><code>src/components/**</code></td></tr>
+</table>
+
+<p>第一课我们先只碰纯 JS 的 <code>theme-manager.js</code>。它是最容易上手的入口。</p>
+
+<h2>2. 先看真实的代码（前 22 行）</h2>
+
+<p>这就是 <code>src/scripts/theme-manager.js</code> 的开头（我加了行号）：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 主题管理脚本</span></span>
+<span><span class="kw">export function</span> <span class="fn">initThemeManager</span>() {</span>
+<span>    <span class="kw">const</span> <span class="hl">_DEFAULT_THEME</span> = <span class="str">"LIGHT_MODE"</span>;</span>
+<span>    <span class="kw">const</span> LIGHT_MODE = <span class="str">"LIGHT_MODE"</span>;</span>
+<span>    <span class="kw">const</span> DARK_MODE = <span class="str">"DARK_MODE"</span>;</span>
+<span>    <span class="kw">const</span> SYSTEM_MODE = <span class="str">"SYSTEM_MODE"</span>;</span>
+<span>    <span class="kw">const</span> BANNER_HEIGHT_EXTEND = <span class="hl">30</span>;</span>
+<span>    <span class="kw">const</span> configHue = <span class="hl">200</span>; <span class="cmt">// 从配置中获取</span></span>
+<span>    <span class="kw">const</span> defaultMode = <span class="str">"system"</span>; <span class="cmt">// 从配置中获取</span></span>
+<span></span>
+<span>    <span class="cmt">// Load the theme from local storage, use defaultMode from config if not set</span>
+<span>    <span class="kw">const</span> theme = localStorage.getItem(<span class="str">"theme"</span>) || defaultMode;</span>
+<span></span>
+<span>    <span class="cmt">// Helper function to get system preference</span>
+<span>    <span class="kw">function</span> <span class="fn">getSystemPreference</span>() {</span>
+<span>        <span class="kw">return</span> window.matchMedia(<span class="str">"(prefers-color-scheme: dark)"</span>).matches</span>
+<span>            ? DARK_MODE</span>
+<span>            : LIGHT_MODE;</span>
+<span>    }</span>
+<span>}</span></div></pre></div>
+
+<h3>第 1 个新概念：const</h3>
+
+<p>在 JS 里声明"值不会变的变量"用 <code>const</code>。它和很多语言里的 <code>final</code>/<code>readonly</code> 类似——一旦赋值就不能再改。</p>
+<p>注意这里字符串用 <b>双引号</b>，也可以写成 <b>单引号</b>，两者等价（跟 Java/C 一样）。数字就直接写数字，不用引号。</p>
+
+<h3>第 2 个新概念：一个函数里有多个"子函数"</h3>
+
+<p>第 15 行 <code>getSystemPreference</code> 是定义在 <code>initThemeManager</code> 里面的<b>嵌套函数</b>。外面函数没跑完之前，这个内部函数是可以随时被调用的——别慌，你只需要记住：函数里还能再定义函数。</p>
+
+<h3>第 3 个新概念：|| 和 ? :（可能是你最陌生的）</h3>
+
+<p>第 13 行和 16-18 行是 JS 特有的简洁写法：</p>
+
+<ul>
+<li><code>localStorage.getItem("theme") || defaultMode</code><br>
+意思是：如果左边取不到（是 <code>null</code> 或空），就用右边的 <code>defaultMode</code>。这就是"取不到就用默认值"的惯用法。</li>
+<li><code>cond ? A : B</code>（三目运算符）<br>
+第 16-18 行：如果系统偏好是暗色，就返回 <code>DARK_MODE</code>，否则返回 <code>LIGHT_MODE</code>。等价于一段 if/else。</li>
+</ul>
+
+<h3>第 4 个新概念：localStorage 和 window（浏览器专属）</h3>
+
+<p><code>localStorage</code> 是浏览器提供的"小仓库"，刷新页面数据还在。<code>window</code> 代表浏览器窗口。这两个东西在 Python/Java 里没有——它们是<b>浏览器环境</b>的 API，后面专门有课。</p>
+
+<h2>3. 看剩下的代码（23-43 行）</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> resolvedTheme = resolveTheme(theme);</span>
+<span>    <span class="kw">let</span> isDark = <span class="hl">false</span>;</span>
+<span></span>
+<span>    <span class="kw">switch</span> (resolvedTheme) {</span>
+<span>        <span class="kw">case</span> LIGHT_MODE:</span>
+<span>            document.documentElement.classList.remove(<span class="str">"dark"</span>);</span>
+<span>            isDark = <span class="hl">false</span>;</span>
+<span>            <span class="kw">break</span>;</span>
+<span>        <span class="kw">case</span> DARK_MODE:</span>
+<span>            document.documentElement.classList.add(<span class="str">"dark"</span>);</span>
+<span>            isDark = <span class="hl">true</span>;</span>
+<span>            <span class="kw">break</span>;</span>
+<span>    }</span>
+<span></span>
+<span>    <span class="kw">const</span> expressiveTheme = isDark ? <span class="str">"github-dark"</span> : <span class="str">"github-light"</span>;</span>
+<span>    document.documentElement.setAttribute(<span class="str">"data-theme"</span>, expressiveTheme);</span>
+<span>    document.documentElement.style.setProperty(<span class="str">"--hue"</span>, <span class="str">"200"</span>);</span>
+<span>}</span></div></pre></div>
+
+<h3>let 和 const 的区别</h3>
+
+<p><code>let isDark = false</code> 声明一个<b>后面会被重新赋值</b>的变量（后面 <code>isDark = true</code> 了）。规则很简单：</p>
+<ul>
+<li>值会变 → 用 <code>let</code></li>
+<li>值不会变 → 用 <code>const</code>（更常用）</li>
+<li>注意：没有 var，不要用 var</li>
+</ul>
+
+<h3>switch 和 DOM 的第一次接触</h3>
+
+<p><code>switch</code> 你应该认识（很多语言都有）。新的东西是里面的操作对象——<code>document.documentElement.classList</code>：</p>
+<ul>
+<li><code>document</code> = 整个网页的"文档"对象</li>
+<li><code>document.documentElement</code> = 网页的 <code>&lt;html&gt;</code> 标签</li>
+<li><code>classList.add("dark")</code> = 给 <code>&lt;html&gt;</code> 加一个 CSS 类名 <code>dark</code></li>
+<li>于是 Tailwind 的暗色模式样式就生效了——就是这么简单！</li>
+</ul>
+
+<div class="callout">
+<p><b>看懂了吗？</b>整段代码在做的其实是：<br>
+① 从 localStorage 取出用户上次选的模式 → ② 如果系统模式就换算成实际模式 → ③ 在 &lt;html&gt; 标签上加上/去掉 <code>dark</code> 这个类，让整个站点切换暗色/亮色。就这样。</p>
+</div>
+
+<h2>4. 练习：现在你来判断</h2>
+
+<div class="exercise">
+<p>假设 <code>localStorage</code> 里没有 <code>"theme"</code> 这个值，<code>theme</code> 变量会是什么？</p>
+<details>
+<summary>点击看答案</summary>
+<p>是 <code>defaultMode</code>，也就是 <code>"system"</code>。因为 <code>localStorage.getItem("theme")</code> 返回 <code>null</code>，<code>null || "system"</code> 会取右边的值。</p>
+</details>
+</div>
+
+<div class="quiz" data-q="下面哪个声明方式，符合 JS 里「值不会再变」的惯例？">
+  <button data-answer data-correct>const LIGHT_MODE = "LIGHT_MODE"</button>
+  <button data-answer>var LIGHT_MODE = "LIGHT_MODE"</button>
+  <button data-answer>let LIGHT_MODE = "LIGHT_MODE"</button>
+</div>
+
+<div class="quiz" data-q="代码里 classList.add(&quot;dark&quot;) 是在做什么？">
+  <button data-answer>把 dark 这个词存进 localStorage</button>
+  <button data-answer data-correct>给 &lt;html&gt; 标签加上 dark 这个 CSS 类</button>
+  <button data-answer>把网页背景直接变成黑色</button>
+</div>
+
+<div class="quiz" data-q="三目运算符 cond ? A : B 相当于下面哪个？">
+  <button data-answer data-correct>if (cond) A; else B</button>
+  <button data-answer>switch (cond) { case A: B; }</button>
+  <button data-answer>while (cond) A; B</button>
+</div>
+
+<h2>5. 接下来你该做的</h2>
+
+<ol>
+<li><b>自己打开这个文件看看：</b><code>src/scripts/theme-manager.js</code>（完整版还有后 49 行，等我们学完箭头函数和模板字符串后再回来看）。</li>
+<li><b>读一篇官方权威入门：</b>MDN 的 <a href="https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Scripting/What_is_JavaScript">What is JavaScript</a>（英文，看前半部分即可），或者中文的 <a href="https://zh.javascript.info/intro">JavaScript.info 入门</a>。这是本课的推荐主读物。</li>
+<li><b>有问题就问 agent</b>——我是你的老师，任何没懂的地方直接问我，包括"这里为什么用 const 不用 let"这种小问题。</li>
+</ol>
+
+<div class="callout warn">
+<p><b>别忘了：</b>有任何不懂的，现在就问我。这是学习记录会跟进的，问得越具体，下一课越贴合你的水平。</p>
+</div>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0001 · 下一课预告：箭头函数、模板字符串、函数里的函数——然后把 theme-manager.js 剩下的部分读完。</p>
+
+</body>
+</html>
