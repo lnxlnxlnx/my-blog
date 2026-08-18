@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0003 — 对象：JS 的数据心脏</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0003 · 对象 (Object)：JS 的数据心脏</h1>
+
+<p>前两课里，你见到的 <code>localStorage</code>、<code>document</code>、<code>window</code>、<code>mediaQuery</code>——它们全都是<b>对象</b>。对象是 JS 里最核心的数据结构，不搞懂它，后面全是雾里看花。</p>
+<p><b>今天这节课的收获：</b>能看懂博客里到处出现的 <code>{ 名字: 值 }</code> 这种代码，并读懂 <code>src/utils/date-utils.ts</code> 里的真实对象。</p>
+
+<h2>1. 什么是对象</h2>
+
+<p>对象就是一个"<b>名字 → 值</b>"的映射表。用花括号 <code>{}</code> 包起来，里面每一项叫一个<b>属性 (property)</b>：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> site = {</span>
+<span>    name: <span class="str">"Firefly"</span>,       <span class="cmt">// 属性名 name → 值 "Firefly"</span></span>
+<span>    year: <span class="hl">2026</span>,            <span class="cmt">// 属性名 year → 值 2026</span></span>
+<span>    isBlog: <span class="hl">true</span>,</span>
+<span>};</span>
+<span></span>
+<span><span class="cmt">// 读取：点号语法</span></span>
+<span>console.log(site.name);   <span class="cmt">// Firefly</span></span>
+<span>console.log(site.year);   <span class="cmt">// 2026</span></span>
+<span></span>
+<span><span class="cmt">// 修改 / 新增</span></span>
+<span>site.year = <span class="hl">2027</span>;</span>
+<span>site.author = <span class="str">"me"</span>;    <span class="cmt">// 没有的键，直接加</span></span>
+<span>console.log(site.author); <span class="cmt">// me</span></span></div></pre></div>
+
+<h3>两个读取方式：点号 vs 方括号</h3>
+
+<table>
+<tr><th>写法</th><th>用途</th></tr>
+<tr><td><code>site.name</code></td><td>属性名是固定的、合法标识符时用（最常见）</td></tr>
+<tr><td><code>site["name"]</code></td><td>属性名是变量 / 字符串拼出来的时用</td></tr>
+</table>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> key = <span class="str">"year"</span>;</span>
+<span>console.log(site[key]);  <span class="cmt">// 2026 —— 方括号里可以是变量！点号不行</span></span>
+<span>console.log(site.key);   <span class="cmt">// undefined —— 没有叫 "key" 的属性</span></span></div></pre></div>
+
+<div class="callout warn">
+<p><b>高频坑：</b><code>site[key]</code> 和 <code>site.key</code> 是两码事。前者用变量 <code>key</code> 的值去找属性，后者直接找名为 "key" 的属性。写错过的人，十个里有八个。</p>
+</div>
+
+<h2>2. 值可以是任何东西——包括函数</h2>
+
+<p>对象的属性值可以是字符串、数字、布尔、数组、对象，甚至函数。属性值是函数的，叫<b>方法 (method)</b>。你之前见的 <code>localStorage.getItem(...)</code>、<code>document.documentElement.classList.add(...)</code> 全都是在调用方法：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> calculator = {</span>
+<span>    value: <span class="hl">10</span>,</span>
+<span>    add(n) {</span>
+<span>        <span class="kw">this</span>.value = <span class="kw">this</span>.value + n;</span>
+<span>    },</span>
+<span>};</span>
+<span></span>
+<span>calculator.add(<span class="hl">5</span>);</span>
+<span>console.log(calculator.value); <span class="cmt">// 15</span></span></div></pre></div>
+
+<div class="callout">
+<p><b>关于 <code>this</code>：</b>方法里 <code>this</code> 指"调用它的那个对象"。现在只需要记住一句话：<code>this.value</code> 就是"我这个对象自己的 value"。箭头函数里的 <code>this</code> 行为不同——那是 <code>Lesson 0002</code> 里 <code>(e) =&gt;</code> 的一个细节，我们以后单独讲，现在不碰。</p>
+</div>
+
+<h2>3. 数组里装对象、对象里装数组（嵌套）</h2>
+
+<p>真实代码里对象基本不会"孤零零"出现，而是嵌套组合。博客里到处都是这种结构：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> posts = [</span>
+<span>    { title: <span class="str">"第一课"</span>, date: <span class="str">"2026-08-16"</span> },</span>
+<span>    { title: <span class="str">"第二课"</span>, date: <span class="str">"2026-08-17"</span> },</span>
+<span>];</span>
+<span></span>
+<span><span class="cmt">// 下标访问数组 → 得到对象 → 点号读属性，一步到位</span></span>
+<span>console.log(posts[<span class="hl">0</span>].title); <span class="cmt">// 第一课</span></span>
+<span>console.log(posts[<span class="hl">1</span>].date);  <span class="cmt">// 2026-08-17</span></span>
+<span></span>
+<span><span class="cmt">// 遍历数组：forEach 里传入回调，数组把每个元素递给你</span></span>
+<span>posts.forEach((post) =&gt; {</span>
+<span>    console.log(post.title, <span class="str">"-"</span>, post.date);</span>
+<span>});</span></div></pre></div>
+
+<div class="callout good">
+<p><b>拆解 <code>posts[0].title</code>：</b>从左往右读——<code>posts</code> 是数组 → <code>[0]</code> 取第 0 个元素（一个对象）→ <code>.title</code> 读它的 title 属性。一层层剥下去，就是读嵌套数据的全部秘诀。</p>
+</div>
+
+<h2>4. 读真实代码：date-utils.ts</h2>
+
+<p>现在你有能力读博客里第二个真实文件了。打开 <code>src/utils/date-utils.ts</code>，看第 20-35 行：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> localeMap: Record&lt;string, string&gt; = {</span>
+<span>        zh_CN: <span class="str">"zh-CN"</span>,</span>
+<span>        zh_TW: <span class="str">"zh-TW"</span>,</span>
+<span>        en: <span class="str">"en-US"</span>,</span>
+<span>        ja: <span class="str">"ja-JP"</span>,</span>
+<span>        ko: <span class="str">"ko-KR"</span>,</span>
+<span>        <span class="cmt">// ... 后面还有更多语言</span></span>
+<span>    };</span>
+<span></span>
+<span>    <span class="kw">const</span> locale = localeMap[lang] || <span class="str">"en-US"</span>;</span>
+<span>    <span class="kw">return</span> date.toLocaleDateString(locale, options);</span>
+<span>}</span></div></pre></div>
+
+<p>这里 <code>localeMap</code> 就是一个<b>映射表对象</b>：把博客内部的语言代码（<code>zh_CN</code>）翻译成浏览器标准代码（<code>zh-CN</code>）。第 9 行又用到了第一课的 <code>||</code>：<b>找不到就用 <code>"en-US"</code> 兜底</b>。</p>
+<p>再看上面第 13-17 行（我没放全），有个 <code>options</code> 对象：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> options: Intl.DateTimeFormatOptions = {</span>
+<span>        year: <span class="str">"numeric"</span>,</span>
+<span>        month: <span class="str">"long"</span>,</span>
+<span>        day: <span class="str">"numeric"</span>,</span>
+<span>    };</span>
+<span>    <span class="cmt">// 就是让日期显示成：2026 年 8 月 16 日</span></span>
+<span>    <span class="kw">return</span> date.toLocaleDateString(locale, options);</span>
+<span>}</span></div></pre></div>
+
+<div class="callout">
+<p><b>发现了吗？</b>你已经在读真实博客代码了——<code>localeMap</code>、<code>options</code> 都是对象，<code>date.toLocaleDateString(...)</code> 是方法调用，`<code>localeMap[lang] || "en-US"</code> 是第一课的 <code>||</code>。这些你都认识了。</p>
+</div>
+
+<h2>5. 更多例子：复制到控制台试</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 例子 1：一个"博客文章"对象，套娃读取</span></span>
+<span><span class="kw">const</span> post = {</span>
+<span>    title: <span class="str">"学习 JS 第 3 课"</span>,</span>
+<span>    meta: { tags: [<span class="str">"js"</span>, <span class="str">"object"</span>], views: <span class="hl">99</span> },</span>
+<span>};</span>
+<span>console.log(post.meta.tags[<span class="hl">0</span>]);  <span class="cmt">// js</span></span>
+<span>console.log(post.meta.views);      <span class="cmt">// 99</span></span>
+<span></span>
+<span><span class="cmt">// 例子 2：方法 + 模板字符串</span></span>
+<span><span class="kw">const</span> user = {</span>
+<span>    name: <span class="str">"Luna"</span>,</span>
+<span>    sayHi() {</span>
+<span>        console.log(`你好，我是<span class="str">${this.name}</span>`);</span>
+<span>    },</span>
+<span>};</span>
+<span>user.sayHi();  <span class="cmt">// 你好，我是 Luna</span></span>
+<span></span>
+<span><span class="cmt">// 例子 3：方括号读取 + 数据驱动</span></span>
+<span><span class="kw">const</span> theme = { light: <span class="str">"#fff"</span>, dark: <span class="str">"#111"</span> };</span>
+<span><span class="kw">const</span> mode = <span class="str">"dark"</span>;</span>
+<span>console.log(theme[mode]);  <span class="cmt">// #111 —— 用变量选属性</span></span></div></pre></div>
+
+<h2>6. 练习</h2>
+
+<div class="quiz" data-q="对象读取里，site[key] 和 site.key 的区别是？">
+  <button data-answer>site[key] 更省内存一些</button>
+  <button data-answer>site.key 必须加引号才行</button>
+  <button data-answer data-correct>前者用变量值找属性后者找字面名</button>
+</div>
+
+<div class="quiz" data-q="对象的属性值可以是下列哪些？">
+  <button data-answer>只能字符串和数字</button>
+  <button data-answer data-correct>数字字符串数组对象函数</button>
+  <button data-answer>只能是 JSON 允许的类型</button>
+</div>
+
+<div class="quiz" data-q="localeMap[lang] || &quot;en-US&quot; 的意思是什么？">
+  <button data-answer>lang 非空就报错用兜底值</button>
+  <button data-answer data-correct>lang 查不到时用 en-US 兜底</button>
+  <button data-answer>把 lang 强制转成 en-US</button>
+</div>
+
+<div class="quiz" data-q="posts[0].title 从前往后该怎么读？">
+  <button data-answer>先读 title 再取数组元素</button>
+  <button data-answer data-correct>数组下标 0 的元素取其 title</button>
+  <button data-answer>先取标题再按下标 0 找</button>
+</div>
+
+<h2>7. 接下来你该做的</h2>
+
+<ol>
+<li><b>自己打开 <code>src/utils/date-utils.ts</code> 完整读一遍</b>——现在你应该能看懂它 90% 了。唯一陌生的 <code>Intl.DateTimeFormatOptions</code> 和 <code>: Record&lt;string, string&gt;</code> 是 <b>TypeScript 类型标注</b>，下一课讲。</li>
+<li><b>在控制台亲手建一个自己的对象</b>，包含：名字、数字、数组、一个方法（用 <code>this</code> 读自己的名字），然后调用它。</li>
+<li><b>读权威资料：</b><a href="https://zh.javascript.info/object">JavaScript.info：对象</a>（中文，看前几节即可）。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<div class="callout warn">
+<p><b>别忘了：</b>把练习 2 的对象建出来告诉我结果，或把卡住的地方直接问我。</p>
+</div>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0003 · 下一课预告：TypeScript 类型标注（<code>: Record&lt;string, string&gt;</code>、<code>: Date</code>、<code>: string</code>）——读完它，date-utils.ts 就能 100% 读懂。</p>
+
+</body>
+</html>
