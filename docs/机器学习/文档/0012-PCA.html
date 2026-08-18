@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0012 · PCA 降维</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>PCA 降维：找数据最「伸展」的方向</h1>
+<p class="meta">课程 0012 · 预计 45 分钟 · 前置：<a href="0011-K均值聚类.html">课程 0011</a>（无监督）+ 线性代数基础</p>
+
+<p>这是经典算法系列的最后一课。前面解决「分类/聚类」，PCA 解决另一类问题——<b>降维</b>：数据有很多特征（比如 30 维），很多维度高度相关、信息冗余。PCA 找出几个「最能代表数据变化」的新方向，把数据投影过去，用更少的维度保存大部分信息。这也是你读论文时最常见的前置步骤。</p>
+
+<h2>直觉：方差最大的方向就是信息最多的方向</h2>
+<p>一坨数据沿哪个方向「伸展」得最长，那个方向的变化（方差）就最大，丢弃它损失的差异就最多。所以 PCA：</p>
+<ol>
+  <li><strong>找第一个主轴</strong>：让投影后方差最大的那个方向（第一主成分 PC1）；</li>
+  <li><strong>找第二个主轴</strong>：与 PC1 垂直、次大的方向（PC2）；</li>
+  <li>以此类推，得到 d 个互相垂直、方差递减的方向。</li>
+</ol>
+
+<h2>三要素（无监督）</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>一组正交基（主成分方向）；数据 = 沿这些方向的投影系数。</p></div>
+  <div class="card"><h3>策略</h3><p>最大化投影方差（等价于最小化投影后重构误差）。</p></div>
+  <div class="card"><h3>算法</h3><p>中心化 → 算协方差矩阵 → 特征值分解（或对数据做 SVD）。特征值大的方向即主成分。</p></div>
+</div>
+
+<h2>数学：就是特征值分解</h2>
+<pre>中心化  Xc = X − mean(X)
+协方差  C = Xcᵀ·Xc / (N−1)
+分解    C·v = λ·v  → 特征向量 v 是主轴，特征值 λ 是该轴上的方差
+解释方差比 = λᵢ / Σλ          # 每个主成分「吃掉」总方差的比例
+</pre>
+<p>降维到 k 维 = 取前 k 个特征向量组成矩阵 V_k，投影 Z = Xc·V_k。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. 用「解释方差比」决定保留几维</h3>
+<p>把特征值按大小画「碎石图」：前几个陡、后面平。常取「累计解释方差 ≥ 80%/95%」对应的 k。以鸢尾花（4 特征）为例，前 2 个主成分就解释约 <b>96%</b> 方差——2 维图基本不丢信息。</p>
+
+<h3>2. 降维前必须标准化</h3>
+<p>PCA 找「方差最大方向」，如果特征量纲不同（身高 180 vs 体重 70），大数值的特征会霸占第一主成分。先 <code>StandardScaler</code> 让每个特征方差为 1，PCA 才看「形状」而不是「量纲」。</p>
+
+<h3>3. PCA 是线性变换，主轴互相垂直</h3>
+<p>它找的是「直线方向」，适合线性结构。非线性结构（流形、弯曲）要用 t-SNE / UMAP 那类非线性降维。PCA 的另一面用途：去相关（各主成分互相独立）、可视化、压缩、去噪。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0012_pca.ipynb</pre>
+<p>从零手写 PCA（中心化 → 协方差 → 特征值分解 → 投影），用鸢尾花验证手写结果与 sklearn 完全一致，画碎石图决定保留维度，最后看降维后分类效果。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么「方差最大的方向」就是「信息最多的方向」？</li>
+  <li><strong>M2</strong>：不标准化直接 PCA，第一主成分被谁霸占了？</li>
+  <li><strong>H1</strong>：PCA 是「无监督」——它不管标签。可它降维后的特征对分类有帮助吗？试着对比。</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">PCA 找主成分的标准是？</p>
+  <button class="opt" data-ok="false">误差最小化</button>
+  <button class="opt" data-ok="false">信息熵最小</button>
+  <button class="opt" data-ok="false">距离最近</button>
+  <button class="opt" data-ok="true">投影方差最大</button>
+  <p class="reveal">最大化投影方差 = 最小化重构误差，两个角度等价。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">PCA 的核心计算是什么？</p>
+  <button class="opt" data-ok="false">梯度下降</button>
+  <button class="opt" data-ok="false">距离矩阵</button>
+  <button class="opt" data-ok="false">贝叶斯公式</button>
+  <button class="opt" data-ok="true">协方差矩阵特征值分解</button>
+  <p class="reveal">特征向量=主轴方向，特征值=该轴方差。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">降维前为什么必须先标准化？</p>
+  <button class="opt" data-ok="false">加速收敛</button>
+  <button class="opt" data-ok="false">减少样本</button>
+  <button class="opt" data-ok="false">去除离群点</button>
+  <button class="opt" data-ok="true">避免量纲霸占方差</button>
+  <p class="reveal">PCA 看方差，量纲大的特征会主导主成分方向。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">第 k+1 个主成分必须与前面主成分？</p>
+  <button class="opt" data-ok="false">平行</button>
+  <button class="opt" data-ok="false">同向</button>
+  <button class="opt" data-ok="false">无关</button>
+  <button class="opt" data-ok="true">正交</button>
+  <p class="reveal">主成分互相正交，才保证每个方向的信息不重复。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>ISL 第 12.2 节（Principal Components Analysis）</strong>——PCA 的几何直觉与矩阵代数。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+  <p><strong>李航《统计学习方法》第 16 章</strong>——主成分分析的特征值分解视角（含奇异值分解版）。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+</blockquote>
+
+<h2>接下来</h2>
+<p>到这里，MISSION 里的经典算法主线（线性模型 → 决策树 → SVM → 贝叶斯 → 集成 → 聚类 → 降维）就全部走完了。做完练习告诉我：H1 里降维后分类准确率掉了吗？下一步你可以选：<b>① 用这些算法做一次完整建模实战</b>（数据→特征→建模→评估→调优）；<b>② 补高斯混合模型（GMM）/EM</b> 收尾无监督；<b>③ 回到深度学习进阶</b>。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0011-K均值聚类.html">课程 0011</a></span>
+  <a href="../../reference/0011-PCA速查.html">参考：PCA速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

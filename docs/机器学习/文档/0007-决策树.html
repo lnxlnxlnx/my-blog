@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0007 · 决策树：分而治之的规则树</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>决策树：分而治之的规则树</h1>
+<p class="meta">课程 0007 · 预计 40 分钟 · 前置：<a href="0005-k近邻不训练也能分类.html">课程 0005</a>（偏差-方差）</p>
+
+<p>前几课的「模型」都是数学函数（直线、超平面、概率分布）。决策树是完全不同的东西：它是一棵<b> if-then 规则树</b>——「今天天气如何？下雨 → 要不要带伞」这样一串判断。它天然可解释、能处理混合类型特征，更重要的是它是<strong>随机森林和梯度提升的地基</strong>。</p>
+
+<h2>三要素</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>if-then 规则的集合；从根到叶的每条路径都是一条规则，规则之间互斥且完备。</p></div>
+  <div class="card"><h3>策略</h3><p>每个结点挑「最能使子结点变纯」的特征分裂——用信息增益 / 基尼不纯度来度量。</p></div>
+  <div class="card"><h3>算法</h3><p>贪心递归：选特征 → 分裂 → 递归；配以剪枝（预剪枝/后剪枝）防过拟合。</p></div>
+</div>
+
+<h2>核心问题：怎么选分裂特征</h2>
+<p>树的每层都要问「按哪个特征、在什么阈值处切，能让两边的类别更纯」。衡量「纯度」有两种常用度量：</p>
+
+<h3>信息增益（ID3/C4.5 用）</h3>
+<p>先算结点的<strong>熵</strong>：</p>
+<pre>H(S) = −Σ pᵢ log₂ pᵢ        # 越纯熵越低；全同类的叶熵 = 0</pre>
+<p>再算按特征 A 分裂后子结点熵的加权平均，两者的差就是<strong>信息增益</strong>：</p>
+<pre>Gain(S, A) = H(S) − Σ_v (|S_v|/|S|)·H(S_v)     # 选增益最大的特征</pre>
+
+<h3>基尼不纯度（CART 用）</h3>
+<pre>Gini(S) = 1 − Σ pᵢ²        # 越纯越小；全同类 = 0</pre>
+<p>scikit-learn 的 <code>DecisionTreeClassifier</code> 默认用基尼。两者选出的分裂往往很接近，实现上基尼更省算（不用 log）。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. 树越深越容易过拟合</h3>
+<p>只要数据没有冲突，深度无限的增长可以把训练集「背下来」——但边界碎成锯齿，泛化差。控制方式：</p>
+<ul>
+  <li><strong>预剪枝</strong>：设 <code>max_depth</code>、<code>min_samples_leaf</code>，提前停。</li>
+  <li><strong>后剪枝</strong>：先长满再自底向上剪掉不带来验证集提升的子树。</li>
+  <li>这正是 0005 学过的偏差-方差权衡：浅 → 高偏差，深 → 高方差。</li>
+</ul>
+
+<h3>2. 边界是「轴对齐」的矩形</h3>
+<p>每个结点只按<strong>一个特征</strong>切，所以决策边界永远是平行于坐标轴的阶梯形，而不是斜线。真实数据里的斜边界要用很多层来逼近——这就是为什么集成学习能大幅提升它。</p>
+
+<h3>3. 它很好解释，但要小心过拟合与不稳定</h3>
+<p>「叶子里样本最多的类」就是预测；一条从根到叶的路径可以讲给人听（可解释性）。但贪心分裂意味着<b>训练数据的小扰动可能换一棵完全不同的树</b>——高方差，这也是它需要集成的主要原因。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0007_decision_tree.ipynb</pre>
+<p>从零手写一个递归决策树：实现熵与信息增益、贪心选特征分裂、画阶梯形边界，然后对比深度对过拟合的影响、演示 sklearn 的预剪枝与特征重要性。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么决策树的边界总是平行于坐标轴的直线段？</li>
+  <li><strong>M2</strong>：深度大到 12 后训练准确率 1.0 而测试下降——这是偏差还是方差？怎么修？</li>
+  <li><strong>H1</strong>：信息增益和基尼不纯度选出的分裂通常很接近，为什么？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">决策树的「模型」本质是什么？</p>
+  <button class="opt" data-ok="false">线性函数</button>
+  <button class="opt" data-ok="false">概率分布</button>
+  <button class="opt" data-ok="false">距离度量</button>
+  <button class="opt" data-ok="true">if-then 规则集合</button>
+  <p class="reveal">每条根到叶的路径是一条规则，规则互斥且完备。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">分裂时选特征的标准是？</p>
+  <button class="opt" data-ok="false">方差最大化</button>
+  <button class="opt" data-ok="false">样本最多</button>
+  <button class="opt" data-ok="false">特征最少</button>
+  <button class="opt" data-ok="true">纯度提升最大</button>
+  <p class="reveal">信息增益/基尼度量的是分裂后子结点「变纯」的程度。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">纯结点的熵是多少？</p>
+  <button class="opt" data-ok="false">0.5</button>
+  <button class="opt" data-ok="false">1</button>
+  <button class="opt" data-ok="false">2</button>
+  <button class="opt" data-ok="true">0</button>
+  <p class="reveal">熵 H = −Σ p log₂ p；p=1 时 = 0，全同类结点最纯。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">决策树的决策边界是什么形状？</p>
+  <button class="opt" data-ok="false">任意光滑曲线</button>
+  <button class="opt" data-ok="false">圆形</button>
+  <button class="opt" data-ok="false">斜线</button>
+  <button class="opt" data-ok="true">轴对齐的矩形</button>
+  <p class="reveal">每次只切一个特征 → 边界是平行于坐标轴的阶梯形。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》§5 决策树</strong>——信息增益、ID3/C4.5 与 CART 的完整推导、剪枝理论。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p><strong>ISL 第 8 章（Tree-Based Methods）</strong>——决策树、装袋、随机森林与提升的衔接。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：M2 里深度过大的问题你判断成偏差还是方差？下一课<strong>SVM</strong>——一条「最大间隔」的直线，解决逻辑回归的另一个短板（对边界附近的点太敏感）。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0006-朴素贝叶斯生成模型.html">课程 0006</a></span>
+  <a href="../../reference/0006-决策树速查.html">参考：决策树速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

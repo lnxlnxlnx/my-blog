@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0011 · K-Means 聚类</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>K-Means 聚类</h1>
+<p class="meta">课程 0011 · 预计 45 分钟 · 前置：<a href="0003-线性回归三件套.html">课程 0003</a>（距离）+ <a href="0006-朴素贝叶斯生成模型.html">0006</a>（生成式）</p>
+
+<p>前 10 课全是<b>有监督</b>学习：有标签，学「输入 → 标签」的映射。这课开始换一种设定——<b>无监督</b>：只有数据，没有标签，让算法自己发现结构。K-Means 是最经典、面试必考的一个：把数据分成 k 组，让「同组尽量近，异组尽量远」。</p>
+
+<h2>三要素（无监督版）</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>k 个质心；每个样本属于「最近的质心」那一组（Voronoi 划分）。</p></div>
+  <div class="card"><h3>策略</h3><p>最小化类内平方和（SSE）：每个样本到所属质心的距离平方之和。</p></div>
+  <div class="card"><h3>算法</h3><p>迭代两步：①分配——每个点归到最近质心；②更新——质心挪到组内均值。交替直到收敛。</p></div>
+</div>
+
+<h2>算法：Lloyd 迭代</h2>
+<pre>1. 初始化：随机挑 k 个样本当质心
+2. 重复：
+   a. 分配：每个点 → 最近质心的类
+   b. 更新：每个质心 = 组内均值
+   直到质心不再移动（或达到轮数上限）
+</pre>
+<p>关键性质：<strong>每步都让 SSE 单调不增</strong>，所以必收敛。但只保证收敛到「局部最优」——初始化不同，结果可能不同，所以要多次随机初始化取最好。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. k 怎么定：肘部法 + 轮廓系数</h3>
+<ul>
+  <li><strong>肘部法</strong>：画 SSE ~ k 曲线，找「拐点」——k 再大收益骤减的那个点。</li>
+  <li><strong>轮廓系数</strong>：每个样本算「与自己组内 vs 与最近异组」的接近度，全样本平均 ∈ [−1, 1]，越大越好。取峰值对应的 k。</li>
+  <li>没有「正确」的 k——它是<strong>超参数</strong>，取决于你想多细地看数据。</li>
+</ul>
+
+<h3>2. 对「形状」敏感：只认圆形簇</h3>
+<p>K-Means 用欧氏距离，天然偏向「大小相近、各向同性的圆团」。拉伸的长条簇、嵌套的圆环、大小悬殊的簇它都分不好。这是它最大的局限，也是为什么真实数据常用更柔的算法（GMM、DBSCAN）。</p>
+
+<h3>3. 它是在解一个 NP 难问题的近似</h3>
+<p>「找全局最优的 k 质心」是 NP 难的；Lloyd 迭代是贪心近似，只保证局部最优。所以 <code>n_init</code>（多次随机起点）很重要。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0011_kmeans.ipynb</pre>
+<p>从零手写 K-Means（初始化 → 分配 → 更新），画聚类结果，然后做肘部法选 k、轮廓系数选 k，最后亲手让 K-Means 在「拉长的簇」上栽跟头。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么「分配 + 更新」两步一定会收敛？</li>
+  <li><strong>M2</strong>：不同 random_state 初始化，最终质心一样吗？多次初始化为什么重要？</li>
+  <li><strong>H1</strong>：K-Means 在拉长/嵌套数据上为什么失败？根子在「模型」还是「算法」？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">K-Means 属于哪类学习？</p>
+  <button class="opt" data-ok="false">有监督分类</button>
+  <button class="opt" data-ok="false">半监督</button>
+  <button class="opt" data-ok="false">强化学习</button>
+  <button class="opt" data-ok="true">无监督聚类</button>
+  <p class="reveal">没有标签，只按距离把数据分组。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">K-Means 的「更新」步骤做什么？</p>
+  <button class="opt" data-ok="false">随机换质心</button>
+  <button class="opt" data-ok="false">删掉离群点</button>
+  <button class="opt" data-ok="false">合并最近两组</button>
+  <button class="opt" data-ok="true">质心挪到组内均值</button>
+  <p class="reveal">质心更新为组内所有样本的均值（Means 由此得名）。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">K-Means 对哪种数据分不好？</p>
+  <button class="opt" data-ok="false">圆形簇</button>
+  <button class="opt" data-ok="false">球形簇</button>
+  <button class="opt" data-ok="false">稠密簇</button>
+  <button class="opt" data-ok="true">拉长的簇</button>
+  <p class="reveal">欧氏距离偏「圆」，拉长/嵌套/大小悬殊的簇都分不好。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">K-Means 保证收敛到？</p>
+  <button class="opt" data-ok="false">全局最优</button>
+  <button class="opt" data-ok="false">最高分</button>
+  <button class="opt" data-ok="false">均衡分组</button>
+  <button class="opt" data-ok="true">局部最优</button>
+  <p class="reveal">每步 SSE 单调不增所以必收敛，但只保证局部最优。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>ISL 第 12 章（Unsupervised Learning）</strong>——K-Means 的细节、K 的选择、与层次聚类的对比。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+  <p><strong>李航《统计学习方法》§14.1 聚类</strong>——聚类的距离度量与 k 均值算法的形式化表述。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：H1 里拉长簇失败的根子你判断在「模型」还是「算法」？下一课<strong>PCA（降维）</strong>——不是分组，而是找数据「最长的几个方向」压缩维度，它是最后一课，也会把「矩阵」「特征值」这些数学真正用起来。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0010-Boosting.html">课程 0010</a></span>
+  <a href="../../reference/0010-K均值速查.html">参考：K-Means速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

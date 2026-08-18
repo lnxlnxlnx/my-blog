@@ -95,7 +95,7 @@ const currentLang = siteConfig.lang || "en";
   </div>
 </WidgetLayout>
 
-<script is:inline define:vars={{ postDateMap: Object.fromEntries(postDateMap), allPostsData, monthNames, weekDays, yearText, currentLang }}>
+<script is:inline define:vars={{ postDateMap: Object.fromEntries(postDateMap), allPostsData, monthNames, weekDays, yearText, currentLang, baseUrl: import.meta.env.BASE_URL }}>
   // 客户端动态渲染日历
   function renderCalendar() {
     const now = new Date();
@@ -198,7 +198,7 @@ const currentLang = siteConfig.lang || "en";
     
     if (postsList) {
       postsList.innerHTML = currentMonthPosts.map(post => `
-        <a href="/posts/${post.id}/" class="block text-sm text-neutral-700 dark:text-neutral-300 hover:text-[var(--primary)] dark:hover:text-[var(--primary)] transition-colors truncate px-2 py-1 rounded hover:bg-[var(--btn-plain-bg-hover)]">
+        <a href="${baseUrl}posts/${post.id}/" class="block text-sm text-neutral-700 dark:text-neutral-300 hover:text-[var(--primary)] dark:hover:text-[var(--primary)] transition-colors truncate px-2 py-1 rounded hover:bg-[var(--btn-plain-bg-hover)]">
           ${post.title}
         </a>
       `).join('');
@@ -249,7 +249,7 @@ const currentLang = siteConfig.lang || "en";
         if (posts.length > 0 && postsList) {
           // 渲染文章列表
           postsList.innerHTML = posts.map(post => `
-            <a href="/posts/${post.id}/" class="block text-sm text-neutral-700 dark:text-neutral-300 hover:text-[var(--primary)] dark:hover:text-[var(--primary)] transition-colors truncate px-2 py-1 rounded hover:bg-[var(--btn-plain-bg-hover)]">
+            <a href="${baseUrl}posts/${post.id}/" class="block text-sm text-neutral-700 dark:text-neutral-300 hover:text-[var(--primary)] dark:hover:text-[var(--primary)] transition-colors truncate px-2 py-1 rounded hover:bg-[var(--btn-plain-bg-hover)]">
               ${post.title}
             </a>
           `).join('');

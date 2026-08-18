@@ -164,7 +164,7 @@ export async function GET(context: APIContext) {
 			title: sanitizeXmlContent(post.data.title),
 			description: sanitizeXmlContent(post.data.description || ""),
 			pubDate: post.data.published,
-			link: `/posts/${post.id}/`,
+			link: new URL(`${import.meta.env.BASE_URL}posts/${post.id}/`, context.site).href,
 			// content:encoded should contain HTML but must be XML-safe
 			content: sanitizeHtmlForXml(
 				sanitizeHtml(html.toString(), {

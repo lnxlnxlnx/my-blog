@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0008 · SVM：一条有「间隔」的直线</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>SVM：一条有「间隔」的直线</h1>
+<p class="meta">课程 0008 · 预计 45 分钟 · 前置：<a href="0004-逻辑回归从回归到分类.html">课程 0004</a> + <a href="0007-决策树.html">课程 0007</a></p>
+
+<p>逻辑回归的边界由「所有样本」共同决定，边界附近的离群点会拉扯它。SVM 换一个思路：<strong>只找一条离两类样本都尽量远的直线</strong>——它只由离边界最近的少数几个样本（<b>支持向量</b>）决定。这带来了更强的泛化，也带来一个优雅的数学副产品：<b>核技巧</b>。</p>
+
+<h2>三要素</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>超平面 wᵀx+b=0，加上两侧的间隔带。决策边界只是「带子的中线」。</p></div>
+  <div class="card"><h3>策略</h3><p>最大化几何间隔（等价于最小化 ½‖w‖²），软间隔版本允许少量误分类，用 C 权衡。</p></div>
+  <div class="card"><h3>算法</h3><p>凸二次规划的对偶问题；用拉格朗日乘子，让内积可被核函数替换（核技巧）。</p></div>
+</div>
+
+<h2>核心：间隔越大越「稳」</h2>
+<p>几何间隔 γ = 1/‖w‖。想清楚一件事：<strong>最大化间隔 = 最小化 ‖w‖</strong>。同样的训练误差，间隔越宽的直线对测试样本的容错越强——这就是 SVM 泛化好的来源。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. 边界只由支持向量决定</h3>
+<p>间隔带边缘上的样本（以及软间隔下违规的样本）就是支持向量。去掉其它所有样本，解不变。因此：</p>
+<ul>
+  <li>模型「稀疏」：预测只算支持向量的内积，训练集越大越显优势。</li>
+  <li>这也是为什么对偶问题的变量数 = 样本数 N，但真正非零的乘子很少。</li>
+</ul>
+
+<h3>2. C 是又一次偏差-方差权衡</h3>
+<p>C 惩罚「间隔内的违规样本」：</p>
+<ul>
+  <li><strong>C 大</strong> → 更不宽容违规 → 间隔变窄、边界贴着样本 → 高方差。</li>
+  <li><strong>C 小</strong> → 容忍更多违规 → 间隔宽、边界平滑 → 高偏差。</li>
+  <li>同样的故事你已经在 kNN 的 k、决策树的深度上见过——这是贯穿本课程的主线。</li>
+</ul>
+
+<h3>3. 核技巧：把直线变曲线</h3>
+<p>线性 SVM 分不开环形数据。对偶问题的神奇之处：求解和预测时，数据只以内积 ⟨xᵢ, xⱼ⟩ 出现。把这个内积换成核函数 <code>K(xᵢ, xⱼ)</code>，就相当于<strong>在隐式高维空间中做线性 SVM</strong>，而不用真去算高维坐标。最常用的是 RBF（高斯）核：</p>
+<pre>K(x, z) = exp(−γ ‖x − z‖²)</pre>
+<p>RBF 核等价于把数据映射到无穷维，几乎总能线性可分——但 γ 太大照样过拟合（见练习 H1）。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0008_svm.ipynb</pre>
+<p>从零手写一个软间隔 SVM（合页损失 + SGD），画出间隔带、标出支持向量；然后在环形数据上对比「线性 vs RBF」，观察 C 和 γ 如何改变边界。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么去掉非支持向量后模型不变？</li>
+  <li><strong>M2</strong>：C 从 0.001 扫到 100，间隔宽度怎么变？训练准确率会怎么变？</li>
+  <li><strong>H1</strong>：γ 从小到大，边界从平滑变锯齿——你看到的是偏差还是方差？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">SVM 的决策边界由哪些样本决定？</p>
+  <button class="opt" data-ok="false">所有训练样本</button>
+  <button class="opt" data-ok="false">随机样本</button>
+  <button class="opt" data-ok="false">离群点</button>
+  <button class="opt" data-ok="true">支持向量</button>
+  <p class="reveal">只有间隔带边缘的样本（支持向量）决定边界，其余样本不影响解。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">最大化几何间隔等价于？</p>
+  <button class="opt" data-ok="false">最大化 ‖w‖</button>
+  <button class="opt" data-ok="false">最小化样本数</button>
+  <button class="opt" data-ok="false">最大化损失</button>
+  <button class="opt" data-ok="true">最小化 ‖w‖</button>
+  <p class="reveal">间隔 γ = 1/‖w‖，所以最大化间隔就是最小化 ‖w‖。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">软间隔参数 C 越大意味着？</p>
+  <button class="opt" data-ok="false">间隔更宽</button>
+  <button class="opt" data-ok="false">更多容忍违规</button>
+  <button class="opt" data-ok="false">更少支持向量</button>
+  <button class="opt" data-ok="true">更不宽容违规</button>
+  <p class="reveal">C 惩罚违规；C 大 → 严格 → 间隔窄、高方差。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">核技巧能做什么？</p>
+  <button class="opt" data-ok="false">减少训练数据</button>
+  <button class="opt" data-ok="false">加速梯度下降</button>
+  <button class="opt" data-ok="false">消除过拟合</button>
+  <button class="opt" data-ok="true">隐式升维线性可分</button>
+  <p class="reveal">把内积换成核函数，相当于在隐式高维空间做线性 SVM，不用真算高维坐标。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》§7 支持向量机</strong>——间隔、对偶问题、KKT 条件、核函数、SMO 的完整推导。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p><strong>ISL 第 9 章（Support Vector Machines）</strong>——最大间隔直觉、软间隔、SVM 与逻辑回归的对比。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：H1 里 γ 的锯齿边界你判断成偏差还是方差？下一课<strong>集成学习（随机森林）</strong>——用「一组小树投票」打败单棵树，这也是你面试里最常见的高频考点。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0007-决策树.html">课程 0007</a></span>
+  <a href="../../reference/0007-SVM速查.html">参考：SVM速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

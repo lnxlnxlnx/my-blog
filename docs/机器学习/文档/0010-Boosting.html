@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0010 · Boosting：串行纠错</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>Boosting：串行纠错</h1>
+<p class="meta">课程 0010 · 预计 45 分钟 · 前置：<a href="0009-集成学习.html">课程 0009</a>（Bagging）+ <a href="0007-决策树.html">0007</a>（决策树）</p>
+
+<p>上一课 Bagging 并行投票降方差。Boosting 换一个完全相反的思路：<strong>串行地「纠错」</strong>——每棵树都盯着前一棵树犯的错，下一课的主角是 AdaBoost 和 GBDT，而 GBDT 正是 XGBoost、LightGBM 这些竞赛常胜军的祖先。</p>
+
+<h2>Bagging vs Boosting：一张表</h2>
+<table style="width:100%; border-collapse:collapse;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:.4rem;"></th><th style="padding:.4rem;">Bagging</th><th style="padding:.4rem;">Boosting</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);">
+    <td style="padding:.4rem;">构建</td><td style="padding:.4rem;">并行，互不依赖</td><td style="padding:.4rem;">串行，逐棵依赖</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);">
+    <td style="padding:.4rem;">侧重</td><td style="padding:.4rem;">降方差（深模型有效）</td><td style="padding:.4rem;">降偏差（弱模型有效）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);">
+    <td style="padding:.4rem;">样本</td><td style="padding:.4rem;">bootstrap 随机子集</td><td style="padding:.4rem;">加权：错得多权重高</td>
+  </tr>
+  <tr>
+    <td style="padding:.4rem;">代表</td><td style="padding:.4rem;">随机森林</td><td style="padding:.4rem;">AdaBoost、GBDT、XGBoost</td>
+  </tr>
+</table>
+
+<h2>AdaBoost：给「错误样本」加权重</h2>
+<p>关键观察：<strong>树桩（max_depth=1）太弱，单棵 test 只有约 80%</strong>。AdaBoost 把它串起来：</p>
+<ol>
+  <li>初始化：每个样本等权重 1/N。</li>
+  <li>每轮：用带权数据训练一个树桩，计算加权错误率 ε；</li>
+  <li>给该树桩分配话语权 α = ½·ln((1−ε)/ε)；</li>
+  <li>更新样本权重：<strong>分错的样本权重 × e^α，分对的 × e^−α</strong>，再归一化——让下一棵树更关注被搞错的样本；</li>
+  <li>预测：所有树桩按 α 加权投票。</li>
+</ol>
+<p>这样把一堆「略好于瞎猜」的树桩，叠成一个强分类器——这正是「弱学习器提升为强学习器」的 AdaBoost（Adaptive Boosting）名字由来。</p>
+
+<h2>GBDT：不是加权，而是拟合残差</h2>
+<p>GBDT 换一种纠错方式：第 m 棵树直接拟合「前 m−1 棵树的预测与真实值的<b>残差</b>」：</p>
+<pre>rᵢ = yᵢ − ŷᵢ^(前 m−1 棵树)      # 残差 = 还没被解释的部分
+下一棵树：用特征去预测残差
+预测：把全部树的输出加起来
+</pre>
+<ul>
+  <li>每棵新树都在修「上一位犯的错」，串行叠加后偏差被压得很低。</li>
+  <li><strong>梯度提升</strong>的称呼来源：拟合残差 = 对损失函数做一步梯度下降。回归用均方误差的残差，分类用对数损失。</li>
+  <li>XGBoost 就是 GBDT 加二阶梯度 + 正则化 + 工程优化。</li>
+</ul>
+
+<h2>三个必懂点</h2>
+
+<h3>1. Boosting 降偏差，但要防过拟合</h3>
+<p>Bagging 几乎不会过拟合；Boosting 会——树多、树深都推高复杂度，<code>n_estimators</code> 和 <code>max_depth</code>（或学习率 <code>learning_rate</code>）要调。这是它与 Bagging 最关键的行为差异。</p>
+
+<h3>2. 学习率 = 每棵树走多小一步</h3>
+<p><code>learning_rate</code>（收缩因子）压小每棵树的贡献，让整体更稳；代价是要更多树。规则：<strong>learning_rate 小 → n_estimators 大</strong>。</p>
+
+<h3>3. 对「弱学习器」最有效</h3>
+<p>Bagging 要深树（方差大才能降），Boosting 要弱树（树桩、浅树）串起来降偏差。用浅树是 GBDT 的标准配置。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0010_boosting.ipynb</pre>
+<p>从零手写 AdaBoost（树桩 + 样本加权），对比树桩/随机森林/AdaBoost/GBDT 的 test 准确率，再做 GBDT 的残差拟合演示。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么分错的样本权重会变大？这个「针对性」和 Bagging 的「一视同仁」有什么本质区别？</li>
+  <li><strong>M2</strong>：AdaBoost 树数从 1 加到 200，test 准确率会不会像随机森林一样「收敛后持平」？还是会过拟合？</li>
+  <li><strong>H1</strong>：把 GBDT 的 max_depth 从 1 调到 5，观察 train/test 差距如何拉大——这说明了什么？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">Boosting 与 Bagging 最大的区别？</p>
+  <button class="opt" data-ok="false">并行与串行的树</button>
+  <button class="opt" data-ok="false">更深的树</button>
+  <button class="opt" data-ok="false">更少的树</button>
+  <button class="opt" data-ok="true">逐棵纠错</button>
+  <p class="reveal">Boosting 串行，每棵学前一棵的残差/错题；Bagging 并行独立。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">AdaBoost 分错样本的权重会怎样？</p>
+  <button class="opt" data-ok="false">减小</button>
+  <button class="opt" data-ok="false">清零</button>
+  <button class="opt" data-ok="false">不变</button>
+  <button class="opt" data-ok="true">变大</button>
+  <p class="reveal">分错的样本权重 ×e^α，下一棵树更关注它们。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">GBDT 每棵新树拟合的是？</p>
+  <button class="opt" data-ok="false">原始标签</button>
+  <button class="opt" data-ok="false">随机噪声</button>
+  <button class="opt" data-ok="false">特征均值</button>
+  <button class="opt" data-ok="true">残差</button>
+  <p class="reveal">拟合 y − 已有预测的残差，串行叠加压低偏差。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">与随机森林相比，Boosting 更需要注意？</p>
+  <button class="opt" data-ok="false">特征缩放</button>
+  <button class="opt" data-ok="false">数据清洗</button>
+  <button class="opt" data-ok="false">缺失值</button>
+  <button class="opt" data-ok="true">过拟合</button>
+  <p class="reveal">Boosting 会过拟合，树数/深度/学习率都要调。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>ISL 第 8 章（Boosting）</strong>——AdaBoost 的加权直觉、GBDT 残差拟合与收缩因子。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+  <p><strong>李航《统计学习方法》§8 提升方法</strong>——AdaBoost 的「前向分步算法」视角与误差界推导。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：M2 里 AdaBoost 加树到 200 后 test 是持平还是下降？下一课离开有监督，进入<strong>聚类（K-Means）</strong>——第一次处理「没有标签」的数据。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0009-集成学习.html">课程 0009</a></span>
+  <a href="../../reference/0009-Boosting速查.html">参考：Boosting速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

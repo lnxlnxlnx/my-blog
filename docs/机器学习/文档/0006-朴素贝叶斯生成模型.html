@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0006 · 朴素贝叶斯：生成模型视角</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>朴素贝叶斯：生成模型视角</h1>
+<p class="meta">课程 0006 · 预计 30 分钟 · 前置：<a href="0004-逻辑回归从回归到分类.html">课程 0004</a></p>
+
+<p>前两课（逻辑回归、kNN）本质都是<b>判别式</b>思路：想办法画出类别之间的边界。朴素贝叶斯换一条完全不同的路——它不去画边界，而是<b>把每一类长什么样建模出来</b>，再用贝叶斯公式反推该分到哪类。这是你工具箱里第一个<b>生成模型</b>。</p>
+
+<h2>贝叶斯公式：从似然到后验</h2>
+<pre>P(y|x) = P(x|y)·P(y) / P(x)
+        ↑后验    ↑似然  ↑先验</pre>
+<p>对每个新样本，比较「各类后验」的大小，取最大者。<code>P(x)</code> 对所有类相同，可忽略——分类只需要比较 <code>P(x|y)·P(y)</code>。</p>
+
+<h2>「朴素」：条件独立假设</h2>
+<p>为了不估计庞大的联合概率 <code>P(x|y)</code>，朴素贝叶斯假设<b>特征在给定类别时条件独立</b>：</p>
+<pre>P(x|y) = P(x₁|y)·P(x₂|y)…P(x_d|y)</pre>
+<ul>
+  <li><strong>好处</strong>：参数从指数级降到线性级，训练只是「数数」（快、小样本友好、天然支持在线更新）。</li>
+  <li><strong>代价</strong>：假设几乎总不成立——但这往往是「买得起的错误」（见练习 S1）。</li>
+</ul>
+
+<h2>三要素</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>生成式：P(y) 先验 + P(x|y) 似然（条件独立分解）。连续特征用高斯，离散特征用频率。</p></div>
+  <div class="card"><h3>策略</h3><p>极大似然估计参数；预测时最大后验（argmax P(y|x)）。</p></div>
+  <div class="card"><h3>算法</h3><p>训练＝统计（均值/方差或频数）；预测＝贝叶斯公式逐类打分。</p></div>
+</div>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0006_naive_bayes.ipynb</pre>
+<p>内容：手写高斯朴素贝叶斯（估计先验 + 每类每特征均值/方差）、画出曲线边界对比逻辑回归的直线、拉普拉斯平滑、迷你垃圾邮件分类。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：条件独立几乎必然不成立，为什么实战还不错？</li>
+  <li><strong>S2</strong>：两类方差不同时，为什么边界从直线变曲线？</li>
+  <li><strong>H2</strong>：α=0 时「会议」这个词为什么能一票否决垃圾类？（log 0 = −∞）</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">朴素贝叶斯属于哪类模型？</p>
+  <button class="opt" data-ok="false">判别模型</button>
+  <button class="opt" data-ok="false">惰性模型</button>
+  <button class="opt" data-ok="false">深度模型</button>
+  <button class="opt" data-ok="true">生成模型</button>
+  <p class="reveal">它建模 P(x|y) 和 P(y)，再用贝叶斯公式反推——生成式思路。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">「朴素」二字指什么假设？</p>
+  <button class="opt" data-ok="false">数据线性可分</button>
+  <button class="opt" data-ok="false">特征互不影响</button>
+  <button class="opt" data-ok="false">类别均衡分布</button>
+  <button class="opt" data-ok="true">特征条件独立</button>
+  <p class="reveal">给定类别时特征条件独立，所以 P(x|y) 能拆成连乘。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">训练里某「特征-类」组合没出现，概率为 0 怎么办？</p>
+  <button class="opt" data-ok="false">删除该类</button>
+  <button class="opt" data-ok="false">忽略特征</button>
+  <button class="opt" data-ok="false">加大样本</button>
+  <button class="opt" data-ok="true">拉普拉斯平滑</button>
+  <p class="reveal">加 α 平滑，让每个计数至少有小概率，避免 log(0) 一票否决。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">连续特征的朴素贝叶斯通常假设？</p>
+  <button class="opt" data-ok="false">均匀分布</button>
+  <button class="opt" data-ok="false">泊松分布</button>
+  <button class="opt" data-ok="false">二项分布</button>
+  <button class="opt" data-ok="true">高斯分布</button>
+  <p class="reveal">高斯朴素贝叶斯：估计每类每特征的高斯参数（μ, σ）。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》§4 朴素贝叶斯法</strong>——从极大似然到贝叶斯估计的完整推导、拉普拉斯平滑。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p><strong>ISL 第 4 章</strong>——贝叶斯分类器与判别分析的对比（LDA/QDA 就是同方差/异方差版本）。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：S1 的答案你最后怎么说服自己的？下一课<strong>决策树</strong>——又一个完全不同的「模型」视角：分而治之的规则树，也是集成学习（随机森林、梯度提升）的地基。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0005-k近邻不训练也能分类.html">课程 0005</a></span>
+  <a href="../../reference/0005-朴素贝叶斯速查.html">参考：朴素贝叶斯速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

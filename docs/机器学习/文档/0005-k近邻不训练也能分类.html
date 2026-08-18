@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0005 · k 近邻：不训练也能分类</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>k 近邻（kNN）：不训练也能分类</h1>
+<p class="meta">课程 0005 · 预计 30 分钟 · 前置：<a href="0004-逻辑回归从回归到分类.html">课程 0004</a></p>
+
+<p>上一课逻辑回归在同心圆数据上「无能为力」，因为它的模型只有直线。这一课的 kNN 会用同一份数据漂亮地切开圆环——区别就藏在三要素里。</p>
+
+<h2>三要素：这次「算法」没有训练</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>没有参数：训练集 + 距离度量 + k。预测时才「学习」，叫惰性学习。</p></div>
+  <div class="card"><h3>策略</h3><p>多数投票（分类）/ 平均（回归）；距离度量也是策略的一部分。</p></div>
+  <div class="card"><h3>算法</h3><p>预测时：算距离 → 排序 → 取前 k → 投票。大数据用 kd 树加速。</p></div>
+</div>
+
+<p><strong>关键对比</strong>：逻辑回归的「算法」（梯度下降）发生在训练阶段；kNN 的「算法」发生在预测阶段。同一个三要素框架，两种完全不同的节奏——这正是三要素框架好用的地方。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. 边界是任意形状的</h3>
+<p>kNN 不假设任何函数形式，边界由训练样本密度决定。所以它能分逻辑回归切不开的数据。代价是：预测要遍历所有样本，<strong>惰性 = 预测慢</strong>。</p>
+
+<h3>2. k 是又一次偏差-方差权衡</h3>
+<p>k 太小（如 1）→ 只看最近点，边界锯齿、对噪声敏感 → <strong>高方差（过拟合）</strong>。<br>
+k 太大 → 边界太平滑、细节被抹掉 → <strong>高偏差（欠拟合）</strong>。<br>
+k 是<strong>超参数</strong>，用交叉验证在验证集上选，不靠训练。</p>
+
+<h3>3. 特征必须缩放</h3>
+<p>距离由量纲主导：特征 A 范围 0~1000、特征 B 范围 0~1 时，A 的差异完全吞掉 B 的信息。用 <code>StandardScaler</code> 标准化后再算距离。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0005_knn.ipynb</pre>
+<p>从零手写 kNN（全程没有一个「训练」循环），在同心圆上画出任意形状的边界、观察 k 变化、演示特征缩放的威力。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：k=1 的锯齿边界是偏差还是方差？</li>
+  <li><strong>M1</strong>：把放大系数改成 1 后，不缩放为什么也不差了？缩放对逻辑回归重要吗？</li>
+  <li><strong>H2</strong>：交叉验证选 k 的曲线为什么是钟形？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">kNN 的「训练」发生在什么时候？</p>
+  <button class="opt" data-ok="false">训练阶段</button>
+  <button class="opt" data-ok="false">调参阶段</button>
+  <button class="opt" data-ok="false">正则阶段</button>
+  <button class="opt" data-ok="true">预测阶段</button>
+  <p class="reveal">kNN 是惰性学习：不学参数，预测时才找近邻投票。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">k=1 时的决策边界通常表现为？</p>
+  <button class="opt" data-ok="false">平滑规则</button>
+  <button class="opt" data-ok="false">一条直线</button>
+  <button class="opt" data-ok="false">没有边界</button>
+  <button class="opt" data-ok="true">锯齿状</button>
+  <p class="reveal">k=1 每个样本独自圈领地，边界碎、对噪声敏感——高方差。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">kNN 使用前必须做什么预处理？</p>
+  <button class="opt" data-ok="false">标准化</button>
+  <button class="opt" data-ok="false">独热编码</button>
+  <button class="opt" data-ok="false">数据增强</button>
+  <button class="opt" data-ok="true">特征缩放</button>
+  <p class="reveal">距离度量依赖量纲，特征必须缩放到同一尺度。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">k 是什么参数，怎么确定？</p>
+  <button class="opt" data-ok="false">训练参数</button>
+  <button class="opt" data-ok="false">随机参数</button>
+  <button class="opt" data-ok="false">固定参数</button>
+  <button class="opt" data-ok="true">超参数</button>
+  <p class="reveal">k 是超参数，用交叉验证在验证集上选。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》§3 k 近邻法</strong>——k 近邻模型的几何意义（Voronoi 划分）、kd 树实现。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p><strong>ISL 第 2 章</strong>——KNN 与线性模型的对比、为什么 KNN 在高维失效（维数灾难）。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：S1 的锯齿边界你判断成偏差还是方差，依据是什么？下一课<strong>朴素贝叶斯</strong>——从「看邻居」换成「算概率」，把生成模型视角引入你的工具箱。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <span>← <a href="0004-逻辑回归从回归到分类.html">课程 0004</a></span>
+  <a href="../../reference/0004-k近邻速查.html">参考：k近邻速查 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
