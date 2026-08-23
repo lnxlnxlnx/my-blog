@@ -1,0 +1,156 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0008 — DOM 与浏览器事件</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0008 · DOM 与浏览器事件</h1>
+
+<p>第一课我们见过 <code>document.documentElement.classList</code>。这课系统讲清楚 <b>DOM</b>（Document Object Model）：浏览器把整个网页 HTML 变成一棵"对象树"，JS 通过 <code>document</code> 找到任意元素、改它、听它的事件。这是所有"页面交互"的地基。</p>
+<p><b>今天这节课的收获：</b>读懂 code-copy-utils.ts（复制按钮）和 about.astro 里的事件代码。</p>
+
+<h2>1. DOM：网页 = 一棵对象树</h2>
+
+<p>浏览器的内存里，你的 HTML 长这样（示意）：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>document</span>
+<span>└── html (documentElement)</span>
+<span>    ├── head</span>
+<span>    └── body</span>
+<span>        ├── div#app</span>
+<span>        │   ├── button "读取状态"</span>
+<span>        │   └── span#weather-temp "--"</span>
+<span>        └── script</span></div></pre></div>
+
+<p>每个标签是一个"元素对象"。JS 能用 <code>document</code> 提供的各种方法把它们找出来。</p>
+
+<h2>2. 找元素：四种方法</h2>
+
+<table>
+<tr><th>方法</th><th>返回</th><th>例</th></tr>
+<tr><td><code>document.getElementById("x")</code></td><td>单个元素（按 id）</td><td>博客里最常见</td></tr>
+<tr><td><code>document.querySelector(".class")</code></td><td>单个（CSS 选择器）</td><td>取第一个匹配</td></tr>
+<tr><td><code>document.querySelectorAll("...")</code></td><td>所有匹配的列表</td><td>循环处理</td></tr>
+<tr><td><code>el.querySelector(...)</code></td><td>在 el 内部找</td><td>code-copy 里用过</td></tr>
+</table>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// about.astro 真实代码：用 id 找到元素并操作</span></span>
+<span><span class="kw">const</span> msg = document.getElementById(<span class="str">"esp32-msg"</span>)<span class="hl">!</span>;</span>
+<span>msg.textContent = <span class="str">"请求中..."</span>;  <span class="cmt">// 改文本</span></span>
+<span></span>
+<span><span class="cmt">// code-copy-utils.ts 真实代码：内部查找</span></span>
+<span><span class="kw">const</span> preEle = target.closest(<span class="str">"pre"</span>);      <span class="cmt">// 往上找最近的 &lt;pre&gt;</span></span>
+<span><span class="kw">const</span> codeEle = preEle?.querySelector(<span class="str">"code"</span>); <span class="cmt">// 在里面找 &lt;code&gt;</span></span></div></pre></div>
+
+<h3>元素常用的属性 / 方法</h3>
+
+<ul>
+<li><code>el.textContent</code> / <code>el.value</code>：读改文本 / 表单值</li>
+<li><code>el.className</code> / <code>el.classList.add()</code>、<code>.remove()</code>：改 CSS 类</li>
+<li><code>el.style.setProperty("--hue", "200")</code>：改内联样式</li>
+<li><code>el.setAttribute()</code> / <code>el.getAttribute()</code>：设置/读 HTML 属性</li>
+</ul>
+
+<h2>3. 事件：addEventListener</h2>
+
+<p>事件 = "浏览器里发生了什么"（点击、键盘、滚动、窗口变化）。用 <code>addEventListener(事件名, 回调)</code> 注册监听，事件发生时浏览器调用你的回调：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// about.astro 真实代码：给按钮挂点击事件</span></span>
+<span>document.getElementById(<span class="str">"esp32-status"</span>)<span class="hl">!.addEventListener</span>(<span class="str">"click"</span>, () =&gt; {</span>
+<span>    request(<span class="str">"/status"</span>);  <span class="cmt">// 点击时发起请求</span></span>
+<span>});</span>
+<span></span>
+<span><span class="cmt">// 窗口尺寸变化</span></span>
+<span>window.addEventListener(<span class="str">"resize"</span>, resizeCanvas);</span>
+<span></span>
+<span><span class="cmt">// 定时器事件</span></span>
+<span><span class="kw">const</span> timer = setInterval(() =&gt; request(<span class="str">"/status"</span>), <span class="hl">2000</span>); <span class="cmt">// 每2秒</span></span>
+<span>clearInterval(timer); <span class="cmt">// 停止</span></span></div></pre></div>
+
+<div class="callout">
+<p><b>和"回调"接上了：</b><code>addEventListener("click", fn)</code> 就是第二课学的回调——传函数进去，事件发生时浏览器替你调用。事件的回调常收到一个 <code>event</code> 参数（比如 <code>(e) =&gt; e.target</code> 拿到被点的元素）。</p>
+</div>
+
+<h2>4. 完整真实案例：复制按钮</h2>
+
+<p>code-copy-utils.ts 把这一课的知识全串起来了（简化）：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">export async function</span> <span class="fn">handleCodeCopy</span>(target: Element): Promise&lt;void&gt; {</span>
+<span>    <span class="cmt">// 1. 从被点的按钮往上找到 &lt;pre&gt;，再在里面找 &lt;code&gt;</span></span>
+<span>    <span class="kw">const</span> preEle = target.closest(<span class="str">"pre"</span>);</span>
+<span>    <span class="kw">const</span> codeEle = preEle?.querySelector(<span class="str">"code"</span>);</span>
+<span>    <span class="kw">if</span> (!codeEle) <span class="kw">return</span>;</span>
+<span></span>
+<span>    <span class="cmt">// 2. 提取代码文本（用数组拼起来）</span></span>
+<span>    <span class="kw">const</span> lines: string[] = [];</span>
+<span>    <span class="kw">const</span> lineEls = codeEle.querySelectorAll(<span class="str">"span.line"</span>);</span>
+<span>    lineEls.forEach((line) =&gt; lines.push(line.textContent || <span class="str">""</span>));</span>
+<span>    <span class="kw">const</span> code = lines.join(<span class="str">"\n"</span>);</span>
+<span></span>
+<span>    <span class="cmt">// 3. 异步复制到剪贴板</span></span>
+<span>    <span class="kw">await</span> copyToClipboard(code);</span>
+<span></span>
+<span>    <span class="cmt">// 4. 按钮加 success 类（变绿），1 秒后移除</span></span>
+<span>    target.classList.add(<span class="str">"success"</span>);</span>
+<span>    setTimeout(() =&gt; target.classList.remove(<span class="str">"success"</span>), <span class="hl">1000</span>);</span>
+<span>}</span></div></pre></div>
+
+<p>注意每一行用到的知识：找元素（querySelector/closest）、数组 join、async/await（第七课）、classList、setTimeout 事件。你全都学过了。</p>
+
+<h2>5. 更多例子：复制到控制台试</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 例子 1：改当前页面的标题</span></span>
+<span>document.title = <span class="str">"被我改了！"</span>;</span>
+<span></span>
+<span><span class="cmt">// 例子 2：找到页面上所有 &lt;a&gt; 链接并数一数</span></span>
+<span><span class="kw">const</span> links = document.querySelectorAll(<span class="str">"a"</span>);</span>
+<span>console.log(<span class="str">`页面上有 <span class="hl">${links.length}</span> 个链接`</span>);</span>
+<span></span>
+<span><span class="cmt">// 例子 3：给第一个链接加红边框</span></span>
+<span>links[<span class="hl">0</span>].style.border = <span class="str">"2px solid red"</span>;</span>
+<span></span>
+<span><span class="cmt">// 例子 4：点击任意处弹出坐标</span></span>
+<span>document.addEventListener(<span class="str">"click"</span>, (e) =&gt; console.log(e.clientX, e.clientY));</span></div></pre></div>
+
+<div class="callout warn">
+<p><b>温馨提示：</b>例子 4 会一直监听，刷新页面才会停。例子 1 会改掉博客页面标题，刷新即恢复。放心玩。</p>
+</div>
+
+<h2>6. 练习</h2>
+
+<div class="quiz" data-q="document.getElementById(&quot;x&quot;) 返回什么？">
+  <button data-answer>所有 id 为 x 的元素</button>
+  <button data-answer data-correct>一个 id 为 x 的元素对象</button>
+  <button data-answer>一段 HTML 字符串</button>
+</div>
+
+<div class="quiz" data-q="addEventListener 的作用是？">
+  <button data-answer>执行一次回调立即运行</button>
+  <button data-answer data-correct>事件发生时调用回调</button>
+  <button data-answer>把元素加到文档里</button>
+</div>
+
+<div class="quiz" data-q="el.classList.add(&quot;dark&quot;) 是做什么？">
+  <button data-answer>改变元素的背景颜色</button>
+  <button data-answer data-correct>给元素加一个 CSS 类名</button>
+  <button data-answer>创建一个新的元素</button>
+</div>
+
+<h2>7. 接下来你该做的</h2>
+
+<ol>
+<li><b>在控制台把"更多例子"跑一遍</b>，感受"JS 操作真实页面"。</li>
+<li><b>读权威资料：</b><a href="https://zh.javascript.info/document">JavaScript.info：DOM</a> 和 <a href="https://zh.javascript.info/events">事件</a>（中文，各读前两三节）。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0008 · 下一课预告：Astro 文件结构——现在你终于要读那个神奇的 <code>---</code> frontmatter 了。</p>
+
+</body>
+</html>

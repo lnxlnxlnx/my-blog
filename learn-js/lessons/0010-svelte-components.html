@@ -1,0 +1,137 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0010 — Svelte 组件</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0010 · Svelte 组件</h1>
+
+<p>Svelte 是博客的<b>交互组件框架</b>：负责按钮、下拉菜单、搜索框这类"有状态、会响应"的 UI。它的核心卖点是<b>响应式</b>——变量一变，页面自动更新，你不用手动去改 DOM。</p>
+<p><b>今天这节课的收获：</b>读懂 LightDarkSwitch.svelte（右上角的主题切换按钮）。</p>
+
+<h2>1. .svelte 文件的组织</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span>&lt;script lang="ts"&gt;</span>
+<span><span class="cmt">// 1. 脚本区：状态变量 + 逻辑</span></span>
+<span><span class="kw">let</span> count = <span class="hl">0</span>;</span>
+<span><span class="kw">function</span> <span class="fn">increment</span>() { count++; }</span>
+<span>&lt;/script&gt;</span>
+<span></span>
+<span><span class="cmt">&lt;!-- 2. 模板：HTML + {变量} + 事件 --&gt;</span></span>
+<span>&lt;button onclick={increment}&gt;</span>
+<span>    点我（当前 {count}）</span>
+<span>&lt;/button&gt;</span>
+<span></span>
+<span><span class="cmt">&lt;style&gt; 按钮样式 &lt;/style&gt;  // 3. 组件私有样式</span></span></div></pre></div>
+
+<p>和 .astro 很像，但有一个<b>巨大区别</b>：Svelte 变量是<b>响应式的</b>——<code>count</code> 一加，按钮文本自动变 "当前 1"。在 Astro 的 script 里你不会想要这样，但在组件里这是常态。</p>
+
+<h2>2. $state：Svelte 5 的响应式声明</h2>
+
+<p>博客用的是 Svelte 5。LightDarkSwitch.svelte 第一行真实代码：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">let</span> mode: LIGHT_DARK_MODE = <span class="hl">$state</span>(LIGHT_MODE);</span>
+<span><span class="kw">let</span> displayedMode: LIGHT_DARK_MODE = <span class="hl">$state</span>(LIGHT_MODE);</span>
+<span></span>
+<span><span class="kw">function</span> <span class="fn">switchScheme</span>(newMode: LIGHT_DARK_MODE) {</span>
+<span>    mode = newMode;              <span class="cmt">// 一赋值，用到 mode 的地方全自动更新</span></span>
+<span>    setTheme(newMode);           <span class="cmt">// 同时把选择存起来</span></span>
+<span>}</span></div></pre></div>
+
+<p><code>$state(初始值)</code> 把变量变成"响应式状态"。之后你正常赋值就行，Svelte 负责刷新 UI。这就是"框架帮你管理 DOM"。</p>
+
+<h2>3. onMount：组件挂载后执行一次</h2>
+
+<p>LightDarkSwitch.svelte 里的 onMount 做初始化：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">import</span> { onMount } <span class="kw">from</span> <span class="str">"svelte"</span>;</span>
+<span></span>
+<span>onMount(() =&gt; {</span>
+<span>    <span class="cmt">// 组件出现在页面后：读取存的主题并应用</span></span>
+<span>    <span class="kw">const</span> storedTheme = getStoredTheme();</span>
+<span>    mode = storedTheme;</span>
+<span>    updateDisplayedMode();</span>
+<span></span>
+<span>    <span class="cmt">// 监听系统主题变化</span></span>
+<span>    <span class="kw">const</span> mediaQuery = window.matchMedia(<span class="str">"(prefers-color-scheme: dark)"</span>);</span>
+<span>    mediaQuery.addEventListener(<span class="str">"change"</span>, updateDisplayedMode);</span>
+<span></span>
+<span>    <span class="cmt">// 返回清理函数：组件销毁时移除监听（避免内存泄漏）</span></span>
+<span>    <span class="kw">return</span> () =&gt; mediaQuery.removeEventListener(<span class="str">"change"</span>, updateDisplayedMode);</span>
+<span>});</span></div></pre></div>
+
+<div class="callout">
+<p><b>你全认识：</b><code>onMount(() =&gt; {...})</code> 是回调；<code>window.matchMedia</code>、<code>addEventListener</code> 是第八课的 DOM/事件；<code>return () =&gt; ...</code> 是"清理钩子"——组件没了，监听也拆掉。没有新概念，只是新框架把它们拼起来。</p>
+</div>
+
+<h2>4. 模板里的条件类和属性</h2>
+
+<p>LightDarkSwitch.svelte 模板的真实片段：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>&lt;div class="absolute" class:opacity-0={displayedMode !== LIGHT_MODE}&gt;</span>
+<span>    &lt;Icon icon="material-symbols:wb-sunny-outline-rounded"&gt;&lt;/Icon&gt;</span>
+<span>&lt;/div&gt;</span>
+<span></span>
+<span>&lt;DropdownItem</span>
+<span>    isActive={mode === LIGHT_MODE}</span>
+<span>    onclick={() =&gt; switchScheme(LIGHT_MODE)}</span>
+<span>&gt;</span>
+<span>    {i18n(I18nKey.lightMode)}</span>
+<span>&lt;/DropdownItem&gt;</span></div></pre></div>
+
+<ul>
+<li><code>class:opacity-0={条件}</code>：条件为真就加这个类（Svelte 的"条件类"语法）</li>
+<li><code>isActive={mode === LIGHT_MODE}</code>：把值传进子组件（props，属性）</li>
+<li><code>onclick={() =&gt; switchScheme(LIGHT_MODE)}</code>：点击回调——第二课学过的箭头函数</li>
+<li><code>{i18n(...)}</code>：模板里插入 JS 表达式结果</li>
+</ul>
+
+<h2>5. 更多例子：在项目里找</h2>
+
+<p>打开 <code>src/components/</code> 下的几个 .svelte 文件（比如 <code>interactive/Search.svelte</code>），找一找：</p>
+<ol>
+<li>有没有 <code>$state</code>？</li>
+<li>有没有 <code>onMount</code>？</li>
+<li>模板里有没有 <code>{表达式}</code> 和 <code>onclick={...}</code>？</li>
+</ol>
+
+<p>你很快会发现，所有组件的骨架都一样——框架虽多，JS 底子不变。</p>
+
+<h2>6. 练习</h2>
+
+<div class="quiz" data-q="$state(0) 声明出来的变量有什么特点？">
+  <button data-answer>永远等于 0 不能变</button>
+  <button data-answer>只在构建时算一次</button>
+  <button data-answer data-correct>赋值后页面自动更新</button>
+</div>
+
+<div class="quiz" data-q="onMount 的回调什么时候执行？">
+  <button data-answer>页面刚打开加载文件时</button>
+  <button data-answer data-correct>组件被挂载进页面后</button>
+  <button data-answer>组件销毁的时候</button>
+</div>
+
+<div class="quiz" data-q="onMount 返回一个函数是干什么用的？">
+  <button data-answer>记录挂载时间日志</button>
+  <button data-answer>返回要渲染的内容</button>
+  <button data-answer data-correct>组件销毁时执行清理</button>
+</div>
+
+<h2>7. 接下来你该做的</h2>
+
+<ol>
+<li><b>完整读一遍 LightDarkSwitch.svelte</b>——和 theme-manager.js 对比，你会发现它们处理的是同一件事（主题），一个用原生 JS，一个用 Svelte 组件。</li>
+<li><b>读权威资料：</b><a href="https://svelte.dev/docs/svelte/overview">Svelte 官方文档</a>（英文）或 <a href="https://svelte.dev/docs">svelte.dev/docs</a>。也可以直接看你项目里别的 .svelte。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0010 · 下一课预告（最后一课）：综合——把整个博客拼起来，画出完整的地图。</p>
+
+</body>
+</html>

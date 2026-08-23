@@ -38,14 +38,14 @@
 <span>            }</span>
 <span>        };</span>
 <span></span>
-<span>        <span class="cmt">// Add listener for system theme changes</span>
+<span>        <span class="cmt">// Add listener for system theme changes</span></span>
 <span>        mediaQuery.addListener(handleSystemThemeChange);</span>
 <span>    }</span>
 <span></span>
 <span>    <span class="kw">const</span> expressiveTheme = isDark ? <span class="str">"github-dark"</span> : <span class="str">"github-light"</span>;</span>
 <span>    document.documentElement.setAttribute(<span class="str">"data-theme"</span>, expressiveTheme);</span>
 <span></span>
-<span>    <span class="cmt">// 确保主题正确应用 - 解决代码块渲染问题</span>
+<span>    <span class="cmt">// 确保主题正确应用 - 解决代码块渲染问题</span></span>
 <span>    <span class="kw">const</span> currentTheme = document.documentElement.getAttribute(<span class="str">"data-theme"</span>);</span>
 <span>    <span class="kw">if</span> (currentTheme !== expressiveTheme) {</span>
 <span>        document.documentElement.setAttribute(<span class="str">"data-theme"</span>, expressiveTheme);</span>

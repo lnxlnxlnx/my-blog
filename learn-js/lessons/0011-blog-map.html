@@ -1,0 +1,121 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0011 — 综合：博客地图</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0011 · 综合：把整个博客拼起来</h1>
+
+<p>恭喜，这是最后一课。前面十课打下的底子，现在用来画一张"整个博客的地图"——从你运行 <code>pnpm dev</code> 那一刻开始，到用户在浏览器里点主题切换按钮为止，一条线串起所有知识。</p>
+<p><b>今天这节课的收获：</b>能自己逛遍博客源码，并跟别人讲清楚"这个博客是怎么工作的"。</p>
+
+<h2>1. 博客的两种"时间"</h2>
+
+<p>整个项目分成两个运行时机，几乎所有困惑都源于没分清它们：</p>
+
+<table>
+<tr><th></th><th>构建时（服务器/本地）</th><th>运行时（浏览器）</th></tr>
+<tr><td>谁在跑</td><td>Node.js 跑 Astro 构建</td><td>用户的浏览器</td></tr>
+<tr><td>跑哪些代码</td><td>.astro 的 frontmatter、.ts 工具函数</td><td>&lt;script&gt; 和 .svelte 组件</td></tr>
+<tr><td>能做什么</td><td>读文件、await 数据、生成 HTML</td><td>操作 DOM、localStorage、fetch、事件</td></tr>
+<tr><td>典型文件</td><td>pages/*.astro、utils/*.ts</td><td>components/**/*.svelte、script 块</td></tr>
+</table>
+
+<div class="callout good">
+<p><b>一句话：</b>构建时把"数据和骨架"烤成 HTML 文件；浏览器运行时给 HTML 注入"交互"。理解这层，Astro 项目你基本就通了。</p>
+</div>
+
+<h2>2. 整条数据流（从仓库到屏幕）</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span>src/config/siteConfig.ts ── 站点配置（标题、语言、主题色）</span>
+<span>        │</span>
+<span>        ▼ 构建时</span>
+<span>src/utils/*.ts ── 处理数据（排序、统计标签、格式化日期）</span>
+<span>        │</span>
+<span>        ▼ import 进来（第 6 课）</span>
+<span>src/pages/*.astro ── 用 await 取数据（第 7 课）+ 模板渲染（第 9 课）</span>
+<span>        │</span>
+<span>        ▼ 生成</span>
+<span>dist/ 静态 HTML 文件（部署到服务器）</span>
+<span>        │</span>
+<span>        ▼ 用户打开</span>
+<span>浏览器渲染 HTML，执行 &lt;script&gt; 与 .svelte 组件（第 8、10 课）</span>
+<span>        │</span>
+<span>        ▼ 用户交互（点击、系统主题变化）</span>
+<span>事件回调 → 改 DOM / localStorage / 发请求</span></div></pre></div>
+
+<h2>3. 逛一遍真实代码（15 分钟路线）</h2>
+
+<p>按下面的顺序打开文件，每个只花 1-2 分钟确认"我认识它的结构"：</p>
+
+<ol>
+<li><code>src/config/siteConfig.ts</code> —— 一个巨大的配置对象（第 3 课）。找到 <code>themeColor</code>、<code>lang</code>、<code>pagination</code>。</li>
+<li><code>src/utils/date-utils.ts</code> —— 工具函数 + 类型标注（第 4 课）。已经 100% 读得懂了。</li>
+<li><code>src/utils/content-utils.ts</code> —— 数组方法大全（第 5 课）+ async（第 7 课）。</li>
+<li><code>src/pages/about.astro</code> —— 三段式页面（第 9 课）。frontmatter 取数据，script 管交互。</li>
+<li><code>src/scripts/theme-manager.js</code> —— 你第一课的起点，现在能全部读懂了。</li>
+<li><code>src/components/interactive/LightDarkSwitch.svelte</code> —— Svelte 组件（第 10 课）。</li>
+<li><code>src/utils/setting-utils.ts</code> —— 主题相关的工具，和 theme-manager 配合。找 <code>resolveTheme</code>（你在第一课见过它的名字）。</li>
+</ol>
+
+<div class="callout">
+<p><b>注意看 <code>setting-utils.ts</code>：</b>它和 <code>theme-manager.js</code> 处理同一件事（主题切换）——前者是 Svelte 组件调用的"正版"工具，后者是防闪烁的"首屏脚本"。代码库里经常有这样的"双轨"，目的不同。</p>
+</div>
+
+<h2>4. 你现在拥有的"阅读工具包"</h2>
+
+<table>
+<tr><th>看到什么</th><th>你用什么知识读</th></tr>
+<tr><td><code>const x = { ... }</code></td><td>对象（第 3 课）</td></tr>
+<tr><td><code>x.map(...).filter(...)</code></td><td>数组方法（第 5 课）</td></tr>
+<tr><td><code>import ... from "..."</code></td><td>模块（第 6 课）</td></tr>
+<tr><td><code>async</code> / <code>await</code></td><td>异步（第 7 课）</td></tr>
+<tr><td><code>document.get...</code>、<code>addEventListener</code></td><td>DOM 事件（第 8 课）</td></tr>
+<tr><td><code>: string</code>、<code>: Date</code></td><td>类型标注（第 4 课）</td></tr>
+<tr><td><code>--- ... ---</code></td><td>Astro frontmatter（第 9 课）</td></tr>
+<tr><td><code>$state</code>、<code>onMount</code></td><td>Svelte（第 10 课）</td></tr>
+</table>
+
+<h2>5. 综合测验</h2>
+
+<div class="quiz" data-q="博客构建时主要跑哪种代码？">
+  <button data-answer>&lt;script&gt; 浏览器交互代码</button>
+  <button data-answer data-correct>.astro 的 frontmatter 和 .ts 工具</button>
+  <button data-answer>用户每次点击触发的回调</button>
+</div>
+
+<div class="quiz" data-q="theme-manager.js 和 setting-utils.ts 的关系？">
+  <button data-answer data-correct>同一件事两种实现各司其职</button>
+  <button data-answer>一个废弃一个在用</button>
+  <button data-answer>完全无关的两个功能</button>
+</div>
+
+<div class="quiz" data-q="数据在博客里大致流动方向是？">
+  <button data-answer>浏览器 → 构建时 → 配置</button>
+  <button data-answer>组件 → 页面 → 配置反向</button>
+  <button data-answer data-correct>配置 → 工具处理 → 页面生成</button>
+</div>
+
+<h2>6. 之后怎么继续学</h2>
+
+<ol>
+<li><b>用 15 分钟把第 3 节的路线走一遍</b>，每到一个文件，用第 4 节的表确认"我会读它"。</li>
+<li><b>挑一个你真正好奇的组件深入读</b>——比如 Search.svelte 或 WallpaperSwitch.svelte。读不懂的地方就是你的下一个学习点。</li>
+<li><b>保持资源在手：</b>RESOURCES.md 里收藏了 MDN、JavaScript.info、Astro/Svelte 官方文档。遇到新概念先查它们。</li>
+<li><b>有问题随时问我</b>——课程结束了，但我是你的常驻老师。任何博客代码问题，直接甩过来。</li>
+</ol>
+
+<div class="callout good">
+<p><b>结课的话：</b>从第一课的"读一段 theme-manager.js 都吃力"，到现在能读整个项目的地图——这就是进步。接下来没有"最后一课"，只有你好奇心指向的下一课。</p>
+</div>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0011 · 课程完结。祝你读代码愉快！</p>
+
+</body>
+</html>

@@ -46,10 +46,10 @@
 <span>    <span class="kw">const</span> configHue = <span class="hl">200</span>; <span class="cmt">// 从配置中获取</span></span>
 <span>    <span class="kw">const</span> defaultMode = <span class="str">"system"</span>; <span class="cmt">// 从配置中获取</span></span>
 <span></span>
-<span>    <span class="cmt">// Load the theme from local storage, use defaultMode from config if not set</span>
+<span>    <span class="cmt">// Load the theme from local storage, use defaultMode from config if not set</span></span>
 <span>    <span class="kw">const</span> theme = localStorage.getItem(<span class="str">"theme"</span>) || defaultMode;</span>
 <span></span>
-<span>    <span class="cmt">// Helper function to get system preference</span>
+<span>    <span class="cmt">// Helper function to get system preference</span></span>
 <span>    <span class="kw">function</span> <span class="fn">getSystemPreference</span>() {</span>
 <span>        <span class="kw">return</span> window.matchMedia(<span class="str">"(prefers-color-scheme: dark)"</span>).matches</span>
 <span>            ? DARK_MODE</span>

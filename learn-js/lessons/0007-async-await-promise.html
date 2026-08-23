@@ -1,0 +1,136 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0007 — 异步编程 async/await</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0007 · 异步编程：async/await 与 Promise</h1>
+
+<p>这是 JS 新手最容易卡住的一关，但它本质就一句话：<b>"等数据回来的这段时间，程序别傻等，先去干别的；数据到了再接着往下走。"</b></p>
+<p><b>今天这节课的收获：</b>读懂博客里所有 <code>async</code> / <code>await</code> / <code>fetch</code> 代码，包括 RSS 生成和天气查询。</p>
+
+<h2>1. 为什么要"异步"</h2>
+
+<p>有些操作很慢：读文件、请求网络、等 2 秒。如果程序干等，整个页面就卡死。所以 JS 用<b>回调</b>（第二课学过）处理这类操作：先注册"做完了要做什么"，不等。</p>
+<p>但回调嵌套多了很难读。于是有了 <code>Promise</code> 和 <code>async/await</code>——把"异步代码写得像同步一样"，可读性大幅提升。</p>
+
+<h2>2. async 函数：把函数变成"承诺返回结果"</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// async 函数永远返回一个 Promise</span></span>
+<span><span class="kw">async function</span> <span class="fn">getData</span>() {</span>
+<span>    <span class="kw">return</span> <span class="str">"数据"</span>;  <span class="cmt">// 直接返回，内部会自动包成 Promise</span></span>
+<span>}</span>
+<span></span>
+<span><span class="kw">const</span> result = <span class="kw">await</span> getData();  <span class="cmt">// await 等它完成，取出里面的值</span></span>
+<span>console.log(result); <span class="cmt">// 数据</span></span></div></pre></div>
+
+<h2>3. await：暂停，等结果</h2>
+
+<p><code>await</code> 只能用在 <code>async</code> 函数里。它让代码"在这一行暂停"，直到 Promise 完成，然后取出结果继续往下。看一下博客 rss.xml.ts 的真实片段：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">export async function</span> <span class="fn">GET</span>(context: APIContext) {</span>
+<span>    <span class="kw">const</span> posts = <span class="kw">await</span> getSortedPosts();  <span class="cmt">// 等文章数据回来</span></span>
+<span>    <span class="cmt">// ... 数据到手后继续处理</span></span>
+<span>    <span class="kw">return</span> new Response(xml);</span>
+<span>}</span></div></pre></div>
+
+<p>content-utils.ts 里也到处是 <code>await getCollection(...)</code>。这些都是"先等数据，再往下算"。</p>
+
+<div class="callout">
+<p><b>类比：</b>你去餐厅点餐。<code>await</code> = "点完餐坐好等上菜"——服务员去后厨了，你坐着等，但没占着整条街。等菜到了，你的"代码"继续执行。</p>
+</div>
+
+<h2>4. fetch：请求网络的标准方式</h2>
+
+<p>about.astro 里查天气的真实代码（我们会在第 9 课细读）：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">async function</span> <span class="fn">fetchWeather</span>() {</span>
+<span>        <span class="kw">try</span> {</span>
+<span>            <span class="cmt">// 1. 发请求，await 等响应回来</span></span>
+<span>            <span class="kw">const</span> res = <span class="kw">await</span> fetch(<span class="str">`https://api.open-meteo.com/v1/forecast?latitude=...`</span>);</span>
+<span>            <span class="cmt">// 2. 把响应体解析成 JSON 对象</span></span>
+<span>            <span class="kw">const</span> data = <span class="kw">await</span> res.json();</span>
+<span>            <span class="cmt">// 3. 取里面的数据</span></span>
+<span>            <span class="kw">const</span> temp = data.current.temperature_2m;</span>
+<span>            console.log(<span class="str">`当前温度：<span class="hl">${temp}</span>°C`</span>);</span>
+<span>        } <span class="kw">catch</span> (err) {</span>
+<span>            <span class="cmt">// 出错时处理（网络挂了、地址错了等）</span></span>
+<span>            console.error(<span class="str">"请求失败"</span>, err);</span>
+<span>        }</span>
+<span>    }</span></div></pre></div>
+
+<p>模式非常固定，记住就行：<b>await fetch(网址) → await res.json() → 用数据</b>。用 <code>try/catch</code> 包住，出错不崩。</p>
+
+<h2>5. Promise.all：并行等</h2>
+
+<p>有时多个请求互不依赖，可以<b>同时</b>发。rss.xml.ts 真实代码：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> [rResp, bResp] = <span class="kw">await</span> Promise.all([</span>
+<span>        fetch(regularUrl),   <span class="cmt">// 同时发两个请求</span></span>
+<span>        fetch(boldUrl),</span>
+<span>    ]);</span></div></pre></div>
+
+<p><code>Promise.all([...])</code> 接收一个 Promise 数组，等<b>全部</b>完成，结果按顺序放回数组。比一个个 <code>await</code>（串行）快得多。</p>
+
+<h2>6. 更多例子：复制到控制台试</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 例子 1：模拟慢操作，体会 await</span></span>
+<span><span class="kw">async function</span> <span class="fn">demo</span>() {</span>
+<span>    console.log(<span class="str">"开始"</span>);</span>
+<span>    <span class="kw">await</span> <span class="kw">new</span> Promise((resolve) =&gt; setTimeout(resolve, <span class="hl">2000</span>));</span>
+<span>    console.log(<span class="str">"2 秒后继续"</span>);</span>
+<span>}</span>
+<span>demo();</span>
+<span></span>
+<span><span class="cmt">// 例子 2：真的 fetch 一次公共 API（天气）</span></span>
+<span><span class="kw">const</span> url = <span class="str">`https://api.open-meteo.com/v1/forecast?latitude=31.23&amp;longitude=121.47&amp;current=temperature_2m`</span>;</span>
+<span><span class="kw">const</span> res = <span class="kw">await</span> fetch(url);</span>
+<span><span class="kw">const</span> data = <span class="kw">await</span> res.json();</span>
+<span>console.log(<span class="str">`上海现在：<span class="hl">${data.current.temperature_2m}</span>°C`</span>);</span></div></pre></div>
+
+<div class="callout good">
+<p><b>在浏览器控制台：</b>顶级代码也支持 <code>await</code>（这叫 Top-level await），直接粘就行。成功后你能看到上海温度——这就是 <code>about.astro</code> 里天气面板的原理。</p>
+</div>
+
+<h2>7. 练习</h2>
+
+<div class="quiz" data-q="async 函数返回的一定是什么？">
+  <button data-answer>普通字符串对象</button>
+  <button data-answer>null 空值</button>
+  <button data-answer data-correct>Promise 对象</button>
+</div>
+
+<div class="quiz" data-q="await 的作用是什么？">
+  <button data-answer>启动一个定时器</button>
+  <button data-answer data-correct>暂停直到 Promise 完成取出值</button>
+  <button data-answer>把同步代码变异步</button>
+</div>
+
+<div class="quiz" data-q="Promise.all 的作用是？">
+  <button data-answer>串行执行，一个个等</button>
+  <button data-answer>只要一个成功就返回</button>
+  <button data-answer data-correct>并行等全部完成取数组</button>
+</div>
+
+<h2>8. 接下来你该做的</h2>
+
+<ol>
+<li><b>在控制台跑"例子 2"</b>，看到上海温度你就真的懂 fetch + await 了。</li>
+<li><b>读权威资料：</b><a href="https://zh.javascript.info/async-await">JavaScript.info：async/await</a>（中文）。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<div class="callout warn">
+<p><b>如果还是绕：</b>异步是少数需要"多碰几次"的概念。可以先往下学（后面 ASTRO/Svelte 还会反复用到），回头再看它一遍。卡住了随时问我。</p>
+</div>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0007 · 下一课预告：DOM 与浏览器事件——addEventListener、querySelector，读 code-copy-utils.ts 里真实的复制按钮逻辑。</p>
+
+</body>
+</html>

@@ -1,0 +1,135 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0006 — 模块与 import/export</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0006 · 模块与 import/export</h1>
+
+<p>博客有几百个文件。它们靠 <code>import</code> / <code>export</code> 连接成一张网。这一课帮你彻底搞懂这个"文件连接"机制——它是读懂任何大型项目的钥匙。</p>
+<p><b>今天这节课的收获：</b>能看懂任何文件的顶部 import 区，并知道"我要找的功能在哪个文件里"。</p>
+
+<h2>1. export：文件向外"开门"</h2>
+
+<p>一个文件想把自己的一部分（变量/函数/类型）给别人用，就 <code>export</code> 出去：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// ===== utils/date-utils.ts 文件内部 =====</span></span>
+<span><span class="kw">export function</span> <span class="fn">formatDateI18n</span>(dateString: string): string { ... }</span>
+<span><span class="kw">export function</span> <span class="fn">formatDateToYYYYMMDD</span>(date: Date): string { ... }</span>
+<span></span>
+<span><span class="cmt">// 也可以 export 一个常量、一个类型、一个对象</span></span>
+<span><span class="kw">export const</span> SITE_NAME = <span class="str">"Firefly"</span>;</span>
+<span><span class="kw">export type</span> Tag = { name: string; count: number };</span>
+<span><span class="kw">export const</span> siteConfig = { title: <span class="str">"Firefly"</span> };</span></div></pre></div>
+
+<h2>2. import：别的文件进来"拿"</h2>
+
+<p>另一个文件想用它们，就 <code>import</code>：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// ===== 某个页面/组件里 =====</span></span>
+<span><span class="kw">import</span> { formatDateI18n, formatDateToYYYYMMDD } <span class="kw">from</span> <span class="str">"@/utils/date-utils"</span>;</span>
+<span><span class="kw">import</span> { siteConfig } <span class="kw">from</span> <span class="str">"@/config"</span>;</span>
+<span><span class="kw">import type</span> { Tag } <span class="kw">from</span> <span class="str">"@/utils/content-utils"</span>;</span>
+<span></span>
+<span><span class="cmt">// 用起来——跟本文件定义的没区别</span></span>
+<span><span class="kw">const</span> date = formatDateI18n(<span class="str">"2026-08-16"</span>);</span>
+<span>console.log(siteConfig.title);</span></div></pre></div>
+
+<div class="callout">
+<p><b>理解 import 的关键：</b>它不只是"复制代码"，而是建立<b>引用</b>。import 一个函数，你就拿到了它在原文件里那个"本体"的入口。整个项目运行时，这些 import 连成一张依赖图——一个文件改了，所有 import 它的地方都受影响。</p>
+</div>
+
+<h2>3. 三种 import 形式</h2>
+
+<table>
+<tr><th>写法</th><th>什么时候用</th><th>举例</th></tr>
+<tr><td><code>import { a, b } from "..."</code></td><td>导入具名导出（最常用）</td><td>date-utils 的函数</td></tr>
+<tr><td><code>import X from "..."</code></td><td>导入默认导出（一个文件只有一个 default）</td><td>Icon、组件等</td></tr>
+<tr><td><code>import type { T } from "..."</code></td><td>只导入类型标注（编译后被擦掉）</td><td>Tag、SiteConfig</td></tr>
+<tr><td><code>import * as X from "..."</code></td><td>导入该文件所有导出</td><td>偶尔用</td></tr>
+</table>
+
+<h3>默认导出 vs 具名导出</h3>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 文件 A：默认导出 + 具名导出</span></span>
+<span><span class="kw">export default function</span> <span class="fn">Layout</span>() { ... }   <span class="cmt">// default：一个文件一个</span></span>
+<span><span class="kw">export const</span> theme = <span class="str">"dark"</span>;          <span class="cmt">// 具名导出</span></span>
+<span></span>
+<span><span class="cmt">// 文件 B：引入</span></span>
+<span><span class="kw">import</span> Layout <span class="kw">from</span> <span class="str">"@/layouts/Layout"</span>;  <span class="cmt">// default 导入，名字随意起</span></span>
+<span><span class="kw">import</span> { theme } <span class="kw">from</span> <span class="str">"@/layouts/Layout"</span>; <span class="cmt">// 具名导入，名字必须一致</span></span></div></pre></div>
+
+<div class="callout good">
+<p><b>记忆：</b>default 像一个文件的"主打款"，import 时可以重命名；具名导出像"货架上标好名字的商品"，import 时名字必须对得上。</p>
+</div>
+
+<h2>4. 别名 @/ 是什么</h2>
+
+<p>你会在 import 里看到 <code>@/config</code>、<code>@i18n/...`</code>、<code>@components/...`</code>。这是项目配置的<b>路径别名</b>：</p>
+<ul>
+<li><code>@/</code> 通常指向 <code>src/</code> 目录——<code>@/utils/date-utils</code> = <code>src/utils/date-utils.ts</code></li>
+<li>好处：不用写一长串 <code>../../../</code> 相对路径，也不怕移动文件时路径断掉</li>
+<li>配置在 <code>tsconfig.json</code> / <code>astro.config.mjs</code> 里，你只需要知道它是个"快捷方式"</li>
+</ul>
+
+<h2>5. 真实例子：看 date-utils.ts 顶部</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">import</span> { siteConfig } <span class="kw">from</span> <span class="str">"../config"</span>;</span>
+<span></span>
+<span><span class="kw">export function</span> <span class="fn">formatDateI18n</span>(dateString: string): string {</span>
+<span>    <span class="kw">const</span> lang = siteConfig.lang || <span class="str">"en"</span>;  <span class="cmt">// 用了 import 进来的配置</span></span>
+<span>    <span class="kw">return</span> date.toLocaleDateString(locale, options);</span>
+<span>}</span></div></pre></div>
+
+<p>date-utils 自己 import 了 <code>siteConfig</code>（从 <code>src/config/index.ts</code> 汇总导出），再用它读语言设置。这就是"配置集中管理，各处引用"的典型模式。</p>
+
+<h2>6. 更多例子：复制到控制台试</h2>
+
+<p>浏览器控制台也支持模块（注意要写成 <code>import(...)</code> 动态导入）：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="cmt">// 动态导入一个已有的库（比如 dayjs，博客里用到）</span></span>
+<span><span class="kw">const</span> dayjs = <span class="kw">await</span> import(<span class="str">"dayjs"</span>);</span>
+<span>console.log(dayjs.default().format(<span class="str">"YYYY-MM-DD"</span>)); <span class="cmt">// 今天的日期</span></span>
+<span></span>
+<span><span class="cmt">// 或者自己造一个小模块体验一下 export/import</span></span>
+<span><span class="kw">const</span> utilModule = <span class="kw">await</span> import(<span class="str">"data:text/javascript;base64,"</span> + btoa(<span class="str">"export const double = (n) =&gt; n * 2;"</span>));</span>
+<span>console.log(utilModule.double(<span class="hl">21</span>)); <span class="cmt">// 42</span></span></div></pre></div>
+
+<h2>7. 练习</h2>
+
+<div class="quiz" data-q="一个文件里可以有几个 default 导出？">
+  <button data-answer>和具名导出一样多</button>
+  <button data-answer data-correct>只能有一个</button>
+  <button data-answer>没有数量限制</button>
+</div>
+
+<div class="quiz" data-q="import { theme } from ... 的 theme 名字必须？">
+  <button data-answer>随便起一个都行</button>
+  <button data-answer data-correct>和原文件 export 的名字一致</button>
+  <button data-answer>加个前缀如 myTheme</button>
+</div>
+
+<div class="quiz" data-q="路径别名 @/utils/date-utils 通常指哪里？">
+  <button data-answer>根目录 utils 文件夹</button>
+  <button data-answer data-correct>src/utils/date-utils.ts</button>
+  <button data-answer>node_modules 里的包</button>
+</div>
+
+<h2>8. 接下来你该做的</h2>
+
+<ol>
+<li><b>随机打开博客的几个文件看顶部 import</b>——数一数它们从哪些文件拿了东西。</li>
+<li><b>读权威资料：</b><a href="https://zh.javascript.info/modules-intro">JavaScript.info：模块</a>（中文，读前三节即可）。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0006 · 下一课预告：异步编程——async/await 与 Promise，rss.xml.ts 里"并行请求 + 等待"的真实代码。</p>
+
+</body>
+</html>

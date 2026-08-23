@@ -1,0 +1,151 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0005 — 数组与数组方法</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0005 · 数组与数组方法</h1>
+
+<p>数组你应该认识（Python 的 list、Java 的 array）。但 JS 数组有一整套<b>链式方法</b>——<code>map</code>、<code>filter</code>、<code>find</code>、<code>sort</code>、<code>forEach</code>——它们是博客代码里最最常见的处理手段。这课我们把 content-utils.ts 里真实的数组代码全讲一遍。</p>
+<p><b>今天这节课的收获：</b>能看懂"遍历文章列表、统计标签、排序"这类代码。</p>
+
+<h2>1. 五个必会方法</h2>
+
+<table>
+<tr><th>方法</th><th>干什么</th><th>返回</th><th>回调</th></tr>
+<tr><td><code>arr.map(fn)</code></td><td>每个元素变一个"新值"</td><td>等长新数组</td><td>return 新值</td></tr>
+<tr><td><code>arr.filter(fn)</code></td><td>留下满足条件的元素</td><td>变短的新数组</td><td>return 布尔</td></tr>
+<tr><td><code>arr.find(fn)</code></td><td>找到第一个满足的</td><td>单个元素 / undefined</td><td>return 布尔</td></tr>
+<tr><td><code>arr.sort(fn)</code></td><td>排序（会改原数组）</td><td>原数组</td><td>return 比较数</td></tr>
+<tr><td><code>arr.forEach(fn)</code></td><td>逐个"看一眼"不返回值</td><td>undefined</td><td>做副作用</td></tr>
+</table>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> posts = [</span>
+<span>    { title: <span class="str">"A"</span>, pinned: <span class="hl">true</span>, views: <span class="hl">10</span> },</span>
+<span>    { title: <span class="str">"B"</span>, pinned: <span class="hl">false</span>, views: <span class="hl">5</span> },</span>
+<span>    { title: <span class="str">"C"</span>, pinned: <span class="hl">false</span>, views: <span class="hl">20</span> },</span>
+<span>];</span>
+<span></span>
+<span><span class="cmt">// map：每个元素 → 新值（只留 title）</span></span>
+<span><span class="kw">const</span> titles = posts.map((p) =&gt; p.title);</span>
+<span>console.log(titles); <span class="cmt">// ['A', 'B', 'C']</span></span>
+<span></span>
+<span><span class="cmt">// filter：留下 views &gt; 8 的</span></span>
+<span><span class="kw">const</span> hot = posts.filter((p) =&gt; p.views &gt; <span class="hl">8</span>);</span>
+<span>console.log(hot.length); <span class="cmt">// 2</span></span>
+<span></span>
+<span><span class="cmt">// find：找第一个 pinned 的</span></span>
+<span><span class="kw">const</span> first = posts.find((p) =&gt; p.pinned);</span>
+<span>console.log(first?.title); <span class="cmt">// A</span></span></div></pre></div>
+
+<div class="callout good">
+<p><b>记忆口诀：</b>map = 变形，filter = 筛选，find = 找第一个，sort = 排序，forEach = 走一遍。五个回调都是箭头函数，参数就是"当前元素"。</p>
+</div>
+
+<h2>2. sort 的特殊性</h2>
+
+<p>content-utils.ts 里 <code>getRawSortedPosts</code> 用的就是 sort：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> sorted = allBlogPosts.sort((a, b) =&gt; {</span>
+<span>        <span class="cmt">// 置顶文章在前</span></span>
+<span>        <span class="kw">if</span> (a.data.pinned &amp;&amp; !b.data.pinned) <span class="kw">return</span> -<span class="hl">1</span>;</span>
+<span>        <span class="kw">if</span> (!a.data.pinned &amp;&amp; b.data.pinned) <span class="kw">return</span> <span class="hl">1</span>;</span>
+<span></span>
+<span>        <span class="cmt">// 再按日期排（新的在前）</span></span>
+<span>        <span class="kw">const</span> dateA = <span class="kw">new</span> Date(a.data.published);</span>
+<span>        <span class="kw">const</span> dateB = <span class="kw">new</span> Date(b.data.published);</span>
+<span>        <span class="kw">return</span> dateA &gt; dateB ? -<span class="hl">1</span> : <span class="hl">1</span>;</span>
+<span>    });</span></div></pre></div>
+
+<p>sort 的回调拿两个元素 <code>a</code>、<code>b</code>：返回<b>负数</b>表示 a 排在 b 前，<b>正数</b>表示 a 排在 b 后，<b>0</b> 表示相等。这段代码：先比置顶，置顶相同再比日期。</p>
+
+<h2>3. 真实案例：统计标签</h2>
+
+<p>这是 <code>getTagList</code> 的核心，把三种技术组合起来：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span>    <span class="kw">const</span> countMap: { [key: string]: number } = {};</span>
+<span>    <span class="cmt">// 1. forEach：遍历所有文章</span></span>
+<span>    allBlogPosts.forEach((post) =&gt; {</span>
+<span>        <span class="cmt">// 2. 再遍历这篇文章的所有标签</span></span>
+<span>        post.data.tags.forEach((tag) =&gt; {</span>
+<span>            <span class="cmt">// 3. 统计：没见过的标签初始化为 0，然后 +1</span></span>
+<span>            <span class="kw">if</span> (!countMap[tag]) countMap[tag] = <span class="hl">0</span>;</span>
+<span>            countMap[tag]++;</span>
+<span>        });</span>
+<span>    });</span>
+<span></span>
+<span>    <span class="cmt">// 4. Object.keys 取出所有标签名，再 sort 排序</span></span>
+<span>    <span class="kw">const</span> keys = Object.keys(countMap).sort((a, b) =&gt;</span>
+<span>        a.toLowerCase().localeCompare(b.toLowerCase()),</span>
+<span>    );</span>
+<span></span>
+<span>    <span class="cmt">// 5. map：把 { 标签名: 次数 } 变成 [{ name, count }] 数组</span></span>
+<span>    <span class="kw">return</span> keys.map((key) =&gt; ({ name: key, count: countMap[key] }));</span>
+<span>}</span></div></pre></div>
+
+<div class="callout">
+<p><b>读法：</b>这段就是"<b>把所有文章的标签全数一遍</b>"。countMap 是一个对象，属性名 = 标签名，属性值 = 出现次数。最后 map 成规范数组返回。map/filter 常和对象"形状转换"搭配：数据进来是一种样子，map 成另一种样子出去。</p>
+</div>
+
+<h2>4. 更多例子：复制到控制台试</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> nums = [<span class="hl">1</span>, <span class="hl">2</span>, <span class="hl">3</span>, <span class="hl">4</span>, <span class="hl">5</span>];</span>
+<span></span>
+<span><span class="cmt">// map：平方</span></span>
+<span>console.log(nums.map((n) =&gt; n * n));        <span class="cmt">// [1,4,9,16,25]</span></span>
+<span></span>
+<span><span class="cmt">// filter：偶数</span></span>
+<span>console.log(nums.filter((n) =&gt; n % <span class="hl">2</span> === <span class="hl">0</span>)); <span class="cmt">// [2,4]</span></span>
+<span></span>
+<span><span class="cmt">// 链式：先 filter 再 map</span></span>
+<span>console.log(</span>
+<span>    nums.filter((n) =&gt; n % <span class="hl">2</span> === <span class="hl">0</span>).map((n) =&gt; n * <span class="hl">10</span>), <span class="cmt">// [20,40]</span></span>
+<span>);</span>
+<span></span>
+<span><span class="cmt">// sort：注意要传比较函数，否则按字符串排</span></span>
+<span>console.log([<span class="hl">10</span>, <span class="hl">2</span>, <span class="hl">33</span>].sort());          <span class="cmt">// [10,2,33]（错了！）</span></span>
+<span>console.log([<span class="hl">10</span>, <span class="hl">2</span>, <span class="hl">33</span>].sort((a,b)=&gt;a-b)); <span class="cmt">// [2,10,33]</span></span></div></pre></div>
+
+<div class="callout warn">
+<p><b>经典坑：</b><code>sort()</code> 不传参数时按<b>字符串</b>排，<code>[10,2,33]</code> 会排成 <code>[10,2,33]</code>。数字排序永远要传 <code>(a,b) =&gt; a - b</code>。</p>
+</div>
+
+<h2>5. 练习</h2>
+
+<div class="quiz" data-q="map 方法对数组每个元素做什么？">
+  <button data-answer>删除不满足条件的元素</button>
+  <button data-answer data-correct>把每个元素变成一个新值</button>
+  <button data-answer>让原数组原地翻转</button>
+</div>
+
+<div class="quiz" data-q="filter 的回调函数需要返回什么？">
+  <button data-answer>一个新对象</button>
+  <button data-answer>数组的下标</button>
+  <button data-answer data-correct>布尔值 true/false</button>
+</div>
+
+<div class="quiz" data-q="sort((a,b) =&gt; a - b) 对 [10,2,33] 的结果是？">
+  <button data-answer data-correct>升序 [2,10,33]</button>
+  <button data-answer>降序 [33,10,2]</button>
+  <button data-answer>保持原样不变</button>
+</div>
+
+<h2>6. 接下来你该做的</h2>
+
+<ol>
+<li><b>打开 content-utils.ts 读 <code>getTagList</code> 和 <code>getSortedPosts</code></b>——现在你应该能读懂它们的全部逻辑。</li>
+<li><b>读权威资料：</b><a href="https://zh.javascript.info/array-methods">JavaScript.info：数组方法</a>（中文，重点看 map/filter/find/sort）。</li>
+<li><b>动手：</b>在控制台把上面"更多例子"自己敲一遍，改几个数字。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0005 · 下一课预告：模块与 import/export——博客里成百个文件是怎么"互相引用"起来的。</p>
+
+</body>
+</html>

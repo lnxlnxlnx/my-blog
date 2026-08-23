@@ -1,0 +1,125 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0009 — Astro 文件结构</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<script defer src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<h1>Lesson 0009 · Astro 文件结构</h1>
+
+<p>现在你把 JS 基础打牢了，可以正式进入博客的核心了。Astro 是一个<b>静态站点生成器</b>：写页面时用 JS 生成数据，构建时把它"烤"成纯 HTML 文件（所以加载飞快）。.astro 文件就是把"JS 逻辑 + HTML 模板"写在同一个文件里。</p>
+<p><b>今天这节课的收获：</b>能读懂任意一个 .astro 页面，知道它的"三段式"结构。</p>
+
+<h2>1. .astro 文件的三段式</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span>---</span>
+<span><span class="cmt">// 第 1 段：frontmatter（脚本区）</span></span>
+<span><span class="cmt">// 放 import、从数据源取数据、做计算</span></span>
+<span><span class="kw">import</span> { getEntry } <span class="kw">from</span> <span class="str">"astro:content"</span>;</span>
+<span><span class="kw">import</span> MainGridLayout <span class="kw">from</span> <span class="str">"@/layouts/MainGridLayout.astro"</span>;</span>
+<span></span>
+<span><span class="kw">const</span> aboutPost = <span class="kw">await</span> getEntry(<span class="str">"spec"</span>, <span class="str">"about"</span>);</span>
+<span>---</span>
+<span></span>
+<span><span class="cmt">&lt;!-- 第 2 段：HTML 模板（可以用 JS 变量） --&gt;</span></span>
+<span>&lt;MainGridLayout title={aboutPost.data.title}&gt;</span>
+<span>    &lt;h1&gt;{aboutPost.data.title}&lt;/h1&gt;</span>
+<span>    &lt;p&gt;这篇文章写于 {aboutPost.data.date}&lt;/p&gt;</span>
+<span>&lt;/MainGridLayout&gt;</span>
+<span></span>
+<span><span class="cmt">&lt;!-- 第 3 段：<script> 里是浏览器端交互 JS --&gt;</span></span>
+<span>&lt;script&gt;</span>
+<span>    document.getElementById(<span class="str">"btn"</span>).addEventListener(<span class="str">"click"</span>, ...);</span>
+<span>&lt;/script&gt;</span></div></pre></div>
+
+<div class="callout good">
+<p><b>核心区别（必须记住）：</b>第 1 段在<b>构建时</b>运行（服务器上跑一次，生成数据）；第 3 段 <code>&lt;script&gt;</code> 在<b>浏览器里</b>运行（用户打开页面时执行）。第 1 段里能 <code>await</code> 读数据、碰文件；第 3 段里能碰 <code>document</code>、<code>localStorage</code>。</p>
+</div>
+
+<h2>2. 读真实代码：about.astro 开头</h2>
+
+<div class="code-block"><pre><div class="code-lines"><span>---</span>
+<span><span class="kw">import</span> { getEntry, render } <span class="kw">from</span> <span class="str">"astro:content"</span>;</span>
+<span><span class="kw">import</span> Markdown <span class="kw">from</span> <span class="str">"@components/misc/Markdown.astro"</span>;</span>
+<span><span class="kw">import</span> MainGridLayout <span class="kw">from</span> <span class="str">"@/layouts/MainGridLayout.astro"</span>;</span>
+<span></span>
+<span><span class="kw">const</span> aboutPost = <span class="kw">await</span> getEntry(<span class="str">"spec"</span>, <span class="str">"about"</span>);</span>
+<span><span class="kw">if</span> (!aboutPost) {</span>
+<span>    <span class="kw">throw</span> <span class="kw">new</span> Error(<span class="str">"About page content not found"</span>);</span>
+<span>}</span>
+<span></span>
+<span><span class="kw">const</span> { Content } = <span class="kw">await</span> render(aboutPost);</span>
+<span>---</span></div></pre></div>
+
+<ul>
+<li><code>getEntry("spec", "about")</code>：从内容集合里取"关于"页的内容（第 2 段会读到它）</li>
+<li><code>if (!aboutPost) throw</code>：找不到就抛错，构建失败——这是"数据不满足就不发布"的防御</li>
+<li><code>await render(aboutPost)</code>：把 Markdown 渲染成可显示的 <code>Content</code> 组件</li>
+</ul>
+
+<p>看，全是第七课的 await + import。你已经全会了。</p>
+
+<h2>3. 模板里的 {} 和动态渲染</h2>
+
+<p>第 2 段 HTML 里，<code>{表达式}</code> 会插入 JS 结果。博客列表页会配合数组方法（第五课）循环渲染：</p>
+
+<div class="code-block"><pre><div class="code-lines"><span><span class="kw">const</span> posts = <span class="kw">await</span> getSortedPostsList();</span>
+<span>---</span>
+<span>&lt;ul&gt;</span>
+<span>    {posts.map((post) =&gt; (</span>
+<span>        &lt;li&gt;&lt;a href={post.url}&gt;{post.data.title}&lt;/a&gt;&lt;/li&gt;</span>
+<span>    ))}</span>
+<span>    &lt;span&gt;共 {posts.length} 篇&lt;/span&gt;</span>
+<span>&lt;/ul&gt;</span></div></pre></div>
+
+<p><code>posts.map(...)</code> 把每篇文章变成一个 <code>&lt;li&gt;</code>。这就是"数据 → 页面"的魔法：你写的 JS 在构建时批量生成 HTML。</p>
+
+<h2>4. 更多例子：看看项目里还有什么</h2>
+
+<p>打开 <code>src/pages/</code> 目录，你会看到：</p>
+<ul>
+<li><code>about.astro</code>、<code>archive.astro</code>、<code>friends.astro</code> 等——每个 URL 对应一个页面</li>
+<li><code>[...page].astro</code> —— 动态路由（文件名带 <code>[]</code> 表示参数化，如翻页页码）</li>
+<li><code>rss.xml.ts</code>、<code>robots.txt.ts</code> —— 特殊文件，用 TS 生成 XML/txt 响应</li>
+<li><code>src/layouts/</code> —— 布局组件（页面共用的骨架）</li>
+</ul>
+
+<p>花 5 分钟打开几个 .astro 文件，只读它们的 <code>---</code> 段，找找 import 和 await。</p>
+
+<h2>5. 练习</h2>
+
+<div class="quiz" data-q=".astro 文件第 1 段（frontmatter）什么时候运行？">
+  <button data-answer>用户打开页面时</button>
+  <button data-answer data-correct>构建时在服务器上跑</button>
+  <button data-answer>浏览器每次滚动时</button>
+</div>
+
+<div class="quiz" data-q=".astro 文件里 <script> 标签的 JS 什么时候运行？">
+  <button data-answer data-correct>浏览器里用户打开页面时</button>
+  <button data-answer>构建打包时运行一次</button>
+  <button data-answer>永远不会运行</button>
+</div>
+
+<div class="quiz" data-q="模板里 {posts.map(...)} 的作用是？">
+  <button data-answer>在控制台打印文章</button>
+  <button data-answer data-correct>把每篇变成一段 HTML</button>
+  <button data-answer>给数组排序</button>
+</div>
+
+<h2>6. 接下来你该做的</h2>
+
+<ol>
+<li><b>打开 about.astro 完整读一遍</b>——现在你能看懂它的三段式了（第 2 段的 HTML/Tailwind 类先不管，重点看结构和 script）。</li>
+<li><b>读权威资料：</b><a href="https://docs.astro.build/zh-cn/basics/astro-pages/">Astro 官方文档：页面（中文）</a>。</li>
+<li><b>有问题就问我。</b></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted); font-size:0.85rem;">Lesson 0009 · 下一课预告：Svelte 组件——响应式的 .svelte 文件，读 LightDarkSwitch.svelte。</p>
+
+</body>
+</html>
