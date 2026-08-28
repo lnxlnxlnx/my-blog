@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0001 · 从 STM32 到 ESP32：开发模型</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>从 STM32 到 ESP32：开发模型</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0001 · 预计 15 分钟</p>
+
+<p>你已经会 STM32 + C。这一课只做一件事:<strong>把你知道的 STM32 开发模型,翻译成 ESP32 的世界</strong>。翻译通了,后面看 xiaozhi 的代码就顺了。</p>
+
+<h2>知识点 1:入口函数——main() 变成 app_main()</h2>
+<p>STM32 里你写 <code>main()</code>,然后自己管理 <code>while(1)</code> 和中断。ESP-IDF 里入口是 <code>app_main()</code>,它<strong>由系统调用</strong>,而且返回后程序并不会退出——FreeRTOS 调度器已经接管了一切。</p>
+<pre lang="c" class="highlight"><span style="color: #008000">// STM32:你熟悉的写法</span>
+<span style="color: #00F">int</span> <span style="color: #795E26">main</span><span style="color: #000">(</span><span style="color: #00F">void</span><span style="color: #000">) {</span>
+    <span style="color: #795E26">HAL_Init</span><span style="color: #000">();</span>
+    <span style="color: #795E26">while</span> <span style="color: #000">(1) {</span>
+        <span style="color: #795E26">HAL_Delay</span><span style="color: #000">(</span><span style="color: #098658">500</span><span style="color: #000">);</span>
+    <span style="color: #000">}</span>
+<span style="color: #000">}</span>
+</pre>
+<pre lang="c" class="highlight"><span style="color: #008000">// ESP-IDF:入口换了个名字,而且不用 while(1)</span>
+<span style="color: #00F">void</span> <span style="color: #795E26">app_main</span><span style="color: #000">(</span><span style="color: #00F">void</span><span style="color: #000">) {</span>
+    <span style="color: #795E26">xTaskCreate</span><span style="color: #000">(task_led,</span> <span style="color: #A31515">&quot;led&quot;</span><span style="color: #000">,</span> <span style="color: #098658">2048</span><span style="color: #000">,</span> <span style="color: #00F">NULL</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #00F">NULL</span><span style="color: #000">);</span>
+    <span style="color: #008000">// app_main 返回后,任务继续跑</span>
+<span style="color: #000">}</span>
+</pre>
+<p>关键点:<code>app_main</code> 里几乎全是「<strong>创建任务 + 订阅事件</strong>」,不做长时间循环。这就是为什么 xiaozhi 的 <code>app_main</code> 看起来"什么都没干"——它把活都交给了任务。</p>
+
+<h2>知识点 2:工程组织——从"工程"到"组件"</h2>
+<p>STM32 工程里,文件按功能摊开;IDF 里一切按<strong>组件(component)</strong>组织。每个组件 = 一个目录,有自己的 <code>CMakeLists.txt</code>,可以被多个项目复用。</p>
+<pre lang="text" class="highlight"><span style="color: #001080">my_project/</span>
+<span style="color: #000">├── CMakeLists.txt</span>          <span style="color: #008000"># 项目入口:PROJECT(my_project)</span>
+<span style="color: #000">├── main/</span>
+<span style="color: #000">│   ├── CMakeLists.txt</span>      <span style="color: #008000"># 声明 main 组件</span>
+<span style="color: #000">│   └── main.c</span>              <span style="color: #008000"># app_main() 在这</span>
+<span style="color: #000">├── sdkconfig</span>               <span style="color: #008000"># menuconfig 产物(自动生成,不进 git)</span>
+<span style="color: #000">└── components/</span>             <span style="color: #008000"># 可选:自己拆的组件</span>
+</pre>
+<p>看 xiaozhi 时你会发现它把 <code>boards/</code>、<code>audio/</code>、<code>protocols/</code> 都拆成了组件——这就是 IDF 的模块化。</p>
+
+<h2>知识点 3:配置——CubeMX 变 menuconfig</h2>
+<p>CubeMX 图形化配置引脚/时钟,生成代码;IDF 用 <code>menuconfig</code>(Kconfig)在终端里配,产物是纯文本 <code>sdkconfig</code>——<strong>文本才能进 git、能 diff</strong>。选开发板、开蓝牙、定分区表,全在这。</p>
+
+<h2>动手:点亮第一颗 LED</h2>
+<p>用你仓库里现成的 <code>basic_routines/00_basic</code>(点灯例程):</p>
+<pre lang="bash" class="highlight"><span style="color: #795E26">cd</span> ~/mcu_study/esp_study/basic_routines/00_basic
+<span style="color: #795E26">source</span> ~/esp/esp-idf-v5.5-rc1/export.sh
+<span style="color: #795E26">idf.py</span> set-target esp32s3
+<span style="color: #795E26">idf.py</span> -p /dev/ttyUSB0 flash monitor
+</pre>
+<p>预期串口日志出现 <code>hello world</code> 和周期性打印。然后打开 <code>main/main.c</code>,<strong>找出三个 API</strong>:GPIO 初始化、延时、日志打印分别调用了什么函数?写下来,下一课逐个翻译成 STM32 术语。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">ESP-IDF 的代码入口函数叫什么?</p>
+  <button class="opt" data-ok="true">app_main</button>
+  <button class="opt" data-ok="false">main</button>
+  <button class="opt" data-ok="false">setup</button>
+  <p class="reveal">app_main(),由系统调用;返回后 FreeRTOS 调度器继续跑。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">menuconfig 生成的配置文件是?</p>
+  <button class="opt" data-ok="true">sdkconfig</button>
+  <button class="opt" data-ok="false">config.h</button>
+  <button class="opt" data-ok="false">cube.ini</button>
+  <p class="reveal">sdkconfig,纯文本,可以进 git、可以 diff。</p>
+</div>
+<div class="quiz">
+  <h3>Q3</h3>
+  <p class="q">看 xiaozhi 时,最该先认识的组件目录是?</p>
+  <button class="opt" data-ok="true">boards</button>
+  <button class="opt" data-ok="false">utils</button>
+  <button class="opt" data-ok="false">docs</button>
+  <p class="reveal">boards/,每块开发板一个目录,是"看懂板级抽象"的入口。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《Get Started》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/index.html">ESP-IDF 文档</a>):环境装好后把「Hello World」例程自己跑一遍,体会 <code>idf.py build / flash / monitor</code> 三板斧。看完前 20 分钟就够本课用了。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:你的 <code>main.c</code> 里 GPIO 初始化用的是哪个函数?下一课我们看<strong>组件与构建系统</strong>——CMakeLists 怎么拼出整个工程,<code>sdkconfig</code> 怎么被消费。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-组件与构建系统.html">下一篇:组件与构建系统 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

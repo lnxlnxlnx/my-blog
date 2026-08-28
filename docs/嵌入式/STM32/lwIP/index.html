@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lwIP 网络协议栈 — 课程总览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="course-hero">
+  <h1>lwIP 网络协议栈（原理 + 三套编程接口 + 物联网上云）</h1>
+  <p class="subtitle">STM32F407 探索者 + LAN8720A · 主线教材：正点原子《lwIP 开发指南 V1.7》（lwIP 2.1.3）· 原理与应用并重</p>
+</div>
+
+<div class="goal">
+  <p><strong>课程使命：</strong>逐层看懂 ARP/IP/ICMP/TCP 协议原理与 lwIP 源码，熟练使用 RAW / NETCONN / Socket 三套接口，打通 MQTT 上云，组合成完整联网产品。教材在 <a href="MISSION.md">MISSION.md</a>，资源在 <a href="RESOURCES.md">RESOURCES.md</a>。</p>
+</div>
+
+<h2>课程地图（15 课，五个阶段）</h2>
+<p>每课一个独立页面，含知识讲解 + 源码分析 + 自测 + 真机练习。实验环境：网线直连电脑（MQTT 上云需联网环境补做）。🟡 进行中 · ⬜ 未开始</p>
+
+<h3>阶段一：入门与移植</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">01</span> lwIP 初探<span class="stage"> · 第 1 章</span>
+    <div class="desc">TCP/IP 四层模型与封包拆包、lwIP 实现范围、源码结构、STM32 MAC + LAN8720A 硬件链路
+      <a href="lessons/0001-lwip-intro.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">02</span> 无操作系统移植<span class="stage"> · 第 2 章</span>
+    <div class="desc">以太网 DMA 描述符、网卡驱动、lwIP 源文件与 arch 修改，第一次 ping 通开发板（PDF p.32） <a href="lessons/0002-baremetal-porting.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">03</span> 带 FreeRTOS 移植<span class="stage"> · 第 3 章</span>
+    <div class="desc">lwipopts.h 修改、sys_arch 线程封装、tcpip_thread 模式，跑在 FreeRTOS 上（PDF p.88） <a href="lessons/0003-freertos-porting.html">→ 上课</a></div></li>
+</ul>
+
+<h3>阶段二：协议栈内核</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">04</span> 内存管理<span class="stage"> · 第 4 章</span>
+    <div class="desc">内存堆 mem.c / 内存池 memp.c / C 库策略，三种方案与选型（PDF p.164） <a href="lessons/0004-memory-management.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">05</span> 网络接口与数据包<span class="stage"> · 第 5/6 章</span>
+    <div class="desc">netif 结构、pbuf 结构与协议层间数据操作（PDF p.181/186） <a href="lessons/0005-netif-and-pbuf.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">06</span> 协议栈内核机制<span class="stage"> · 第 7 章</span>
+    <div class="desc">数据接收流程、超时处理、tcpip_thread、消息传递（PDF p.196） <a href="lessons/0006-kernel-internals.html">→ 上课</a></div></li>
+</ul>
+
+<h3>阶段三：协议原理</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">07</span> ARP 协议<span class="stage"> · 第 8 章</span>
+    <div class="desc">工作流程、缓存超时、报文结构、请求应答源码解析（PDF p.215） <a href="lessons/0007-arp-protocol.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">08</span> IP 与 ICMP 协议<span class="stage"> · 第 9/10 章</span>
+    <div class="desc">IP 数据报/分片与重装、输入输出；ICMP 报文类型与差错报文（PDF p.228/247） <a href="lessons/0008-ip-and-icmp.html">→ 上课</a></div></li>
+</ul>
+
+<h3>阶段四：三套编程接口</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">09</span> RAW API · UDP<span class="stage"> · 第 11 章</span>
+    <div class="desc">回调式编程、udp_new/bind/send/recv，UDP 实验（PDF p.260） <a href="lessons/0009-raw-udp.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">10</span> RAW API · TCP<span class="stage"> · 第 12/13 章</span>
+    <div class="desc">三次握手/状态机/控制块，TCP 客户端与服务器实验（PDF p.281/330） <a href="lessons/0010-raw-tcp.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">11</span> NETCONN 接口<span class="stage"> · 第 15~18 章</span>
+    <div class="desc">netbuf/netconn、阻塞式 API，UDP/TCP 实验（PDF p.350） <a href="lessons/0011-netconn-api.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">12</span> Socket 接口<span class="stage"> · 第 19~22 章</span>
+    <div class="desc">BSD Socket 风格 API，UDP/TCP 实验，与 PC 编程对齐（PDF p.373） <a href="lessons/0012-socket-api.html">→ 上课</a></div></li>
+</ul>
+
+<h3>阶段五：应用实战</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">13</span> HTTP 与 NTP 应用<span class="stage"> · 第 14/29/23 章</span>
+    <div class="desc">Web Server（RAW + httpd）、HTTP 协议、NTP 校时实验（PDF p.339/431/396） <a href="lessons/0013-http-and-ntp.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">14</span> 测速与抓包分析<span class="stage"> · 第 24 章</span>
+    <div class="desc">JPerf 测速工具、Wireshark 抓包验证 ARP/TCP/UDP 行为（PDF p.406） <a href="lessons/0014-bandwidth-and-packet-analysis.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">15</span> MQTT 物联网上云<span class="stage"> · 第 25/26 章</span>
+    <div class="desc">MQTT 协议原理、阿里云/OneNET 接入实验（需联网环境）（PDF p.413/425） <a href="lessons/0015-mqtt-cloud.html">→ 上课</a></div></li>
+</ul>
+
+<h2>配套参考</h2>
+<ul>
+  <li>📚 <a href="RESOURCES.md">资源清单</a> — PDF、lwIP 官网、Wireshark、RFC、云平台</li>
+</ul>
+
+<h2>学习进度</h2>
+<table>
+<tr><th>阶段</th><th>课时</th><th>状态</th></tr>
+<tr><td>入门与移植</td><td>01 ~ 03</td><td>全部生成 ✅</td></tr>
+<tr><td>协议栈内核</td><td>04 ~ 06</td><td>已生成 ✅</td></tr>
+<tr><td>协议原理</td><td>07 ~ 08</td><td>已生成 ✅</td></tr>
+<tr><td>三套编程接口</td><td>09 ~ 12</td><td>已生成 ✅</td></tr>
+<tr><td>应用实战</td><td>13 ~ 15</td><td>已生成 ✅</td></tr>
+</table>
+
+<p class="footer-note">学习记录见 <a href="learning-records/">learning-records/</a> · 有问题随时问 Agent 老师</p>
+
+</div>
+</body>
+</html>

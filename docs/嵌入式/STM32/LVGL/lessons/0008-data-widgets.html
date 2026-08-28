@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 8 课：数据展示控件 — LVGL 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 8 课</nav>
+
+<h1>第 8 课：数据展示控件</h1>
+<p class="subtitle">bar / slider / arc / led / chart / meter —— 让数据"看得见"</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课学的是按钮、标签这些"砖块"，本课全是"仪表盘家族"——把裸数值变成进度条、旋钮弧、波形和速度表。学完这套"数据 → 图形"的心法，传感器读数、ADC 采样、剩余电量都能直接画上屏幕，还自带动画和触摸。这是你产品界面里"数据页"的全部底子。</p>
+</div>
+
+<h2>1. bar：把数值变成一段进度</h2>
+
+<p>bar（进度条）是数据展示的地基。创建之后两件事必做：<strong>设范围、设值</strong>。默认范围是 0~100，两个 API 记住就够用（PDF 第 11.2.2 节 <span class="pg">PDF p.178</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> *bar = lv_bar_create(lv_scr_act());
+lv_bar_set_range(bar, <span style="color:#098658">0</span>, <span style="color:#098658">100</span>);              <span style="color:#008000">/* 范围 */</span>
+lv_bar_set_value(bar, <span style="color:#098658">80</span>, LV_ANIM_ON);      <span style="color:#008000">/* 当前值，可带动画 */</span>
+
+<span style="color:#008000">/* 想让填充动起来，先设动画时间（必须在 set_value 之前！） */</span>
+lv_obj_set_style_anim_time(bar, <span style="color:#098658">800</span>, LV_STATE_DEFAULT);</pre>
+
+<ul>
+<li><strong>方向</strong>：bar 不设方向属性，方向由宽高决定——宽度大于高度是水平，反之是垂直（第 11.2.1 节 <span class="pg">PDF p.178</span>）</li>
+<li><strong>模式</strong>：默认 <code>LV_BAR_MODE_NORMAL</code> 从左填起；<code>LV_BAR_MODE_SYMMETRICAL</code> 让范围支持负数，始终从 0 往两边画；<code>LV_BAR_MODE_RANGE</code> 允许设起始值（第 11.2.3 节 <span class="pg">PDF p.179</span>）</li>
+</ul>
+
+<h2>2. slider：能拖的 bar，人机交互的第一步</h2>
+
+<p>slider 就是加了"旋钮"的 bar，用户能直接拖。范围、值、动画的用法和 bar 几乎一样（第 21 章 <span class="pg">PDF p.274</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> *slider = lv_slider_create(lv_scr_act());
+lv_slider_set_range(slider, <span style="color:#098658">0</span>, <span style="color:#098658">255</span>);
+lv_slider_set_value(slider, <span style="color:#098658">128</span>, LV_ANIM_OFF);
+lv_obj_set_size(slider, <span style="color:#098658">220</span>, <span style="color:#098658">20</span>);
+lv_obj_center(slider);
+
+<span style="color:#008000">/* 拖动时读值：LV_EVENT_VALUE_CHANGED 回调里取 */</span>
+lv_obj_add_event_cb(slider, slider_cb, LV_EVENT_VALUE_CHANGED, <span style="color:#098658">NULL</span>);</pre>
+
+<p>回调里用 <code>lv_slider_get_value(slider)</code> 拿当前值（第 21.3 节 <span class="pg">PDF p.276</span>）。两个常用技巧：</p>
+
+<ul>
+<li>模式 <code>LV_SLIDER_MODE_SYMMETRICAL</code>：范围可负，指示器从 0 画到当前值；<code>LV_SLIDER_MODE_RANGE</code>：配合 <code>lv_bar_set_start_value</code> 设起始值（第 21.2.2 节 <span class="pg">PDF p.275</span>）</li>
+<li>禁用"单击跳变"（点哪跳哪，容易误触）：<code>lv_obj_add_flag(slider, LV_OBJ_FLAG_ADV_HITTEST)</code>，之后只能拖动（第 21.2.3 节 <span class="pg">PDF p.276</span>）</li>
+</ul>
+
+<h2>3. arc：旋钮弧 + led：状态灯</h2>
+
+<p>arc（圆弧）像"环形进度条"，值、范围、动画思路同 bar。多出来的是<strong>角度</strong>——注意角度划分：0° 在 3 点钟方向，顺时针增大到 360°（第 10.2.2 节 <span class="pg">PDF p.167</span>）。常用 API：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> *arc = lv_arc_create(lv_scr_act());
+lv_arc_set_range(arc, <span style="color:#098658">0</span>, <span style="color:#098658">100</span>);
+lv_arc_set_value(arc, <span style="color:#098658">60</span>);
+lv_arc_set_bg_angles(arc, <span style="color:#098658">135</span>, <span style="color:#098658">45</span>);   <span style="color:#008000">/* 背景弧起止角（可画成&quot;仪表&quot;样） */</span>
+lv_arc_set_angles(arc, <span style="color:#098658">135</span>, <span style="color:#098658">300</span>);     <span style="color:#008000">/* 前景弧起止角 */</span>
+lv_arc_set_rotation(arc, <span style="color:#098658">0</span>);          <span style="color:#008000">/* 整体旋转 */</span>
+lv_arc_set_mode(arc, LV_ARC_MODE_NORMAL);  <span style="color:#008000">/* NORMAL/REVERSE/SYMMETRIC */</span></pre>
+
+<p>关键坑：前景弧角度范围<strong>不能超出背景弧</strong>，否则显示异常（第 10.2.2 节 <span class="pg">PDF p.168</span>）。当你要把 arc 当"只读进度环"时，旋钮必须拆掉（第 10.2.6 节 <span class="pg">PDF p.170</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">lv_obj_remove_style(arc, <span style="color:#098658">NULL</span>, LV_PART_KNOB);    <span style="color:#008000">/* 移除旋钮 */</span>
+lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);   <span style="color:#008000">/* 不许再拖 */</span></pre>
+
+<p>led 是最省心的"状态灯"：一个圆点，API 就五个（第 30 章 <span class="pg">PDF p.357</span>）。<code>lv_led_set_color</code> 改主体色（默认蓝）、<code>lv_led_set_brightness</code> 调亮度 0~255、<code>lv_led_on/off/toggle</code> 开关——开就是亮度拉到 255，关就是压到最低。</p>
+
+<h2>4. chart：实时波形，仪器仪表的灵魂</h2>
+
+<p>chart 做"示波器"是最经典场景。三步走（第 26.2.1 节 <span class="pg">PDF p.319</span>）：建图 → 加系列 → 喂数据。系列（series）就是一条线/一组柱，一个图可以多条：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> *chart = lv_chart_create(lv_scr_act());
+lv_chart_set_type(chart, LV_CHART_TYPE_LINE);          <span style="color:#008000">/* 折线 / BAR 柱状 */</span>
+lv_chart_set_point_count(chart, <span style="color:#098658">40</span>);                   <span style="color:#008000">/* 默认只有 10 个点 */</span>
+
+<span style="color:#267F99">lv_chart_series_t</span> *ser = lv_chart_add_series(chart,
+                            lv_palette_main(LV_PALETTE_RED),
+                            LV_CHART_AXIS_PRIMARY_Y);   <span style="color:#008000">/* 加到左轴 */</span>
+
+<span style="color:#008000">/* 实时喂数据：SHIFT 旧数据左移，新数据进右边；CIRCULAR 像心电图循环 */</span>
+lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_CIRCULAR);
+lv_chart_set_next_value(chart, ser, <span style="color:#098658">66</span>);
+lv_chart_refresh(chart);        <span style="color:#008000">/* 每次改完数据都要刷新 */</span></pre>
+
+<p>用 <code>lv_timer_create</code> 每 200ms 喂一次，波形就"活"了（第 26.2.1 节 <span class="pg">PDF p.321</span>）。垂直范围可用 <code>lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100)</code> 限制（第 26.2.2 节 <span class="pg">PDF p.324</span>）。</p>
+
+<h2>5. meter：一块真正的仪表盘</h2>
+
+<p>meter 自带刻度、指针、弧线，是"速度表/温度表"的终极形态。组装顺序固定：先加刻度，再配指针，最后设角度范围（第 32.2.1 节 <span class="pg">PDF p.373</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> *meter = lv_meter_create(lv_scr_act());
+lv_obj_set_size(meter, <span style="color:#098658">180</span>, <span style="color:#098658">180</span>);
+lv_obj_center(meter);
+
+<span style="color:#008000">/* ① 加刻度，拿到刻度句柄 */</span>
+<span style="color:#267F99">lv_meter_scale_t</span> *scale = lv_meter_add_scale(meter);
+lv_meter_set_scale_ticks(meter, scale, <span style="color:#098658">41</span>, <span style="color:#098658">1</span>, <span style="color:#098658">4</span>, lv_palette_main(LV_PALETTE_GREY));       <span style="color:#008000">/* 小刻度 */</span>
+lv_meter_set_scale_major_ticks(meter, scale, <span style="color:#098658">8</span>, <span style="color:#098658">2</span>, <span style="color:#098658">8</span>, lv_color_black(), <span style="color:#098658">10</span>);              <span style="color:#008000">/* 主刻度 */</span>
+
+<span style="color:#008000">/* ② 数值范围 + 角度范围 + 起始旋转（默认 270° 从 3 点钟起） */</span>
+lv_meter_set_scale_range(meter, scale, <span style="color:#098658">0</span>, <span style="color:#098658">120</span>, <span style="color:#098658">270</span>, <span style="color:#098658">135</span>);
+
+<span style="color:#008000">/* ③ 加指针（线型），r_mod 控制指针比刻度短多少 */</span>
+<span style="color:#267F99">lv_meter_indicator_t</span> *needle = lv_meter_add_needle_line(meter, scale, <span style="color:#098658">3</span>,
+                                    lv_palette_main(LV_PALETTE_RED), <span style="color:#098658">-10</span>);
+lv_meter_set_indicator_value(meter, needle, <span style="color:#098658">60</span>);    <span style="color:#008000">/* 指针指到 60 */</span></pre>
+
+<p>指针之外还有两种指示器：<code>lv_meter_add_arc</code> 加弧线（像表盘上的彩色区间），<code>lv_meter_add_scale_lines</code> 加刻度线高亮区——配合 <code>lv_meter_set_indicator_start_value / end_value</code> 用（第 32.3 节 <span class="pg">PDF p.386</span>）。</p>
+
+<div class="tip">
+  <p>💡 记忆口诀：<strong>bar 是"躺着的量"，slider 是"能拖的 bar"，arc 是"弯成圈的 bar"，led 是"一像素状态"，chart 是"多条量一起画"，meter 是"bar 全家桶"</strong>。核心 API 全是 set_range + set_value，一通百通。</p>
+</div>
+
+<h2>代码示例 1：设备仪表盘（四件套合体）</h2>
+
+<p>把 meter 速度表 + bar 电量 + led 状态灯装进一个屏幕，用 lv_timer 模拟数据变化——这就是你练习 8.1 的骨架：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">lv_obj_t</span> *meter, *needle, *batt_bar, *status_led;
+<span style="color:#267F99">static</span> <span style="color:#267F99">int16_t</span> speed_val;
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">dash_timer_cb</span><span style="color:#001080">(<span style="color:#267F99">lv_timer_t</span> *t)</span>
+{
+    LV_UNUSED(t);
+    <span style="color:#008000">/* 模拟传感器读数：速度 0~120，电量 0~100 */</span>
+    speed_val = lv_rand(<span style="color:#098658">20</span>, <span style="color:#098658">120</span>);
+    lv_meter_set_indicator_value(meter, needle, speed_val);
+    lv_bar_set_value(batt_bar, lv_rand(<span style="color:#098658">30</span>, <span style="color:#098658">100</span>), LV_ANIM_ON);
+
+    <span style="color:#008000">/* 速度超过 100 亮红灯，否则绿灯 */</span>
+    <span style="color:#0000FF">if</span> (speed_val &gt; <span style="color:#098658">100</span>) {
+        lv_led_set_color(status_led, lv_palette_main(LV_PALETTE_RED));
+        lv_led_on(status_led);
+    } <span style="color:#0000FF">else</span> {
+        lv_led_set_color(status_led, lv_palette_main(LV_PALETTE_GREEN));
+        lv_led_on(status_led);
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_demo_dashboard</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 左侧：速度表 */</span>
+    meter = lv_meter_create(lv_scr_act());
+    lv_obj_set_size(meter, <span style="color:#098658">170</span>, <span style="color:#098658">170</span>);
+    lv_obj_align(meter, LV_ALIGN_TOP_LEFT, <span style="color:#098658">10</span>, <span style="color:#098658">10</span>);
+    <span style="color:#267F99">lv_meter_scale_t</span> *scale = lv_meter_add_scale(meter);
+    lv_meter_set_scale_ticks(meter, scale, <span style="color:#098658">41</span>, <span style="color:#098658">1</span>, <span style="color:#098658">4</span>, lv_palette_main(LV_PALETTE_GREY));
+    lv_meter_set_scale_major_ticks(meter, scale, <span style="color:#098658">8</span>, <span style="color:#098658">2</span>, <span style="color:#098658">8</span>, lv_color_black(), <span style="color:#098658">10</span>);
+    lv_meter_set_scale_range(meter, scale, <span style="color:#098658">0</span>, <span style="color:#098658">120</span>, <span style="color:#098658">270</span>, <span style="color:#098658">135</span>);
+    needle = lv_meter_add_needle_line(meter, scale, <span style="color:#098658">3</span>,
+                                      lv_palette_main(LV_PALETTE_RED), <span style="color:#098658">-10</span>);
+
+    <span style="color:#008000">/* 右侧：电量 bar + 状态灯 */</span>
+    batt_bar = lv_bar_create(lv_scr_act());
+    lv_obj_set_size(batt_bar, <span style="color:#098658">110</span>, <span style="color:#098658">18</span>);
+    lv_obj_align(batt_bar, LV_ALIGN_TOP_RIGHT, <span style="color:#098658">-10</span>, <span style="color:#098658">30</span>);
+    lv_bar_set_range(batt_bar, <span style="color:#098658">0</span>, <span style="color:#098658">100</span>);
+    lv_bar_set_value(batt_bar, <span style="color:#098658">80</span>, LV_ANIM_OFF);
+
+    status_led = lv_led_create(lv_scr_act());
+    lv_obj_align(status_led, LV_ALIGN_TOP_RIGHT, <span style="color:#098658">-30</span>, <span style="color:#098658">80</span>);
+    lv_led_set_color(status_led, lv_palette_main(LV_PALETTE_GREEN));
+
+    <span style="color:#008000">/* 每 200ms 模拟一次读数 */</span>
+    lv_timer_create(dash_timer_cb, <span style="color:#098658">200</span>, <span style="color:#098658">NULL</span>);
+}</pre>
+
+<h2>代码示例 2：chart 实时波形 + slider 调速</h2>
+
+<p>波形 + 一个能拖的 slider——slider 的值决定波形"频率"（喂数据的时间间隔），这是数据页最常见的联动模式：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">lv_obj_t</span> *wave_chart;
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_chart_series_t</span> *ser;
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_timer_t</span> *wave_timer;
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">wave_feed_cb</span><span style="color:#001080">(<span style="color:#267F99">lv_timer_t</span> *t)</span>
+{
+    LV_UNUSED(t);
+    lv_chart_set_next_value(wave_chart, ser, lv_rand(<span style="color:#098658">30</span>, <span style="color:#098658">90</span>));
+    lv_chart_refresh(wave_chart);
+}
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">speed_cb</span><span style="color:#001080">(<span style="color:#267F99">lv_event_t</span> *e)</span>
+{
+    <span style="color:#267F99">lv_obj_t</span> *slider = lv_event_get_target(e);
+    <span style="color:#008000">/* 值越大，喂数越快：把定时器周期改成 300 - 值 */</span>
+    lv_timer_set_period(wave_timer, <span style="color:#098658">300</span> - lv_slider_get_value(slider));
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_demo_wave</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 波形图 */</span>
+    wave_chart = lv_chart_create(lv_scr_act());
+    lv_obj_set_size(wave_chart, <span style="color:#098658">300</span>, <span style="color:#098658">130</span>);
+    lv_obj_align(wave_chart, LV_ALIGN_TOP_MID, <span style="color:#098658">0</span>, <span style="color:#098658">10</span>);
+    lv_chart_set_type(wave_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(wave_chart, <span style="color:#098658">50</span>);
+    lv_chart_set_update_mode(wave_chart, LV_CHART_UPDATE_MODE_CIRCULAR);
+    ser = lv_chart_add_series(wave_chart, lv_palette_main(LV_PALETTE_BLUE),
+                              LV_CHART_AXIS_PRIMARY_Y);
+    wave_timer = lv_timer_create(wave_feed_cb, <span style="color:#098658">200</span>, <span style="color:#098658">NULL</span>);
+
+    <span style="color:#008000">/* 调速滑块 */</span>
+    <span style="color:#267F99">lv_obj_t</span> *slider = lv_slider_create(lv_scr_act());
+    lv_obj_set_size(slider, <span style="color:#098658">280</span>, <span style="color:#098658">18</span>);
+    lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, <span style="color:#098658">0</span>, <span style="color:#098658">-30</span>);
+    lv_slider_set_range(slider, <span style="color:#098658">0</span>, <span style="color:#098658">200</span>);
+    lv_slider_set_value(slider, <span style="color:#098658">100</span>, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, speed_cb, LV_EVENT_VALUE_CHANGED, <span style="color:#098658">NULL</span>);
+}</pre>
+
+<div class="warn">
+  <p>⚠️ <strong>两个真机常踩的坑</strong>：① <code>lv_chart_set_next_value</code> 后忘了 <code>lv_chart_refresh</code>，波形"半天不动"；② 320×240 屏上别一次堆太多仪表——每个 meter/chart 都是带缓冲的控件，堆多了 <code>LV_MEM_SIZE</code> 池子会告急（串口报 out of memory），一次画面放 1~2 个仪表 + 1 个波形正合适。</p>
+</div>
+
+<h2>动手练习（约 40 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 8.1：搭一个"设备仪表盘"</h3>
+  <p class="step"><strong>怎么做：</strong>新建 <code>BSP/lvgl_dash.c</code>，照代码示例 1 搭 meter 速度表 + bar 电量 + led 状态灯，用 lv_timer 每 200ms 模拟一组读数（lv_rand 生成），加一个 label 实时显示当前速度数字。</p>
+  <p class="step"><strong>观察什么：</strong>① 指针和电量条的动画是否顺滑；② 速度超阈值时 led 变色是否灵敏；③ 把 lv_timer 周期改成 50ms，画面会不会卡——对比"喂数频率"和"LVGL 刷新周期"的关系。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 8.2：给仪表盘加交互</h3>
+  <p class="step"><strong>怎么做：</strong>在示例 2 基础上加一个 arc（0~100，环形进度）：slider 拖动时，arc 的值跟着变（<code>lv_arc_set_value</code>），并去掉 arc 的旋钮让它看起来像"进度环"。</p>
+  <p class="step"><strong>观察什么：</strong>① 把 chart 的更新模式在 SHIFT 和 CIRCULAR 之间切换，波形滚动方式有何不同（SHIFT 旧数据整体左移，CIRCULAR 循环覆盖）；② 试试把 arc 前景角度设得比背景弧大，会发生什么——这正是第 10.2.2 节警告的"显示异常"。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. bar 的水平 / 垂直方向由什么决定？</p>
+  <p class="opt">A. lv_bar_set_range 的最小值和最大值</p>
+  <p class="opt">B. 部件本身的宽高比例（宽大水平，高大垂直）</p>
+  <p class="opt">C. LV_BAR_MODE_NORMAL 等模式参数</p>
+  <details><summary>查看答案</summary><div class="answer">B。方向由宽高比决定，bar 没有专门的方向 API（PDF p.178）。</div></details>
+
+  <p class="q">Q2. 想禁止 slider"单击跳变"（只能拖动调值），用哪个？</p>
+  <p class="opt">A. lv_slider_set_mode(slider, LV_SLIDER_MODE_RANGE)</p>
+  <p class="opt">B. lv_slider_set_value(slider, 0, LV_ANIM_OFF)</p>
+  <p class="opt">C. lv_obj_add_flag(slider, LV_OBJ_FLAG_ADV_HITTEST)</p>
+  <details><summary>查看答案</summary><div class="answer">C。ADV_HITTEST 让单击失效，只响应拖动（PDF p.276）。</div></details>
+
+  <p class="q">Q3. 把 arc 当"只读进度环"（不能拖、无旋钮），要做什么？</p>
+  <p class="opt">A. 移除 LV_PART_KNOB 样式并清除可点击标志</p>
+  <p class="opt">B. lv_arc_set_mode(arc, LV_ARC_MODE_SYMMETRIC)</p>
+  <p class="opt">C. lv_arc_set_change_rate 把变化率设为 0</p>
+  <details><summary>查看答案</summary><div class="answer">A。lv_obj_remove_style(arc, NULL, LV_PART_KNOB) + lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE)（PDF p.170）。</div></details>
+
+  <p class="q">Q4. 要做"心电图"式循环滚动的实时波形，选哪套组合？</p>
+  <p class="opt">A. LV_CHART_UPDATE_MODE_CIRCULAR + lv_chart_set_next_value</p>
+  <p class="opt">B. LV_CHART_TYPE_SCATTER + lv_chart_set_ext_y_array</p>
+  <p class="opt">C. LV_CHART_UPDATE_MODE_SHIFT + lv_chart_set_all_value</p>
+  <details><summary>查看答案</summary><div class="answer">A。CIRCULAR 循环覆盖数据点，像心电图；SHIFT 是旧数据整体左移（PDF p.321）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《LVGL 开发指南 V1.5》第 10 章 arc（PDF p.166）、第 11 章 bar（PDF p.178）、第 21 章 slider（PDF p.274）、第 26 章 chart（PDF p.319）、第 30 章 led（PDF p.357）、第 32 章 meter（PDF p.373）——本课全部依据</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/widgets/meter.html">LVGL 官方文档 meter（v8.3）</a>——看官方示例，ArcIndicator 和 ScaleLines 两种指示器的完整用法</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/widgets/chart.html">LVGL 官方文档 chart（v8.3）</a>——五种加数据方式的原文对照</li>
+</ul>
+
+<div class="footer-note">
+  <p>有卡住的地方随时问我（Agent 就是你的老师）。下一课预告：<a href="0009-input-widgets.html">第 9 课：输入控件</a>——这课是"设备展示数据"，下节课反过来，让用户把参数输进设备：下拉、滚轮、软键盘全上阵。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0007-basic-widgets.html">← 上一课：基础控件</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0009-input-widgets.html">下一课：输入控件 →</a>
+</nav>
+
+
+
+</div>
+</body>
+</html>

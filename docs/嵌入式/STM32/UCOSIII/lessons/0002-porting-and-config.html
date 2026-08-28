@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 2 课：移植与配置 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 2 课</nav>
+
+<h1>第 2 课：移植与配置</h1>
+<p class="subtitle">把三件套搬进工程，把 SysTick 与 PendSV 交到内核手里，再跑起第一个多任务程序</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>移植的本质只有一句话——<strong>让内核接管板子的"心跳"（SysTick 时基）和"换人"（PendSV 切换）</strong>。学完你能在你的 µC/OS-III 分支工程里完成三件套文件添加、SYSTEM 文件修改、中断服务函数替换与四份配置文件设置，并跑通第一个多任务程序（LED + 串口）。对照 FreeRTOS 课第 2 课，你会看清"移植层"这件外衣两种截然不同的裁剪方式。</p>
+</div>
+
+<h2>1. 移植前准备：基础工程 + 三件套源码</h2>
+
+<p>µC/OS-III 的移植不是从零写代码，而是"接线"：拿一个能跑的裸机工程当底座，把内核的源码接进去（PDF 第 2.1.1 节 <span class="pg">PDF p.28</span>）。教材以正点原子的内存管理实验工程为基础，我们直接以你的 µC/OS-III 分支工程为基础（它通常就是从裸机实验工程演化来的）。需要两样东西：</p>
+
+<ul>
+<li>🏗️ <strong>基础工程</strong>：裸机能跑，LED/串口/按键外设初始化齐全——这样内核跑起来之后，我们才有"眼睛"观察它。</li>
+<li>📦 <strong>三件套源码</strong>：µC/OS-III（内核）+ µC/CPU（CPU 抽象层）+ µC/LIB（标准库补充）。版本对应教材的 µC/OS-III V3.08.01 + µC/CPU V1.32.01。</li>
+</ul>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS：FreeRTOS 把"CPU 相关"的代码全塞进 <code>portable/</code> 目录，内核源码就一个 <code>tasks.c/queue.c/list.c…</code>；µC/OS-III 把 CPU 抽象层拆成了独立的 µC/CPU 组件。拆开的好处：内核本身零硬件依赖，换 CPU 只换 µC/CPU 的移植文件——这也是后面我们手写 MiniOS 的参考样板。</p>
+</div>
+
+<h2>2. 文件进工程：四个分组 + 八个头文件路径</h2>
+
+<p>把三件套源码拷进工程的 <code>Middlewares/uC-OS3/</code> 目录后，要在 Keil 里建四个分组并添加文件（PDF 第 2.1.2 节 <span class="pg">PDF p.28~30</span>）：</p>
+
+<table>
+<tr><th>分组</th><th>添加的文件</th><th>职责</th></tr>
+<tr><td><strong>BSP</strong></td><td><code>uC-CPU/BSP/Template/bsp_cpu.c</code>、<code>uC-OS3/Template/bsp_os_dt.c</code></td><td>板级：时间戳定时器、OS 调试</td></tr>
+<tr><td><strong>CPU</strong></td><td><code>cpu_a.asm</code>、<code>cpu_c.c</code>、<code>cpu_core.c</code></td><td>开关中断、时间戳、CLZ 计数等 CPU 操作</td></tr>
+<tr><td><strong>LIB</strong></td><td><code>lib_ascii.c</code>、<code>lib_math.c</code>、<code>lib_mem.c</code>、<code>lib_str.c</code></td><td>不依赖编译器库的内存/字符串/数学函数</td></tr>
+<tr><td><strong>OS3</strong></td><td><code>os_app_hooks.c</code>、<code>os_cpu_a.asm</code>、<code>os_cpu_c.c</code> + <code>Source/</code> 下除 <code>__dbg_uCOS-III.c</code> 外的全部 C 文件（共 19 个）</td><td>内核本体 + ARM-Cortex-M 移植层</td></tr>
+</table>
+
+<p>文件加完之后，还要在 C/C++ Include Paths 里补 8 个头文件路径（含 <code>Source/</code>、<code>Ports/ARM-Cortex-M/ARMv7-M/ARM/</code>、<code>Cfg/Template/</code>、<code>uC-CPU/</code> 等）。缺一个路径，编译就会报"找不到 os.h"。<strong>验收标准：编译 0 error。</strong></p>
+
+<div class="warn">
+  <p>⚠️ 教材以战舰 F103 为例（HAL 库），你的探索者 F407 结构完全一致（SYSTEM 文件夹同为 sys/usart/delay 三件），唯一区别：中断服务函数在 <code>stm32f4xx_it.c</code> 里，而不是 <code>stm32f1xx_it.c</code>（PDF 表 2.1.1 <span class="pg">PDF p.36</span>）。照着你的 µC/OS-III 分支工程实际路径走，别照抄教材路径。</p>
+</div>
+
+<h2>3. 修改 SYSTEM 文件：把"心跳"交给内核</h2>
+
+<p>SYSTEM 文件夹要动三个文件：<code>sys.h</code>、<code>usart.c</code>、<code>delay.c</code>（PDF 第 2.1.3 节 <span class="pg">PDF p.31~35</span>）。核心原则：<strong>SysTick 只有一个主人——OS 跑起来之后，它属于 µC/OS-III</strong>。</p>
+
+<ul>
+<li><code>sys.h</code>：<code>#define SYS_SUPPORT_OS 1</code>——让 SYSTEM 代码知道"我们上面有 OS"。</li>
+<li><code>usart.c</code>：<code>#include "includes.h"</code> 改为 <code>#include "os.h"</code>（µC/OS-III 的头文件）。</li>
+<li><code>delay.c</code>：改动最大。删掉 µC/OS-II 兼容的宏与 <code>g_fac_ms</code> 变量；<code>delay_init()</code> 按 <code>OSCfg_TickRate_Hz</code> 计算 SysTick 重装载值；<code>delay_us()</code> 用 <code>OSSchedLock()/OSSchedUnlock()</code> 锁住调度器防止被任务切换打断（微秒级延时绝不能被打断！）。</li>
+</ul>
+
+<p>最关键的交接在 <code>SysTick_Handler()</code>——它必须把时基"上报"给内核：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* delay.c —— SysTick 中断服务函数：OS 接管后的样子 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">SysTick_Handler</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* OS 开始跑了，才执行正常的调度处理 */</span>
+    <span style="color:#0000FF">if</span> (OSRunning == OS_STATE_OS_RUNNING)
+    {
+        <span style="color:#008000">/* 调用 uC/OS-III 的 SysTick 中断服务函数（时基 + 任务延时管理） */</span>
+        OS_CPU_SysTickHandler();
+    }
+    HAL_IncTick();          <span style="color:#008000">/* HAL 库自己的滴答计数照旧 */</span>
+}
+
+<span style="color:#008000">/* delay_init：按内核配置的节拍频率初始化 SysTick */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">delay_init</span><span style="color:#001080">(<span style="color:#267F99">uint16_t</span> sysclk)</span>
+{
+    <span style="color:#267F99">uint32_t</span> reload;
+    SysTick-&gt;CTRL = <span style="color:#098658">0</span>;
+    HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
+    g_fac_us = sysclk;
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> SYS_SUPPORT_OS</span>
+    reload = sysclk;
+    reload *= <span style="color:#098658">1000000</span> / OSCfg_TickRate_Hz;   <span style="color:#008000">/* 1 秒重载多少次 = 节拍频率 */</span>
+    SysTick-&gt;CTRL |= <span style="color:#098658">1</span> &lt;&lt; <span style="color:#098658">1</span>;
+    SysTick-&gt;LOAD = reload;
+    SysTick-&gt;CTRL |= <span style="color:#098658">1</span> &lt;&lt; <span style="color:#098658">0</span>;
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+}
+</pre>
+
+<p><code>OSCfg_TickRate_Hz</code> 来自配置文件 <code>os_cfg_app.h</code>（默认 1000Hz），这就是"内核设定节拍、delay 负责照做"的分工。对比 FreeRTOS：它的 SysTick 由 <code>xPortSysTickHandler()</code> 处理，同样挂在 <code>SysTick_Handler</code> 里——两个内核的交接思路一模一样，只是函数名不同。</p>
+
+<h2>4. 替换中断服务函数：PendSV 向量指向 UCOS</h2>
+
+<p>UCOS 有两条命脉：SysTick（时基）和 PendSV（切换）。SysTick 的 Handler 已在 delay.c 里接好，还差 PendSV（PDF 第 2.1.4 节 <span class="pg">PDF p.36~37</span>）：</p>
+
+<ol>
+<li>删掉 <code>stm32f4xx_it.c</code> 里 HAL 默认的 <code>PendSV_Handler()</code> 和 <code>SysTick_Handler()</code>（以及 .h 里的声明）——否则会与内核的符号冲突。</li>
+<li>在启动文件 <code>startup_stm32f407xx.s</code> 的向量表里，把 PendSV 那一行改为 <code>DCD OS_CPU_PendSVHandler</code>。</li>
+<li>把启动文件末尾的弱定义 <code>PendSV_Handler PROC [WEAK]</code> 同步改名，否则链接器仍会兜底。</li>
+</ol>
+
+<p>为什么必须换成 <code>OS_CPU_PendSVHandler</code>？因为任务切换的现场保存/恢复全在这段汇编里（第 5 课逐行拆）。HAL 的空实现会直接抢走这个入口——<strong>这大概是移植时最常见的"能编译、能烧录、但一调度就死机"的坑</strong>。</p>
+
+<h2>5. 四个配置文件：裁剪的艺术</h2>
+
+<p>µC/OS-III 是被设计成"按需裁剪"的：用不到的模块不编译，RAM/Flash 就省下来了。一共四份配置文件（PDF 表 2.1.2 <span class="pg">PDF p.38</span>）：</p>
+
+<table>
+<tr><th>文件</th><th>配置什么</th><th>关键项举例</th></tr>
+<tr><td><code>os_cfg.h</code><br>（第 3 章 <span class="pg">PDF p.60~65</span>）</td><td>内核功能开关</td><td><code>OS_CFG_PRIO_MAX</code>（最大优先级数，默认 32）、<code>OS_CFG_SCHED_ROUND_ROBIN_EN</code>（时间片）、<code>OS_CFG_SEM_EN</code> / <code>OS_CFG_Q_EN</code> / <code>OS_CFG_MUTEX_EN</code> / <code>OS_CFG_FLAG_EN</code> / <code>OS_CFG_TMR_EN</code> / <code>OS_CFG_MEM_EN</code>（各功能模块）、<code>OS_CFG_ARG_CHK_EN</code>（参数检查）</td></tr>
+<tr><td><code>os_cfg_app.h</code><br>（<span class="pg">PDF p.65~66</span>）</td><td>内核任务参数</td><td><code>OS_CFG_TICK_RATE_HZ</code>（节拍频率 1000）、<code>OS_CFG_IDLE_TASK_STK_SIZE</code>（空闲任务栈）、<code>OS_CFG_STAT_TASK_PRIO</code>（统计任务优先级）、<code>OS_CFG_ISR_STK_SIZE</code>（异常栈）、<code>OS_CFG_TMR_TASK_PRIO</code>（定时器任务优先级）</td></tr>
+<tr><td><code>cpu_cfg.h</code><br>（<span class="pg">PDF p.66~67</span>）</td><td>CPU 硬件相关</td><td><code>CPU_CFG_NVIC_PRIO_BITS</code>（F407 设 4）、<code>CPU_CFG_TS_32_EN</code>（时间戳）、<code>CPU_CFG_LEAD_ZEROS_ASM_PRESENT</code>（CLZ 指令，第 4 课主角）</td></tr>
+<tr><td><code>lib_cfg.h</code><br>（<span class="pg">PDF p.68</span>）</td><td>µC/LIB 库</td><td><code>LIB_MEM_CFG_HEAP_SIZE</code>（内存堆大小）、<code>LIB_MEM_CFG_ARG_CHK_EXT_EN</code></td></tr>
+</table>
+
+<p>初次移植的偷懒正道：<strong>直接复制教材移植实验配套的这四份配置文件</strong>（教材原话建议，PDF p.38），先跑起来，之后再逐个开关体会裁剪效果。µC/CPU 那份例外——<code>cpu_cfg.h</code> 里的 <code>CPU_CFG_NVIC_PRIO_BITS</code> 必须打开（<code>#if 1</code>），否则内核无法正确管理中断优先级。</p>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS：FreeRTOS 只有 <code>FreeRTOSConfig.h</code> 一份配置，内核任务（空闲/定时器）的栈大小、优先级也都是宏。UCOS 把配置拆成"功能开关（os_cfg.h）"和"资源参数（os_cfg_app.h）"两份——功能开关决定"编译哪些模块"，资源参数决定"给内核任务分多少栈"。思路更工程化，适合大项目多人协作。</p>
+</div>
+
+<h2>6. 移植验证：第一个多任务程序</h2>
+
+<p>移植完必须立刻验证。教材的实验结构（PDF 第 2.2 节 <span class="pg">PDF p.56~58</span>）：<code>main()</code> 只做硬件初始化，最后调用 <code>uc_os3_demo()</code>；<code>uc_os3_demo()</code> 里按"<strong>OSInit → 创建任务 → OSStart</strong>"三步走。经典做法是创建两个任务让它们"同时"闪两个 LED，再加上一个串口任务做旁观者：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* uc-os3_demo.c —— 第一个多任务程序的骨架 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> START_TASK_PRIO   2                        <span style="color:#008000">/* start_task 优先级（数值小 = 优先级高） */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> START_STK_SIZE    512</span>
+OS_TCB   StartTask_TCB;                            <span style="color:#008000">/* 任务控制块：用户自己提供 */</span>
+CPU_STK  StartTask_STK[START_STK_SIZE];            <span style="color:#008000">/* 任务栈：用户自己提供 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">uc_os3_demo</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    OS_ERR err;
+    OSInit(&amp;err);                                  <span style="color:#008000">/* ① 初始化内核（必须先于一切） */</span>
+
+    OSTaskCreate((OS_TCB*)&amp;StartTask_TCB,          <span style="color:#008000">/* ② 创建 start_task */</span>
+                 (CPU_CHAR*)<span style="color:#A31515">&quot;start_task&quot;</span>,
+                 (OS_TASK_PTR)start_task,          <span style="color:#008000">/* 任务函数指针 */</span>
+                 (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>,                         <span style="color:#008000">/* 传给任务的参数 */</span>
+                 (OS_PRIO)START_TASK_PRIO,         <span style="color:#008000">/* 优先级 */</span>
+                 (CPU_STK*)StartTask_STK,          <span style="color:#008000">/* 任务栈首地址 */</span>
+                 (CPU_STK_SIZE)START_STK_SIZE / <span style="color:#098658">10</span>,<span style="color:#008000">/* 栈警戒水位 */</span>
+                 (CPU_STK_SIZE)START_STK_SIZE,     <span style="color:#008000">/* 栈大小（单位：字） */</span>
+                 (OS_MSG_QTY)<span style="color:#098658">0</span>,                    <span style="color:#008000">/* 任务内嵌消息队列长度 */</span>
+                 (OS_TICK)<span style="color:#098658">0</span>,                       <span style="color:#008000">/* 时间片（0 = 用默认值） */</span>
+                 (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>,                         <span style="color:#008000">/* 扩展指针 */</span>
+                 (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR), <span style="color:#008000">/* 选项 */</span>
+                 (OS_ERR*)&amp;err);                   <span style="color:#008000">/* 错误码指针：UCOS 的&quot;返回值&quot; */</span>
+
+    OSStart(&amp;err);                                 <span style="color:#008000">/* ③ 启动调度（永不返回） */</span>
+    <span style="color:#0000FF">for</span> (;;);                                      <span style="color:#008000">/* 到不了这里 */</span>
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">start_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    CPU_Init();                                    <span style="color:#008000">/* 初始化 CPU 库 */</span>
+    OS_CPU_SysTickInit((CPU_INT32U)(HAL_RCC_GetSysClockFreq() / OSCfg_TickRate_Hz));
+                                                   <span style="color:#008000">/* 按配置频率启动 SysTick */</span>
+    OSSchedRoundRobinCfg(OS_TRUE, <span style="color:#098658">0</span>, &amp;err);        <span style="color:#008000">/* 开启时间片调度 */</span>
+
+    OSTaskCreate((OS_TCB*)&amp;Task1Task_TCB, (CPU_CHAR*)<span style="color:#A31515">&quot;task1&quot;</span>, task1,
+                 (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>, (OS_PRIO)<span style="color:#098658">3</span>, Task1Task_STK,
+                 TASK1_STK_SIZE / <span style="color:#098658">10</span>, TASK1_STK_SIZE,
+                 <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>, OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &amp;err);
+    OSTaskCreate((OS_TCB*)&amp;Task2Task_TCB, (CPU_CHAR*)<span style="color:#A31515">&quot;task2&quot;</span>, task2,
+                 (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>, (OS_PRIO)<span style="color:#098658">4</span>, Task2Task_STK,
+                 TASK2_STK_SIZE / <span style="color:#098658">10</span>, TASK2_STK_SIZE,
+                 <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>, OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &amp;err);
+
+    OSTaskDel((OS_TCB*)<span style="color:#098658">0</span>, &amp;err);                   <span style="color:#008000">/* start_task 功成身退：删除自己 */</span>
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>                            <span style="color:#008000">/* 任务 1：闪 LED */</span>
+{
+    OS_ERR err;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+        LED0_TOGGLE();
+        OSTimeDly(<span style="color:#098658">1000</span>, OS_OPT_TIME_DLY, &amp;err);    <span style="color:#008000">/* 延时 1000 ticks = 1 秒，主动让出 CPU */</span>
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>                            <span style="color:#008000">/* 任务 2：串口旁观者 */</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">float</span> num = <span style="color:#098658">0.0f</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+        num += <span style="color:#098658">0.01f</span>;
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task2: %0.4f\r\n&quot;</span>, num);
+        OSTimeDly(<span style="color:#098658">1000</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}
+</pre>
+
+<p><strong>验收标准：</strong>烧录后两个 LED 各按 1 秒周期交替闪烁，串口每秒吐一行浮点数——说明两个任务真的在"同时"跑，移植成功。观察两个细节：<code>OSTaskCreate</code> 的 TCB 和栈都要用户自己给（对比 FreeRTOS 的动态创建 <code>xTaskCreate</code> 是内核帮你分配的）；错误码不是返回值，而是 <code>OS_ERR*</code> 指针写出来的。</p>
+
+<div class="warn">
+  <p>⚠️ 两个新坑预警：① <code>OSStart()</code> 之前必须至少创建一个应用任务，否则它直接报 <code>OS_ERR_OS_NO_APP_TASK</code> 返回（PDF p.128）；② <code>OS_CPU_SysTickInit()</code> 一定要在 start_task 里、创建其他任务之前调用——它没跑，内核没有心跳，任务会全部"原地踏步"。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 2.1：在你的 µC/OS-III 分支工程指认三件套</h3>
+  <p class="step">1️⃣ 打开你的 µC/OS-III 分支工程，确认 <code>Middlewares/uC-OS3/</code> 下三个组件目录（OS3 / CPU / LIB）齐全，核对四个分组（BSP/CPU/LIB/OS3）里的文件与本文表格一致。</p>
+  <p class="step">2️⃣ 检查 Include Paths 是否覆盖 <code>Source/</code>、<code>Ports/…/ARM/</code>、<code>Cfg/Template/</code>、<code>uC-CPU/</code> 等关键目录，然后全量编译一次，目标：0 error 0 warning（有 warning 也顺手清掉）。</p>
+  <p class="step"><strong>观察什么：</strong>对照 FreeRTOS 分支工程：FreeRTOS 的 portable 目录与 UCOS 的 Ports 目录里都有 <code>*.asm</code>（汇编切换代码），找出来各是哪个文件，写一行笔记。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2.2：跑通第一个多任务程序</h3>
+  <p class="step">1️⃣ 按第 6 节骨架写两个任务：task1 翻转 LED0、task2 翻转 LED1，都用 <code>OSTimeDly(500, OS_OPT_TIME_DLY, &err)</code>，观察两个 LED 各自闪烁。</p>
+  <p class="step">2️⃣ 修改 <code>os_cfg_app.h</code> 里的 <code>OS_CFG_TICK_RATE_HZ</code>：从 1000 改成 500，重新编译烧录——观察 LED 闪烁频率变化。</p>
+  <p class="step"><strong>观察什么：</strong><code>OSTimeDly(500)</code> 是"500 个 tick"，不是"500 毫秒"！节拍频率从 1000 降到 500 后，500 tick 从 0.5s 变成 1s——LED 明显变慢。这堂课的价值：<strong>tick 与毫秒的换算</strong>是 RTOS 新手第一道坎。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. µC/OS-III 移植中，SysTick 中断服务函数最终要调用谁？</p>
+  <p class="opt">A. HAL_IncTick()</p>
+  <p class="opt">B. OS_CPU_SysTickHandler()</p>
+  <p class="opt">C. OS_CPU_PendSVHandler()</p>
+  <details><summary>查看答案</summary><div class="answer">B。SysTick 是内核时基，OS 运行后必须调用 OS_CPU_SysTickHandler()（PDF p.33~34）；PendSV 才是切换用的。</div></details>
+
+  <p class="q">Q2. 向量表中 PendSV 的入口要替换成哪个函数？</p>
+  <p class="opt">A. PendSV_Handler</p>
+  <p class="opt">B. OS_CPU_PendSVHandler</p>
+  <p class="opt">C. OS_CPU_SysTickHandler</p>
+  <details><summary>查看答案</summary><div class="answer">B。任务切换的现场保存在 OS_CPU_PendSVHandler 汇编里，必须替换掉 HAL 的空实现（PDF p.37）。</div></details>
+
+  <p class="q">Q3. 配置 STM32F407 时，cpu_cfg.h 中 NVIC 优先级位数应设为？</p>
+  <p class="opt">A. 1 位</p>
+  <p class="opt">B. 2 位</p>
+  <p class="opt">C. 4 位</p>
+  <details><summary>查看答案</summary><div class="answer">C。STM32F4 的 NVIC 使用 4 位优先级，CPU_CFG_NVIC_PRIO_BITS 必须置 1 打开并设为 4（PDF p.38, 67）。</div></details>
+
+  <p class="q">Q4. OSStart() 之前，最少要完成什么准备工作？</p>
+  <p class="opt">A. OSInit 加至少一个应用任务</p>
+  <p class="opt">B. 只调用 OSInit 即可</p>
+  <p class="opt">C. 配置好全部四个配置文件</p>
+  <details><summary>查看答案</summary><div class="answer">A。OSStart() 会检查 OSInitialized 和应用任务数量，两者不满足直接报错返回（PDF p.128）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 2 章（PDF p.28~58）——移植全流程与移植实验</li>
+<li>📖 同书第 3 章（PDF p.60~69）——四份配置文件的全部配置项详解</li>
+<li>🌐 <a href="https://weston-embedded.com/uc-os-iii">Weston Embedded（Micrium 后继）µC/OS-III 主页</a>——官方文档、配置项在线说明入口</li>
+<li>🔁 对照：FreeRTOS 课程第 2 课（移植与第一个任务）——两套移植方案的差异对照基准</li>
+</ul>
+
+<div class="footer-note">
+  <p>移植跑通只是热身，接下来要钻进内核看"任务到底是个什么东西"——状态、优先级、调度、TCB、任务栈，把地基打牢。有疑问随时问我，Agent 就是你的老师 😄</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0001-intro-to-ucosiii.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0003-task-basics.html">下一课：任务基础 →</a>
+</nav>
+
+</div>
+</body>
+</html>

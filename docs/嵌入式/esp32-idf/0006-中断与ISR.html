@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0006 · 中断与 ISR</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>中断与 ISR</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0006 · 预计 15 分钟</p>
+
+<p>STM32 里你用 EXTI + NVIC,中断服务函数里"尽量少干活"。ESP32 的规则一样,但注册方式不同:<strong>一切通过 driver 的 ISR 注册接口</strong>,而且 ISR 里不能直接用 FreeRTOS API,要用 <code>...FromISR</code> 版本。</p>
+
+<h2>知识点 1:GPIO 中断注册</h2>
+<pre lang="c" class="highlight"><span style="color: #008000">// 配置时带上中断类型</span>
+<span style="color: #795E26">gpio_config_t</span> io = {
+    .pin_bit_mask = <span style="color: #098658">1ULL</span> << GPIO_NUM_0,
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .intr_type = GPIO_INTR_NEGEDGE,      <span style="color: #008000">// 下降沿</span>
+};
+<span style="color: #795E26">gpio_config</span>(&amp;io);
+<span style="color: #795E26">gpio_install_isr_service</span>(<span style="color: #098658">0</span>);            <span style="color: #008000">// 装 ISR 服务(一次)</span>
+<span style="color: #795E26">gpio_isr_handler_add</span>(GPIO_NUM_0, button_isr, <span style="color: #00F">NULL</span>);
+</pre>
+
+<h2>知识点 2:ISR 里只"通知",不"干活"</h2>
+<pre lang="c" class="highlight"><span style="color: #00F">static</span> <span style="color: #00F">void</span> <span style="color: #795E26">button_isr</span>(<span style="color: #00F">void</span> *arg) {
+    <span style="color: #008000">// 正确:往队列塞一个事件,让任务去处理</span>
+    <span style="color: #795E26">BaseType_t</span> woken = pdFALSE;
+    <span style="color: #795E26">xQueueSendFromISR</span>(evt_queue, &amp;evt, &amp;woken);
+    <span style="color: #795E26">portYIELD_FROM_ISR</span>(woken);
+}
+</pre>
+<p>错误示范:在 ISR 里 <code>ESP_LOGI</code>、<code>printf</code>、长循环——都会拖垮系统。</p>
+
+<h2>知识点 3:和 STM32 的映射</h2>
+<table>
+<tr><th>STM32</th><th>ESP-IDF</th></tr>
+<tr><td>EXTI_IRQHandler + HAL_GPIO_EXTI_Callback</td><td>gpio_isr_handler_add + 自写 ISR</td></tr>
+<tr><td>NVIC 优先级分组</td><td>esp_intr_alloc / driver 内部管理</td></tr>
+<tr><td>ISR 里置标志位</td><td>xQueueSendFromISR / event group</td></tr>
+</table>
+
+<h2>动手</h2>
+<p>打开 <code>basic_routines/02_key</code>:数出按键例程用的中断类型、ISR 里干了什么、消抖在哪一层做的(ISR?任务?)。xiaozhi 的按键唤醒也是这套思路。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">ISR 里向任务传数据用什么?</p>
+  <button class="opt" data-ok="true">FromISR队列</button>
+  <button class="opt" data-ok="false">printf</button>
+  <button class="opt" data-ok="false">长循环</button>
+  <p class="reveal">xQueueSendFromISR 等 FromISR 系列 API。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">GPIO 中断注册前的必调函数?</p>
+  <button class="opt" data-ok="true">gpio_install_isr_service</button>
+  <button class="opt" data-ok="false">nvs_flash_init</button>
+  <button class="opt" data-ok="false">xTaskCreate</button>
+  <p class="reveal">gpio_install_isr_service,每个进程只需一次。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《GPIO ISR 例程》</strong>(<a href="https://github.com/espressif/esp-idf/tree/master/examples/peripherals/gpio/generic_gpio">generic_gpio 例程</a>):看 interrupt 分支怎么注册、怎么用队列。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课离开外设,看内存:Flash 分区表、堆、PSRAM——理解"ESP32 的程序和数据住在哪"。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-定时器与延时.html">← 上一篇:定时器</a>
+  <a href="index.html">课程地图</a>
+  <a href="0007-内存Flash与分区表.html">下一篇:内存与分区 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0004 · 数据清洗与变换</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>数据清洗与变换</h1>
+<p class="meta">Pandas 专题 · 课程 0004 · 预计 30 分钟 · 书第7章(7.1/7.2/7.3)</p>
+
+<p>现实中数据乱糟糟:缺失值、重复行、噪声符号、离散分箱、字符串清洗。这课覆盖书 <a href="https://github.com/BrambleXu/pydata-notebook">第7章</a>:<strong>缺失值处理、数据变换、字符串处理</strong>。</p>
+
+<h2>知识点 1:缺失值——isnull / dropna / fillna(书 7.1)</h2>
+<p>三步:找缺失 → 删/填:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span><span style="color: #000">, </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">(</span><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">randn</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">),</span> <span style="color: #001080">columns</span><span style="color: #000">=</span><span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #A31515">&quot;abc&quot;</span><span style="color: #000">))</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">loc</span><span style="color: #000">[:</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">nan</span>      <span style="color: #008000"># 造缺失</span>
+
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">isnull</span><span style="color: #000">()</span>                <span style="color: #008000"># 布尔矩阵,True=缺失</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">isnull</span><span style="color: #000">().</span><span style="color: #001080">sum</span><span style="color: #000">()</span>          <span style="color: #008000"># 每列缺失个数</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">dropna</span><span style="color: #000">()</span>                <span style="color: #008000"># 删含缺失的行(默认 any)</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">dropna</span><span style="color: #000">(</span><span style="color: #001080">how</span><span style="color: #000">=</span><span style="color: #A31515">&quot;all&quot;</span><span style="color: #000">)</span>       <span style="color: #008000"># 只删全缺失行</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">dropna</span><span style="color: #000">(</span><span style="color: #001080">thresh</span><span style="color: #000">=</span><span style="color: #098658">2</span><span style="color: #000">)</span>        <span style="color: #008000"># 至少2个非缺失才保留</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">dropna</span><span style="color: #000">(</span><span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>          <span style="color: #008000"># 删含缺失的列</span>
+
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">fillna</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">)</span>               <span style="color: #008000"># 全填0</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">fillna</span><span style="color: #000">({</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">})</span>  <span style="color: #008000"># 按列填不同值</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">fillna</span><span style="color: #000">(</span><span style="color: #001080">method</span><span style="color: #000">=</span><span style="color: #A31515">&quot;ffill&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># 向前填充(用上一个值)</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">fillna</span><span style="color: #000">(</span><span style="color: #001080">method</span><span style="color: #000">=</span><span style="color: #A31515">&quot;ffill&quot;</span><span style="color: #000">,</span> <span style="color: #001080">limit</span><span style="color: #000">=</span><span style="color: #098658">2</span><span style="color: #000">)</span>   <span style="color: #008000"># 只连续填2个</span>
+</pre>
+<p><code>dropna</code> 删带缺失的行/列;<code>fillna</code> 用常量/字典/前向填充补缺失。这是数据清洗第一件事。</p>
+
+<h2>知识点 2:去重——duplicated / drop_duplicates(书 7.2)</h2>
+<pre lang="python" class="highlight"><span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;k&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span><span style="color: #098658">1</span><span style="color: #000">,</span><span style="color: #098658">2</span><span style="color: #000">,</span><span style="color: #098658">2</span><span style="color: #000">,</span><span style="color: #098658">3</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;v&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">10</span><span style="color: #000">,</span><span style="color: #098658">10</span><span style="color: #000">,</span><span style="color: #098658">20</span><span style="color: #000">,</span><span style="color: #098658">30</span><span style="color: #000">,</span><span style="color: #098658">40</span><span style="color: #000">]})</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">drop_duplicates</span><span style="color: #000">()</span>        <span style="color: #008000"># 删完全重复行</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">drop_duplicates</span><span style="color: #000">(</span><span style="color: #A31515">&quot;k&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 只按某列去重(保留第一次)</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">duplicated</span><span style="color: #000">()</span>             <span style="color: #008000"># 布尔:哪些是重复</span>
+</pre>
+<p>drop_duplicates 默认保留重复中的第一行(<code>keep="first"</code>);想留最后一行 <code>keep="last"</code>。</p>
+
+<h2>知识点 3:替换与重命名——replace / rename / map(书 7.2)</h2>
+<pre lang="python" class="highlight"><span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">999</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">999</span><span style="color: #000">])</span>
+<span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">replace</span><span style="color: #000">(-</span><span style="color: #098658">999</span><span style="color: #000">,</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">nan</span><span style="color: #000">)</span>          <span style="color: #008000"># 把哨兵值换成缺失</span>
+<span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">replace</span><span style="color: #000">([-</span><span style="color: #098658">999</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">999</span><span style="color: #000">],</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">nan</span><span style="color: #000">)</span>  <span style="color: #008000"># 多个</span>
+<span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">replace</span><span style="color: #000">({</span><span style="color: #098658">1</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;one&quot;</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;two&quot;</span><span style="color: #000">})</span>  <span style="color: #008000"># 用 dict</span>
+
+<span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">dfs</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]})</span>  <span style="color: #008000"># 改名</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">rename</span><span style="color: #000">(</span><span style="color: #001080">columns</span><span style="color: #000">={</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;B&quot;</span><span style="color: #000">})</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">rename</span><span style="color: #000">(</span><span style="color: #001080">index</span><span style="color: #000">={</span><span style="color: #098658">0</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;first&quot;</span><span style="color: #000">})</span>
+<span style="color: #008000"># map:把一个值映射成另一个值(洗值)</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #A31515">&quot;cat&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;dog&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cat&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">map</span><span style="color: #000">({</span><span style="color: #A31515">&quot;cat&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;猫&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;dog&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;狗&quot;</span><span style="color: #000">})</span>     <span style="color: #008000"># 值→值 映射</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">map</span><span style="color: #000">(</span><span style="color: #00F">lambda</span> <span style="color: #001080">x</span><span style="color: #000">:</span> <span style="color: #001080">x</span><span style="color: #000">.</span><span style="color: #001080">upper</span><span style="color: #000">())</span>           <span style="color: #008000"># 或任意函数</span>
+</pre>
+<p><code>replace</code>=改坏值;<code>rename</code>=改行列名字;<code>map/map</code>=用映射/函数变换一列值。</p>
+
+<h2>知识点 4:离散化——cut / qcut(书 7.2)</h2>
+<p>把连续年龄分成年龄段:用固定边界 <code>cut</code> 或等频 <code>qcut</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">ages</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">20</span><span style="color: #000">,</span> <span style="color: #098658">22</span><span style="color: #000">,</span> <span style="color: #098658">25</span><span style="color: #000">,</span> <span style="color: #098658">27</span><span style="color: #000">,</span> <span style="color: #098658">30</span><span style="color: #000">,</span> <span style="color: #098658">45</span><span style="color: #000">,</span> <span style="color: #098658">50</span><span style="color: #000">,</span> <span style="color: #098658">60</span><span style="color: #000">]</span>
+<span style="color: #001080">bins</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">18</span><span style="color: #000">,</span> <span style="color: #098658">25</span><span style="color: #000">,</span> <span style="color: #098658">35</span><span style="color: #000">,</span> <span style="color: #098658">60</span><span style="color: #000">,</span> <span style="color: #098658">100</span><span style="color: #000">]</span>
+<span style="color: #001080">labels</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;青&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;中&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;中老&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;老&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">cats</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">cut</span><span style="color: #000">(</span><span style="color: #001080">ages</span><span style="color: #000">,</span> <span style="color: #001080">bins</span><span style="color: #000">=</span><span style="color: #001080">bins</span><span style="color: #000">,</span> <span style="color: #001080">labels</span><span style="color: #000">=</span><span style="color: #001080">labels</span><span style="color: #000">)</span>   <span style="color: #008000"># 固定区间</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">value_counts</span><span style="color: #000">(</span><span style="color: #001080">cats</span><span style="color: #000">))</span>
+
+<span style="color: #008000"># qcut:按数据量等分(每箱个数相近)</span>
+<span style="color: #001080">q</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">qcut</span><span style="color: #000">(</span><span style="color: #001080">ages</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">)</span>     <span style="color: #008000"># 四分位</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">q</span><span style="color: #000">.</span><span style="color: #001080">categories</span><span style="color: #000">)</span>
+</pre>
+<p><code>cut</code> 用固定边界;<code>qcut</code> 按分位使每箱样本数接近;labels 给名字。</p>
+
+<h2>知识点 5:字符串处理——str 访问器 + re(书 7.3)</h2>
+<p>Series 的字符串列用 <code>.str</code> 像字符串一样整体操作;复杂匹配用正则 <code>re</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #A31515">&quot;Alice Alice&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;   Bob   &quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;carol&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">strip</span><span style="color: #000">()</span>            <span style="color: #008000"># 去两端空白</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">upper</span><span style="color: #000">()</span>            <span style="color: #008000"># 大写</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">contains</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">)</span>      <span style="color: #008000"># 是否包含</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">split</span><span style="color: #000">()</span>            <span style="color: #008000"># 按空格拆(返回 list)</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">split</span><span style="color: #000">(</span><span style="color: #001080">expand</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span> <span style="color: #008000"># 拆成多列 DataFrame</span>
+<span style="color: #008000"># 正则提取</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">extract</span><span style="color: #000">(</span><span style="color: #A31515">r&quot;(\w+)&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># 取第一个单词</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">str</span><span style="color: #000">.</span><span style="color: #001080">findall</span><span style="color: #000">(</span><span style="color: #A31515">r&quot;[A-Z]&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># 找所有大写字母</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">re</span>
+<span style="color: #001080">re</span><span style="color: #000">.</span><span style="color: #001080">split</span><span style="color: #000">(</span><span style="color: #A31515">r&quot;\s+&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a  b c&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 标准 re(多空白拆分)</span>
+</pre>
+<p>字符串清洗三步曲:<code>strip</code>(去空格)→ <code>replace/contains</code>(替换/筛选)→ <code>extract/split</code>(抽取)。这是"脏文本"最常见套路。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">删掉含缺失的行用?</p>
+  <button class="opt" data-ok="false">df.fillna()</button>
+  <button class="opt" data-ok="true">df.dropna()</button>
+  <button class="opt" data-ok="false">df.duplicated()</button>
+  <button class="opt" data-ok="false">df.isnull()</button>
+  <p class="reveal">dropna 删缺失行;isnull 只是看;fillna 是填。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">把 -999 哨兵值换 NaN?</p>
+  <button class="opt" data-ok="false">df.cut</button>
+  <button class="opt" data-ok="true">df.replace(-999, np.nan)</button>
+  <button class="opt" data-ok="false">df.map</button>
+  <button class="opt" data-ok="false">df.rename</button>
+  <p class="reveal">replace 用于改"值";rename 是改名;map 是映射变换。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">按固定边界分箱用?</p>
+  <button class="opt" data-ok="false">qcut</button>
+  <button class="opt" data-ok="true">cut</button>
+  <button class="opt" data-ok="false">fillna</button>
+  <button class="opt" data-ok="false">str.extract</button>
+  <p class="reveal">cut=固定边界;qcut=按数据量等分(每箱个数差不多)。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">字符串列整体操作用什么访问器?</p>
+  <button class="opt" data-ok="false">.dt</button>
+  <button class="opt" data-ok="true">.str</button>
+  <button class="opt" data-ok="false">.cat</button>
+  <button class="opt" data-ok="false">.map</button>
+  <p class="reveal">Series.str.xxx 字符串整体操作;.dt 是时间列,.cat 是类别列。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0004_数据清洗与变换.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A(书 7.1)</strong>:建带缺失的 DataFrame,练 isnull/dropna/fillna 各形态</li>
+  <li><strong>练习 B(书 7.2)</strong>:tips 数据去重、把某列哨兵值 replace、cut/qcut 年龄分箱</li>
+  <li><strong>练习 C(书 7.3 + hangsz 14)</strong>:对一列名字做 strip/upper/extract;用 re 拆一段文本</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>书 <a href="https://github.com/BrambleXu/pydata-notebook">第7章 三个小节</a>;<a href="https://pandas.pydata.org/docs/user_guide/missing_data.html">官方 Missing data</a> 与 <a href="https://pandas.pydata.org/docs/user_guide/text.html">Text data</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:fillna 的 method 和 cut 你熟了吗?下一课是仓库最缺的一块——<strong>合并与重塑</strong>(书第8章:merge/concat/join,用 hangsz 3/4/5 补)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-数据载入与输出.html">← 上一篇:数据载入与输出</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-合并与重塑.html">下一篇:合并与重塑 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

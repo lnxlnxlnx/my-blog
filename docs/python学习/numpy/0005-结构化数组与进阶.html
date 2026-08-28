@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numpy 0005 · 结构化数组与进阶</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>结构化数组与进阶</h1>
+<p class="meta">Numpy 专题 · 课程 0005 · 预计 30 分钟 · 配套 100 题 57、59、61、62、64~74</p>
+
+<p>有时数组元素是"复合记录"(如 坐标+颜色),或想按某列重排、算窗口均值。本课覆盖<strong>结构化数组</strong>(自定义 dtype)、<strong>按列排序</strong>、<strong>滑动窗口</strong> 与 <strong>groupby 式技巧</strong>,对应题 57、59、61、62、64~74。</p>
+
+<h2>知识点 1:结构化数组——元素是一"条记录"(题 46、48、51、57)</h2>
+<p>自定义 dtype 让数组的每个元素是一组命名字段(像 C 的 struct):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #001080">dt</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">dtype</span><span style="color: #000">([(</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;f8&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;f8&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #A31515">&quot;color&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;u1&quot;</span><span style="color: #000">)])</span>
+<span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">zeros</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #001080">dtype</span><span style="color: #000">=</span><span style="color: #001080">dt</span><span style="color: #000">)</span>
+<span style="color: #001080">Z</span><span style="color: #000">[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">1.0</span><span style="color: #000">,</span> <span style="color: #098658">2.0</span><span style="color: #000">,</span> <span style="color: #098658">3.0</span><span style="color: #000">]</span>       <span style="color: #008000"># 按字段名批量赋值</span>
+<span style="color: #001080">Z</span><span style="color: #000">[</span><span style="color: #A31515">&quot;color&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">255</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">128</span><span style="color: #000">]</span>
+<span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">,</span> <span style="color: #001080">m</span><span style="color: #000">)</span> <span style="color: #000">=</span> <span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">shape</span>               <span style="color: #008000"># 每个元素有 3 个字段</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">])</span>                  <span style="color: #008000"># [1. 2. 3.]</span>
+</pre>
+<p>题51:造一个"位置(x,y)+颜色(r,g,b)"的结构化数组——就是上例扩展成 struct。题46:坐标覆盖[0,1)的网格,用 <code>np.mgrid</code> / <code>np.meshgrid</code>。</p>
+
+<h2>知识点 2:按列重排(题 59)+ 距离/欧氏(题 52、61)</h2>
+<p>题59按第 n 列升序重排,用 argsort(前面讲了)。题61找最接近给定值的元素:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>
+<span style="color: #001080">z</span> <span style="color: #000">=</span> <span style="color: #098658">0.5</span>
+<span style="color: #001080">Z</span><span style="color: #000">[</span><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">argmin</span><span style="color: #000">(</span><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">abs</span><span style="color: #000">(</span><span style="color: #001080">Z</span> <span style="color: #000">-</span> <span style="color: #001080">z</span><span style="color: #000">))]</span>        <span style="color: #008000"># 最接近 z 的元素</span>
+</pre>
+<p>题52:两个向量集合求两两距离:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">))</span>
+<span style="color: #001080">B</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">))</span>
+<span style="color: #008000"># 逐个距离(5 个)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">linalg</span><span style="color: #000">.</span><span style="color: #001080">norm</span><span style="color: #000">(</span><span style="color: #001080">A</span> <span style="color: #000">-</span> <span style="color: #001080">B</span><span style="color: #000">,</span> <span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>      <span style="color: #008000"># 每个 (A[i]-B[i]) 的模</span>
+</pre>
+<p><code>np.linalg.norm(x, axis=n)</code> 是"沿轴的模"(欧氏距离)。这是向量距离的通用求法。</p>
+
+<h2>知识点 3:多维聚合 & 梯度(题 67、73)</h2>
+<p>题67:对 (w,h,3) 图像按最后两维求和:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">img</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">))</span>
+<span style="color: #008000"># 期望:把最后两维(空间)求和,保留通道</span>
+<span style="color: #001080">img</span><span style="color: #000">.</span><span style="color: #001080">sum</span><span style="color: #000">(</span><span style="color: #001080">axis</span><span style="color: #000">=(-</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">1</span><span style="color: #000">))</span>             <span style="color: #008000"># 一维长度为 3</span>
+<span style="color: #008000"># 或 reshape:img.reshape(10, -1).sum(axis=1)</span>
+</pre>
+<p>axis 可以是负的(从尾部数)。题73 涉及三角网格,用 <code>np.unique</code> 去重边(unique 前文讲过)。</p>
+
+<h2>知识点 4:groupby 式思路——bincount / segsum(题 64、65、68)</h2>
+<p>要点:别写 for 循环遍历下标,用向量化"按标签累加":</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 题64:给向量,把&quot;用另一下标索引的元素&quot;各加 1</span>
+<span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">zeros</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)</span>
+<span style="color: #001080">I</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">array</span><span style="color: #000">([</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">])</span>
+<span style="color: #001080">Z</span> <span style="color: #000">+=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">bincount</span><span style="color: #000">(</span><span style="color: #001080">I</span><span style="color: #000">,</span> <span style="color: #001080">minlength</span><span style="color: #000">=</span><span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">))</span>   <span style="color: #008000"># I里0出现1次,2两次,3一次</span>
+<span style="color: #008000"># → Z = [1,0,2,1,0]</span>
+
+<span style="color: #008000"># np.add.at 也是&quot;打散添加&quot;的工具</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">add</span><span style="color: #000">.</span><span style="color: #001080">at</span><span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">,</span> <span style="color: #001080">I</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">)</span>                      <span style="color: #008000"># 等价做法,可加任意权重</span>
+</pre>
+<p>题65(accumulate X to F based on index)就是 <code>np.add.at(F, I, X)</code> 的直译。题68(分组均值):用 <code>np.bincount(索引, weights=值)/np.bincount(索引)</code>。</p>
+
+<h2>知识点 5:滑动窗口——sliding_window_view(题 70、75)</h2>
+<p>近年官方推荐 <code>np.lib.stride_tricks.sliding_window_view</code> 做"每 N 个连续"的处理:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">x</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">numpy.lib.stride_tricks</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">sliding_window_view</span>
+<span style="color: #001080">W</span> <span style="color: #000">=</span> <span style="color: #001080">sliding_window_view</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">)</span>         <span style="color: #008000"># shape (8,3):每行是连续3个</span>
+<span style="color: #001080">avg</span> <span style="color: #000">=</span> <span style="color: #001080">W</span><span style="color: #000">.</span><span style="color: #001080">mean</span><span style="color: #000">(</span><span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>                  <span style="color: #008000"># 滑动窗口均值(题75)</span>
+</pre>
+<p>题70:从 [1..5] 构造"3个连续"的新向量——用 sliding_window_view(then 也许 reshape)。它把"相邻 N 个"变成"矩阵每行",后续按行操作即可,是滑窗类题的最佳工具。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">结构化数组元素是?</p>
+  <button class="opt" data-ok="false">单个数字</button>
+  <button class="opt" data-ok="true">一条记录</button>
+  <button class="opt" data-ok="false">一个矩阵</button>
+  <button class="opt" data-ok="false">None</button>
+  <p class="reveal">结构化 dtype 让每个元素是一组命名字段,像 struct。题51。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">找最接近 z 的元素?</p>
+  <button class="opt" data-ok="false">np.sort(Z)</button>
+  <button class="opt" data-ok="true">Z[argmin(abs(Z-z))]</button>
+  <button class="opt" data-ok="false">np.mean(Z)</button>
+  <button class="opt" data-ok="false">Z.max()</button>
+  <p class="reveal">绝对值差最小 = 最接近。题61。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">沿最后两维求和用 axis?</p>
+  <button class="opt" data-ok="false">(1,2)</button>
+  <button class="opt" data-ok="true">(-2,-1)</button>
+  <button class="opt" data-ok="false">(0,1)</button>
+  <button class="opt" data-ok="false">(2,3)</button>
+  <p class="reveal">负 axis 从末尾数。题67。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">做 3 元素滑动均值,现代写法?</p>
+  <button class="opt" data-ok="false">手写 for</button>
+  <button class="opt" data-ok="true">sliding_window_view+mean</button>
+  <button class="opt" data-ok="false">np.roll+累加</button>
+  <button class="opt" data-ok="false">np.tile</button>
+  <p class="reveal">sliding_window_view 生成窗口矩阵,再 mean(axis=1)。题75。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/numpy/0005_结构化数组与进阶.ipynb</code>:</p>
+<ul>
+  <li><strong>题 57、59、61、62、64~74</strong>:numpy-100 原题</li>
+  <li><strong>额外</strong>:给自己造一个"点集"结构化数组,算两两距离</li>
+</ul>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:bincount 这招学会了吗?最后一课<strong>高级题型总复习</strong>(题 75~100),把最难的一批融会贯通。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-排序统计与随机.html">← 上一篇:排序、统计与随机</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-高级题型总复习.html">下一篇:高级题型总复习 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

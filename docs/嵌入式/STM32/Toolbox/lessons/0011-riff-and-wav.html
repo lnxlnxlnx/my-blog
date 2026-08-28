@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 11 课：RIFF 与 WAV 格式 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 11 课</nav>
+
+<h1>第 11 课：RIFF 与 WAV 格式</h1>
+<p class="subtitle">把声音装进文件：RIFF 块结构 + WAV 波形格式（《WAV 文件格式分析与应用》全文）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>BMP 讲完了图片，这课讲声音。学完你能说清 RIFF"块（chunk）"结构的四个要素，读懂 WAV 文件里的 <code>fmt</code> 和 <code>data</code> 两个子块，从 <code>PCMWAVEFORMAT</code> 的六个字段算出"这段音频怎么播放"，并能用十六进制工具解析任意 WAV 的头部——这是下一课做 WAV 播放器的全部解码依据。</p>
+</div>
+
+<h2>1. RIFF 概念：一切从块开始</h2>
+
+<p>Windows 下大部分多媒体文件都按"资源互换文件格式"（RIFF，Resources Interchange File Format）存放，WAV、AVI 都是它的衍生物（<span class="pg">章节 一</span>）。RIFF 是树状结构，基本构成单位叫<strong>块（chunk）</strong>，每个块由三部分组成（<span class="pg">章节 一</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">+--------------------- 一个 chunk（长度 = 数据大小 + 8） ---------------------+
+| 辨别码 (4 字节)      |  数据大小 (4 字节)     |  数据 (数据大小 字节)        |
+| 4 个 ASCII 字符      |  紧跟数据的长度,Byte   |  实际内容                  |
++---------------------+------------------------+----------------------------+
+ 例: "fmt "               0x10 = 16                波形参数结构体</pre>
+
+<p>要点（<span class="pg">章节 一</span>）：</p>
+<ul>
+<li><strong>辨别码</strong>是 4 个 ASCII 字符，如 <code>"fmt "</code>（注意最后一个空格）</li>
+<li><strong>数据大小本身占 4 字节</strong>，所以一个 chunk 总长度 = 数据大小 + 8</li>
+<li>chunk 一般不允许再含 chunk，但 <strong>"RIFF" 和 "LIST" 两个例外</strong>可以嵌套——它们会从数据里切出 4 字节作<strong>格式辨别码</strong>；且整个文件<strong>只能有一个 "RIFF" chunk</strong>（<span class="pg">章节 一</span>）</li>
+</ul>
+
+<div class="tip">
+  <p>💡 教材给的类比很妙（<span class="pg">章节 一</span>）：<strong>RIFF chunk = 硬盘根目录，格式辨别码 = 盘符（C: 或 D:），LIST chunk = 子目录，普通 chunk = 文件</strong>。RIFF 文件就是"规定好目录里能放什么"的一套规则。你解析 WAV 时，其实就是沿着这套目录树找你要的文件。</p>
+</div>
+
+<h2>2. WAV 文件结构：RIFF 'WAVE' 的两个子块</h2>
+
+<p>WAVE 文件是最简单的一种 RIFF 文件，格式类型（格式辨别码）是 <code>"WAVE"</code>。RIFF 块里只含两个子块：<code>"fmt "</code> 和 <code>"data"</code>（<span class="pg">章节 二</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">+-------------------------------------------------------------+
+|  "RIFF"  |  数据大小  |  "WAVE"                              |   ← 外层 RIFF 块
++-------------------------------------------------------------+
+|  "fmt "  |  大小      |  PCMWAVEFORMAT 结构                   |   ← 波形格式子块
++-------------------------------------------------------------+
+|  "data"  |  大小      |  声音数据（采样样本）                  |   ← 音频数据子块
++-------------------------------------------------------------+
+
+  "fmt " 块大小 = sizeof(PCMWAVEFORMAT)，数据体就是该结构
+  "data" 块大小 = 音频数据的字节数</pre>
+
+<p>你解析 WAV 时只做两件事：找到 <code>"fmt "</code> 读出参数，找到 <code>"data"</code> 读出采样。跟第 10 课解析 BMP 的"找头 → 定位数据"是同一套思路。</p>
+
+<h2>3. WAVEFORMAT / PCMWAVEFORMAT：六个关键字段</h2>
+
+<p><code>"fmt "</code> 块的数据体是 <code>PCMWAVEFORMAT</code> 结构（<span class="pg">章节 二</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* WAVEFORMAT：波形格式（14 字节） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    WORD  wFormatTag;        <span style="color:#008000">/* 编码格式：1 = WAVE_FORMAT_PCM（无压缩 PCM） */</span>
+    WORD  nChannels;         <span style="color:#008000">/* 声道数：1 单声道，2 双声道 */</span>
+    DWORD nSamplesPerSec;    <span style="color:#008000">/* 采样频率（每秒采样次数），如 44100 */</span>
+    DWORD nAvgBytesPerSec;   <span style="color:#008000">/* 每秒数据量 = nChannels × nSamplesPerSec × wBitsPerSample / 8 */</span>
+    WORD  nBlockAlign;       <span style="color:#008000">/* 块对齐 = nChannels × wBitsPerSample / 8，一次要处理的样本字节数 */</span>
+} WAVEFORMAT;
+
+<span style="color:#008000">/* PCMWAVEFORMAT = WAVEFORMAT + 采样位数（16 字节） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    WAVEFORMAT wf;           <span style="color:#008000">/* 波形格式 */</span>
+    WORD       wBitsPerSample; <span style="color:#008000">/* 每个声道每样本的位数，如 16 */</span>
+} PCMWAVEFORMAT;</pre>
+
+<p>逐字段怎么用（<span class="pg">章节 二</span>）：</p>
+<ul>
+<li><strong>wFormatTag = 1</strong>：PCM 无压缩。其他值（如 ADPCM）得先解压才能播放——本课只处理 PCM</li>
+<li><strong>nSamplesPerSec</strong>：44100 就是"每秒采 44100 个点"，它决定了播放节奏（配合定时器/DMA）</li>
+<li><strong>nAvgBytesPerSec</strong>：播放软件用它估算缓冲区大小，也等于"一秒钟吃掉多少数据"</li>
+<li><strong>nBlockAlign</strong>：一个采样帧（含所有声道）的字节数，读数据时按它整块读</li>
+<li><strong>wBitsPerSample</strong>：采样位深，16 位就是每个样本 2 字节，各声道一致</li>
+</ul>
+
+<h2>4. 采样数据布局：16 位单声道/双声道</h2>
+
+<p><code>"data"</code> 块里的样本排列取决于声道数（<span class="pg">章节 二</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"># 16 位单声道：样本一个个顺序排
+| 采样1 低字节 | 采样1 高字节 | 采样2 低字节 | 采样2 高字节 | ...
+
+# 16 位双声道：左右声道交替出现（interleave）
+| 左1 低 | 左1 高 | 右1 低 | 右1 高 | 左2 低 | 左2 高 | 右2 低 | 右2 高 | ...
+
+# 都是小端序：低字节在前。一个"帧" = nBlockAlign 字节（双声道 = 4 字节）</pre>
+
+<div class="warn">
+  <p>⚠️ 和 BMP 的 BGR 一样，音频也有字节序坑：WAV 里 16 位样本<strong>低字节在前（小端）</strong>。在 STM32 上直接按 uint16_t 读其实正好对齐（Cortex-M 就是小端），但如果你做数据校验、把文件挪到大端环境，就必须交换高低字节——看到 <code>0x2C 0x01</code> 要能读出 <code>0x012C = 300</code>，而不是 0x2C01。</p>
+</div>
+
+<h2>5. 实例分析：逐字节读一个 WAV</h2>
+
+<p>教材给了一个真实的 WAV 文件头十六进制转储（<span class="pg">实例分析</span>），逐字段拆开：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">偏移   十六进制数据                            ASCII    解读
+0000   52 49 46 46 0A 06 01 00 57 41 56 45   RIFF....  "RIFF" + 块大小 + "WAVE"
+000C   66 6D 74 20 10 00 00 00 01 00 02 00   fmt ....  "fmt " + 块大小 0x10 = 16
+0018   44 AC 00 00 10 B1 02 00 04 00 10 00   D........  nSamplesPerSec=0xAC44=44100
+0024   64 61 74 61 E6 05 01 00 00 00 00 00   data....  "data" + 块大小 0x000105E6=67046</pre>
+
+<table>
+<tr><th>偏移</th><th>字段</th><th>值（小端展开）</th><th>含义</th></tr>
+<tr><td>00H</td><td>RIFF 标志</td><td>"RIFF"</td><td>RIFF 容器</td></tr>
+<tr><td>04H</td><td>块大小</td><td>0x0001060A = 67082</td><td>RIFF 块数据长度 = 文件大小 - 8</td></tr>
+<tr><td>08H</td><td>格式辨别码</td><td>"WAVE"</td><td>这是一个 WAV 文件</td></tr>
+<tr><td>0CH</td><td>子块标志</td><td>"fmt "</td><td>波形格式子块（注意尾空格）</td></tr>
+<tr><td>10H</td><td>fmt 块大小</td><td>0x10 = 16</td><td>数据体 = PCMWAVEFORMAT（16 字节）</td></tr>
+<tr><td>14H</td><td>wFormatTag</td><td>0x0001</td><td>WAVE_FORMAT_PCM，无压缩</td></tr>
+<tr><td>16H</td><td>nChannels</td><td>0x0002</td><td>双声道</td></tr>
+<tr><td>18H</td><td>nSamplesPerSec</td><td>0x0000AC44 = 44100</td><td>CD 级采样率</td></tr>
+<tr><td>1CH</td><td>nAvgBytesPerSec</td><td>0x0002B110 = 176400</td><td>= 44100 × 2 × 16/8 ✓</td></tr>
+<tr><td>20H</td><td>nBlockAlign</td><td>0x0004</td><td>= 2 × 16/8 = 4 字节/帧</td></tr>
+<tr><td>22H</td><td>wBitsPerSample</td><td>0x0010 = 16</td><td>每样本 16 位</td></tr>
+<tr><td>24H</td><td>子块标志</td><td>"data"</td><td>音频数据子块</td></tr>
+<tr><td>28H</td><td>data 块大小</td><td>0x000105E6 = 67046</td><td>音频数据字节数</td></tr>
+</table>
+
+<p>数据互相咬合验证：176400 = 44100×2×16/8 ✓；4 = 2×16/8 ✓。时长 = 67046 ÷ 176400 ≈ <strong>0.38 秒</strong>。这段声音就是"44.1kHz、16 位、双声道、不到半秒"的一小段 PCM。</p>
+
+<div class="tip">
+  <p>💡 这套"字段互相验证"的读法就是嵌入式工程师的第六感：解析任何文件，拿到数据先算一算是否自洽（每秒字节数 = 采样率×声道×位深/8？块对齐对不对？）。对不上说明读错了字段或字节序。第 10 课我们验证过 BMP 的 bfSize，这里再验一遍，习惯就养成了。</p>
+</div>
+
+<h2>6. 代码示例</h2>
+
+<p>示例 1：RIFF 通用 chunk 头 + WAV 结构体。chunk 头是 RIFF 世界的"通用文件头"，BMP 没有这层——这就是 WAV 比 BMP 多出来的容器层。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 11 课：RIFF / WAV 结构定义 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&lt;stdint.h&gt;</span></span>
+
+<span style="color:#008000">/* RIFF chunk 通用头：8 字节。辨别码 + 数据大小，数据紧跟其后 */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint8_t</span>  ckID[<span style="color:#098658">4</span>];      <span style="color:#008000">/* 4 字节辨别码，如 &quot;RIFF&quot;/&quot;fmt &quot;/&quot;data&quot; */</span>
+    <span style="color:#267F99">uint32_t</span> ckSize;       <span style="color:#008000">/* 数据大小（不含这 8 字节），小端 */</span>
+} __attribute__((packed)) RIFF_CHUNK;
+
+<span style="color:#008000">/* &quot;fmt &quot; 块的数据体：PCMWAVEFORMAT（16 字节） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint16_t</span> wFormatTag;      <span style="color:#008000">/* 1 = PCM */</span>
+    <span style="color:#267F99">uint16_t</span> nChannels;       <span style="color:#008000">/* 1/2 */</span>
+    <span style="color:#267F99">uint32_t</span> nSamplesPerSec;  <span style="color:#008000">/* 44100 */</span>
+    <span style="color:#267F99">uint32_t</span> nAvgBytesPerSec; <span style="color:#008000">/* 每秒字节数 */</span>
+    <span style="color:#267F99">uint16_t</span> nBlockAlign;     <span style="color:#008000">/* 帧字节数 */</span>
+    <span style="color:#267F99">uint16_t</span> wBitsPerSample;  <span style="color:#008000">/* 位深 */</span>
+} __attribute__((packed)) PCMWAVEFORMAT;
+
+<span style="color:#008000">/* 常用校验宏：检查读到的头是不是 &quot;RIFF&quot;（小端内存比较） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> IS_RIFF(p)  ((p)[0]==<span style="color:#A31515">&#x27;R&#x27;</span> &amp;&amp; (p)[1]==<span style="color:#A31515">&#x27;I&#x27;</span> &amp;&amp; (p)[2]==<span style="color:#A31515">&#x27;F&#x27;</span> &amp;&amp; (p)[3]==<span style="color:#A31515">&#x27;F&#x27;</span>)</span></pre>
+
+<p>示例 2：沿 chunk 链遍历，找 <code>"fmt "</code> 和 <code>"data"</code>。这段逻辑和 BMP 的"跳 bfOffBits"同源，但更通用——它顺着 chunk 大小一路往下跳，以后解析 AVI、其他 RIFF 文件全是它。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 11 课：遍历 RIFF 子块，取出 fmt 参数和 data 位置 */</span>
+<span style="color:#008000">/* 假设 file 已打开并停在 RIFF 头之后（偏移 12，即跳过 &quot;RIFF&quot;+大小+&quot;WAVE&quot;） */</span>
+<span style="color:#267F99">int</span> <span style="color:#795E26">riff_find_data</span><span style="color:#001080">(FIL *fp, PCMWAVEFORMAT *wfmt,
+                   <span style="color:#267F99">uint32_t</span> file_size, <span style="color:#267F99">uint32_t</span> *data_pos, <span style="color:#267F99">uint32_t</span> *data_len)</span>
+{
+    RIFF_CHUNK ck;
+    UINT br;
+    <span style="color:#267F99">uint32_t</span> pos = <span style="color:#098658">12</span>;   <span style="color:#008000">/* 跳过 &quot;RIFF&quot;(4) + 大小(4) + &quot;WAVE&quot;(4) */</span>
+
+    <span style="color:#0000FF">while</span> (pos + <span style="color:#098658">8</span> &lt;= file_size) {
+        f_lseek(fp, pos);
+        f_read(fp, &amp;ck, <span style="color:#0000FF">sizeof</span>(ck), &amp;br);
+
+        <span style="color:#0000FF">if</span> (<span style="color:#795E26">memcmp</span>(ck.ckID, <span style="color:#A31515">&quot;fmt &quot;</span>, <span style="color:#098658">4</span>) == <span style="color:#098658">0</span>) {
+            f_read(fp, wfmt, <span style="color:#0000FF">sizeof</span>(*wfmt), &amp;br);   <span style="color:#008000">/* 读波形参数 */</span>
+        } <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (<span style="color:#795E26">memcmp</span>(ck.ckID, <span style="color:#A31515">&quot;data&quot;</span>, <span style="color:#098658">4</span>) == <span style="color:#098658">0</span>) {
+            *data_pos = pos + <span style="color:#098658">8</span>;                     <span style="color:#008000">/* 音频数据起点 */</span>
+            *data_len = ck.ckSize;                   <span style="color:#008000">/* 音频字节数 */</span>
+            <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+        }
+        pos += <span style="color:#098658">8</span> + ck.ckSize;                        <span style="color:#008000">/* 跳到下一个 chunk */</span>
+    }
+    <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;   <span style="color:#008000">/* 没找到 data */</span>
+}
+
+<span style="color:#008000">/* 验证要点：读出的 wfmt.nAvgBytesPerSec 应等于
+   nSamplesPerSec * nChannels * wBitsPerSample / 8，不符就是读错位了 */</span></pre>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 11.1：解剖一个真实 WAV</h3>
+  <p class="step">1️⃣ 用录音机（或画图工具生成的音频）导出一小段 WAV，用 WinHex / VS Code Hex 插件打开。</p>
+  <p class="step">2️⃣ 对照第 5 节表格，逐字节读出全部参数：RIFF 块大小、fmt 块大小、wFormatTag、nChannels、nSamplesPerSec、nAvgBytesPerSec、nBlockAlign、wBitsPerSample、data 块大小。</p>
+  <p class="step">3️⃣ 验收：验证 nAvgBytesPerSec = nSamplesPerSec×nChannels×wBitsPerSample/8，nBlockAlign = nChannels×wBitsPerSample/8，再算算这段音频时长。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 11.2：用 C 扫描 chunk 链</h3>
+  <p class="step">1️⃣ 用第 10 课搭好的 FATFS + SD 卡环境，把示例 2 的 <code>riff_find_data()</code> 跑起来，读 SD 卡上的 <code>TEST.WAV</code>。</p>
+  <p class="step">2️⃣ 打印出 wfmt 的六个字段，和练习 11.1 用 Hex 工具读到的值对比，必须完全一致。</p>
+  <p class="step">3️⃣ 思考题：如果播放 2 秒这段音频，需要为 <code>data</code> 数据准备多大的缓冲区？（提示：nAvgBytesPerSec × 2）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 一个 chunk 的总长度是？</p>
+  <p class="opt">A. 数据大小</p>
+  <p class="opt">B. 数据大小加 8</p>
+  <p class="opt">C. 数据大小加 4</p>
+  <details><summary>查看答案</summary><div class="answer">B。辨别码 4 字节 + 数据大小 4 字节 + 数据，共"数据大小 + 8"（章节 一）。</div></details>
+
+  <p class="q">Q2. WAV 文件里格式辨别码 "WAVE" 出现在哪？</p>
+  <p class="opt">A. 每个子块的辨别码位置</p>
+  <p class="opt">B. "fmt " 块的数据体里</p>
+  <p class="opt">C. 外层 RIFF chunk 数据的最前面 4 字节</p>
+  <details><summary>查看答案</summary><div class="answer">C。RIFF/LIST 块从数据中切出 4 字节作格式辨别码，WAVE 文件就是 "WAVE"（章节 一/二）。</div></details>
+
+  <p class="q">Q3. wFormatTag = 1 表示什么？</p>
+  <p class="opt">A. 16 位采样</p>
+  <p class="opt">B. 无压缩的 PCM 音频</p>
+  <p class="opt">C. 双声道</p>
+  <details><summary>查看答案</summary><div class="answer">B。1 = WAVE_FORMAT_PCM，表示波形数据是未压缩的 PCM（章节 二）。</div></details>
+
+  <p class="q">Q4. 16 位双声道 WAV 中，样本的排列顺序是？</p>
+  <p class="opt">A. 全部左声道，再全部右声道</p>
+  <p class="opt">B. 左右声道交替：左1右1左2右2…，每样本低字节在前</p>
+  <p class="opt">C. 按采样时间倒序排列</p>
+  <details><summary>查看答案</summary><div class="answer">B。多声道样本交替出现，16 位每样本 = 低字节+高字节（小端）（章节 二）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 《WAV 文件格式分析与应用》全文——本课全部依据（RIFF 概念、WAV 结构、实例分析 hexdump）</li>
+<li>🔧 Windows 自带录音机 + WinHex / VS Code Hex 插件——练习 11.1 的素材与工具</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 12 课——WAV 播放器！把本课解析出的参数喂给 STM32 的 DAC + DMA + 定时器，让 SD 卡里的 PCM 数据真正变成声音从喇叭里放出来。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0010-bmp-parser-in-action.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0012-wav-player.html">下一课：WAV 播放器 →</a>
+</nav>
+
+</div>
+</body>
+</html>

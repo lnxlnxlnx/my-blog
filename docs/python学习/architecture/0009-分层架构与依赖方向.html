@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0009 · 分层架构与依赖方向</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>分层架构与依赖方向</h1>
+<p class="meta">架构与设计模式 · 课程 0009 · 预计 20 分钟</p>
+
+<p>第一课我们说「架构 = 模块之间怎么组织、依赖朝哪个方向」。前面把招式学完,这课终于画出地图。<strong>分层架构(Layered Architecture)</strong>是最通用、最易懂的代码组织方式。</p>
+
+<h2>知识点 1:三条主线——表现 / 业务 / 数据</h2>
+<p>绝大多数程序可以切三层,你的 ML 项目也不例外:</p>
+<div class="grid">
+  <div class="card"><h3>表现层 Presentation</h3><p>和人/系统打交道:CLI、API、notebook 入口、报表展示。</p></div>
+  <div class="card"><h3>业务层 Domain</h3><p>核心逻辑:训练、特征、评估、调参。不关心在哪儿展示、怎么存储。</p></div>
+  <div class="card"><h3>数据层 Data</h3><p>和外部资源打交道:数据库、文件、缓存、第三方 API。</p></div>
+</div>
+<p>规则只有一条:<strong>依赖只许向下</strong>——表现层可以依赖业务层,业务层可以依赖数据层;<strong>反过来禁止</strong>(数据层绝不该 import 表现层)。</p>
+
+<h2>知识点 2:为什么要单向依赖</h2>
+<pre lang="python" class="highlight"><span style="color: #008000"># 坏:数据层偷偷碰到了表现层 —— 依赖向上,成一团乱麻</span>
+<span style="color: #008000"># data/loader.py</span>
+<span style="color: #008000">#   from ui.progress import show_progress   ← 数据层竟然依赖界面</span>
+
+<span style="color: #008000"># 好:数据层只管数据,不关心谁在看</span>
+<span style="color: #008000"># data/loader.py</span>
+<span style="color: #008000">#   def load(path, on_progress=None): ...   ← 最多收个回调,不 import 上层</span>
+</pre>
+<p>单向依赖的价值:每一层可以<strong>单独改、单独测</strong>。表现层明天从 CLI 换 Web,业务层和数据层一行不动。依赖一旦成环,改 A 影响 B、改 B 又影响 A,没人敢动。</p>
+
+<h2>知识点 3:依赖方向的具体规则——高层依赖抽象</h2>
+<p>层与层之间连接时,遵守同一句话:<strong>高层策略依赖「约定」,不依赖「具体实现」</strong>。这正好用上前几课全部内功:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 业务层的 Service 依赖接口,不依赖具体存储(依赖抽象):</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">ExperimentService</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">store</span><span style="color: #000">):</span>          <span style="color: #008000"># store 是「抽象/接口」,注入</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">store</span> <span style="color: #000">=</span> <span style="color: #001080">store</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">run</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">cfg</span><span style="color: #000">):</span>
+        <span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_train</span><span style="color: #000">(</span><span style="color: #001080">cfg</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">store</span><span style="color: #000">.</span><span style="color: #001080">save</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">)</span>          <span style="color: #008000"># 不知道是 FileStore 还是 DBStore</span>
+
+<span style="color: #008000"># 数据层提供实现,并「向上」注册给业务层(反转控制):</span>
+<span style="color: #001080">file_store</span> <span style="color: #000">=</span> <span style="color: #001080">FileStore</span><span style="color: #000">()</span>
+<span style="color: #001080">service</span> <span style="color: #000">=</span> <span style="color: #001080">ExperimentService</span><span style="color: #000">(</span><span style="color: #001080">file_store</span><span style="color: #000">)</span>   <span style="color: #008000"># 组合点在这里</span>
+</pre>
+<p>这就是<strong>依赖反转(Dependency Inversion)</strong>:具体实现由最外层(组合根)组装后<strong>注入</strong>进来;业务层永远只认识接口。第一课的 <code>make_trainer()</code> 到第八课的构造器注入,全是这套思想。</p>
+
+<h2>知识点 4:一个 ML 项目目录长什么样</h2>
+<p>把三层化成目录,一目了然(<a href="https://docs.python-guide.org/writing/structure/">Hitchhiker's Guide 结构建议</a>):</p>
+<pre lang="bash" class="highlight">my_project/
+├──<span style="color: #000"> </span>app.py<span style="color: #000">                 </span><span style="color: #008000"># 组合根 + 表现层入口(CLI/API)</span>
+├──<span style="color: #000"> </span>domain/<span style="color: #000">                </span><span style="color: #008000"># 业务层:核心逻辑</span>
+│<span style="color: #000">   </span>├──<span style="color: #000"> </span>trainers.py<span style="color: #000">        </span><span style="color: #008000">#   BaseTrainer / make_trainer</span>
+│<span style="color: #000">   </span>├──<span style="color: #000"> </span>features.py
+│<span style="color: #000">   </span>└──<span style="color: #000"> </span>metrics.py
+├──<span style="color: #000"> </span>data/<span style="color: #000">                  </span><span style="color: #008000"># 数据层:IO / 存储 / 第三方</span>
+│<span style="color: #000">   </span>├──<span style="color: #000"> </span>loader.py
+│<span style="color: #000">   </span>└──<span style="color: #000"> </span>store.py
+├──<span style="color: #000"> </span>tests/<span style="color: #000">                 </span><span style="color: #008000"># 测试(可以 mock 掉 data 层)</span>
+│<span style="color: #000">   </span>└──<span style="color: #000"> </span>test_trainers.py
+└──<span style="color: #000"> </span>config.py<span style="color: #000">              </span><span style="color: #008000"># 配置:传给组合根</span>
+</pre>
+<p>按<strong>功能模块</strong>分组(一个功能一个包),比按层建三个大包更好用——因为「改一个功能」时,动的文件都在一处。<strong>依赖规则照旧:包之间只许向下。</strong></p>
+
+<h2>知识点 5:判断你自己代码的依赖方向</h2>
+<p>回到第一课的四步法,第 2 步「画依赖」此刻升级了:画完箭头,问两个问题:</p>
+<ol>
+  <li>有没有<strong>向下的环</strong>?(A→B→A 就是环,要拆)</li>
+  <li>业务核心有没有<strong>漏到表现/数据层</strong>?(比如 app.py 里写训练循环 = 业务逻辑漏到入口)</li>
+</ol>
+<p>AI 生成的代码最常见毛病,就是<strong>把业务逻辑全写在脚本/入口里</strong>。你能指出「这个入口太胖了,业务应该下沉」,就能帮团队重构——这就是参与复杂项目的基本功。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">分层架构依赖应?</p>
+  <button class="opt" data-ok="false">下层依赖上层功能</button>
+  <button class="opt" data-ok="false">各层互相都依赖</button>
+  <button class="opt" data-ok="false">依赖永远向上走</button>
+  <button class="opt" data-ok="true">上层依赖下层接口</button>
+  <p class="reveal">依赖只许向下:表现层→业务层→数据层,反向禁止,否则改一点全动。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">依赖方向关键原则?</p>
+  <button class="opt" data-ok="false">低层依赖具体服务</button>
+  <button class="opt" data-ok="false">依赖必须成环状</button>
+  <button class="opt" data-ok="false">每个依赖都要省</button>
+  <button class="opt" data-ok="true">高层依赖抽象服务</button>
+  <p class="reveal">高层策略依赖「约定/接口」,具体实现由组合根注入——这就是依赖反转。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">包按什么分组最清晰?</p>
+  <button class="opt" data-ok="false">按代码行数分组</button>
+  <button class="opt" data-ok="false">按作者习惯分组</button>
+  <button class="opt" data-ok="false">按依赖数量分组</button>
+  <button class="opt" data-ok="true">按功能模块分组</button>
+  <p class="reveal">按功能模块分组:「改一个功能时动的文件都在一处」,比按层三大包更好维护。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0009_分层架构与依赖方向.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把一个「全写在脚本里的训练流程」拆成表现 / 业务 / 数据三层目录结构</li>
+  <li><strong>练习 B</strong>:找出给定依赖关系里的环,并重排成单向</li>
+  <li><strong>练习 C</strong>:用「两问法」评估一个你 repo 里的文件,记下依赖方向结论(这个练习最值钱)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Cosmic Python · 开篇</strong>(<a href="https://www.cosmicpython.com/book/preface.html">免费在线阅读</a>):读前两章「Domain Modelling」「Repository Pattern」的标题级内容,感受一个真实项目怎么分层。它是本项目架构阶段的主线书,先混个轮廓。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 里你拆掉了几条环?下一课是<strong>最后一课</strong>:把十课内功全用上,四步法实拆真实开源项目(scikit-learn),并给你一张「读完大项目 + 参与合作」的行动清单。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0008-组合优于继承与依赖注入.html">← 上一篇:组合优于继承与依赖注入</a>
+  <a href="index.html">课程地图</a>
+  <a href="0010-实战-四步法拆真实开源项目.html">下一篇:实战:四步法拆真实开源项目 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

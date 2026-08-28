@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>嵌入式工程师工具箱 — 课程总览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="course-hero">
+  <h1>嵌入式工程师工具箱</h1>
+  <p class="subtitle">构建与调试 · 代码规范 · 多媒体文件格式 · CAN 总线 · 20 课</p>
+</div>
+
+<div class="goal">
+  <p><strong>课程使命：</strong>补全 LVGL/FreeRTOS/lwIP 之外"工程师日常"的硬技能。教材来自 <code>参考文档/other/</code> 的 9 份文档（正点原子技术文档 / ISO JPEG 标准 / 瑞萨 CAN 教程 / GIF 英文文章），按主题重组。详见 <a href="MISSION.md">MISSION.md</a> 与 <a href="RESOURCES.md">RESOURCES.md</a>。</p>
+</div>
+
+<h2>课程地图（20 课，五大模块）</h2>
+<p>每课一个独立页面，含知识讲解 + 源码/格式分析 + 自测 + 真机练习。🟡 进行中 · ⬜ 未开始</p>
+
+<h3>模块一：构建与调试（01~04）</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">01</span> MDK 编译产物全解<span class="stage"> · MAP 浅析第 1 章</span>
+    <div class="desc">.c→.o→.axf→.hex 编译链路、11 类文件、.htm 栈深分析
+      <a href="lessons/0001-build-artifacts.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">02</span> MAP 文件深读<span class="stage"> · MAP 浅析第 2 章</span>
+    <div class="desc">五大组成部分：符号表/内存分布图/组件大小，读懂 Code/RO/RW/ZI <a href="lessons/0002-map-file-deep-dive.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">03</span> 启动文件：从复位到 main<span class="stage"> · 启动文件浅析</span>
+    <div class="desc">栈堆开辟、向量表、Reset_Handler、_main 流程、启动文件逐段解析 <a href="lessons/0003-startup-file.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">04</span> 调试器实战<span class="stage"> · STLINK 教程 + 扩展</span>
+    <div class="desc">ST-Link 驱动/配置/固件升级、JTAG/SWD、在线调试技巧（断点/变量/调用栈） <a href="lessons/0004-debugger-in-action.html">→ 上课</a></div></li>
+</ul>
+
+<h3>模块二：代码规范（05~07）</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">05</span> 规范总览与排版注释<span class="stage"> · C 规范第 1/2 章</span>
+    <div class="desc">缩进/行宽/括号空格、注释风格与文件头注释 <a href="lessons/0005-coding-style-format.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">06</span> 命名与函数<span class="stage"> · C 规范第 3/4 章</span>
+    <div class="desc">文件/变量/函数/宏命名规则、函数设计与封装原则 <a href="lessons/0006-coding-style-naming.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">07</span> 变量、宏与常量<span class="stage"> · C 规范第 5/6 章</span>
+    <div class="desc">变量声明规范、宏定义规范、常量管理 + 用规范重构工程代码 <a href="lessons/0007-coding-style-vars-macros.html">→ 上课</a></div></li>
+</ul>
+
+<h3>模块三：多媒体文件格式（08~15）</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">08</span> 像素与调色板<span class="stage"> · BMP 详解第 1 部分</span>
+    <div class="desc">位图概念、RGB 量化、调色板原理（与 LVGL 颜色深度衔接） <a href="lessons/0008-pixels-and-palette.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">09</span> BMP 文件结构详解<span class="stage"> · BMP 详解第 2 部分</span>
+    <div class="desc">文件头/信息头/调色板/像素数据的字节布局 <a href="lessons/0009-bmp-format.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">10</span> 真机实战：BMP 解析器<span class="stage"> · 工程扩展</span>
+    <div class="desc">读 SD 卡 BMP 解析显示到 LCD / 接入 LVGL <a href="lessons/0010-bmp-parser-in-action.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">11</span> RIFF 与 WAV 格式<span class="stage"> · WAV 全文</span>
+    <div class="desc">RIFF chunk 结构、fmt/data 子块、PCM 采样布局与实例分析 <a href="lessons/0011-riff-and-wav.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">12</span> 真机实战：WAV 播放器<span class="stage"> · 工程扩展</span>
+    <div class="desc">解析 WAV + DAC/PWM 播放，与工程波形功能衔接 <a href="lessons/0012-wav-player.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">13</span> JPEG 原理：DCT 与量化<span class="stage"> · JPEG 标准核心</span>
+    <div class="desc">色彩空间、8×8 块、DCT 变换、量化表（英文标准中文讲解） <a href="lessons/0013-jpeg-principles-dct.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">14</span> JPEG 原理：霍夫曼与文件结构<span class="stage"> · JPEG 标准核心</span>
+    <div class="desc">霍夫曼编码、SOI/APP/SOF/SOS/EOI 标记、baseline 解码流程 <a href="lessons/0014-jpeg-principles-huffman.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">15</span> GIF 格式与 LZW 解码<span class="stage"> · GIF Decoder 文章</span>
+    <div class="desc">GIF87a/89a 结构、LZW 压缩原理、解码器实现思路 <a href="lessons/0015-gif-and-lzw.html">→ 上课</a></div></li>
+</ul>
+
+<h3>模块四：CAN 总线（16~19）</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">16</span> CAN 入门：物理层与特点<span class="stage"> · CAN 教程前段</span>
+    <div class="desc">CAN 是什么、应用场景、差分信号与电平 <a href="lessons/0016-can-basics.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">17</span> CAN 报文格式与仲裁<span class="stage"> · CAN 教程 7~8 节</span>
+    <div class="desc">数据帧/遥控帧/错误帧/过载帧、帧间隙、优先级仲裁 <a href="lessons/0017-can-frames.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">18</span> CAN 位时序与错误处理<span class="stage"> · CAN 教程 8.8~8.9 节</span>
+    <div class="desc">位时序/同步、错误种类与错误状态机 <a href="lessons/0018-can-timing-errors.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">19</span> STM32 bxCAN 实战<span class="stage"> · 工程扩展</span>
+    <div class="desc">F407 bxCAN 外设、回环测试、双机通信 <a href="lessons/0019-can-bxcan-in-action.html">→ 上课</a></div></li>
+</ul>
+
+<h3>模块五：综合（20）</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">20</span> 综合项目：工具箱大检阅<span class="stage"> · 项目篇</span>
+    <div class="desc">文件解析器 + CAN + 调试技巧 + 代码规范的综合应用 <a href="lessons/0020-final-integration.html">→ 上课</a></div></li>
+</ul>
+
+<h2>配套说明</h2>
+<ul>
+  <li>📚 <a href="RESOURCES.md">资源清单</a> — 9 份教材文档 + 扫描版说明</li>
+  <li>⚠️ 《电脑游戏机硬件与编程特技》为扫描版，暂未纳入课程</li>
+</ul>
+
+<h2>学习进度</h2>
+<table>
+<tr><th>模块</th><th>课时</th><th>状态</th></tr>
+<tr><td>构建与调试</td><td>01 ~ 04</td><td>全部生成 ✅</td></tr>
+<tr><td>代码规范</td><td>05 ~ 07</td><td>已生成 ✅</td></tr>
+<tr><td>多媒体格式</td><td>08 ~ 15</td><td>已生成 ✅</td></tr>
+<tr><td>CAN 总线</td><td>16 ~ 19</td><td>已生成 ✅</td></tr>
+<tr><td>综合</td><td>20</td><td>已生成 ✅</td></tr>
+</table>
+
+<p class="footer-note">学习记录见 <a href="learning-records/">learning-records/</a> · 有问题随时问 Agent 老师</p>
+
+</div>
+</body>
+</html>

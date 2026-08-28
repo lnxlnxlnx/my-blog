@@ -1,10 +1,14 @@
----
+﻿---
 title: Qt 开发：02 QML 核心与常用组件
 published: 2026-08-12
 description: QML 语法、布局、常用组件与 API、动画、Canvas、Loader。
 tags: [Qt, QML, 组件]
 category: Qt
 draft: false
+prevTitle: "Qt 开发：03 QML 与 C++ 混合编程"
+prevSlug: "qt/03-qml与c++交互"
+nextTitle: "Qt 开发：01 工程与系统框架"
+nextSlug: "qt/01-工程与框架"
 ---
 
 # 02 QML 核心与常用组件
@@ -232,3 +236,4 @@ property real scaleFactor: window.width / 1024   // 换算系数
 **独立文件即组件**（同目录自动可见）：如 `mytest/TouchBtn.qml` 定义了按钮，别处直接 `TouchBtn { text: "A" }`。
 
 > ⚠️ Qt 5.12 不支持 `component Xxx:` 内联组件语法（那是 5.15 才有）。要复用组件就**写成独立 .qml 文件**。
+| [← 上一课](/my-blog/posts/qt/03-qml与c++交互/) | [课程目录](/my-blog/posts/qt/00-总览/) | [下一课 →](/my-blog/posts/qt/01-工程与框架/) |

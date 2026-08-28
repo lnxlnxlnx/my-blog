@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 17 课：综合项目 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 17 课</nav>
+
+<h1>第 17 课：综合项目 — LVGL × FreeRTOS 产品多任务架构</h1>
+<p class="subtitle">把 LVGL 第 12 课的"智能设备控制台"从裸机升级成多任务产品：任务划分 → LVGL 集成 → 队列通信 → 分步验收</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>毕业设计收官。用 FreeRTOS 重构你在 LVGL 课程第 12 课做的"智能设备控制台"：界面变成一个独立 GUI 任务，数据采集、存储、按键各归其位，任务之间用队列/信号量通信。学完你能独立规划多任务架构、完成 LVGL 的带 OS 移植（参考《LVGL 开发指南 V1.5》第 3 章 <span class="pg">PDF p.51~56</span>），并逐项验收"界面流畅、数据实时、栈无溢出"。</p>
+</div>
+
+<h2>1. 架构设计：先分任务，再写代码</h2>
+
+<p>裸机版的控制台是"一个大 while 循环"：扫描按键 → 分发页面 → <code>lv_timer_handler()</code> 刷界面。多任务化的核心思路是<strong>把"顺序排队"改成"各管一摊"</strong>——每个职责一个任务，用通信机制连起来。参考 LVGL 指南 3.2 节《编写 FreeRTOS 相关代码》的任务划分方式（<span class="pg">PDF p.52</span>），本产品建议分成 5 个任务：</p>
+
+<table>
+<tr><th>任务</th><th>优先级</th><th>栈大小（字）</th><th>职责</th><th>运行节奏</th></tr>
+<tr><td>start_task</td><td>1</td><td>128</td><td>创建其他任务后删除自己</td><td>仅启动时</td></tr>
+<tr><td>key_task</td><td>2</td><td>128</td><td>按键扫描 → 二值信号量/队列通知 GUI</td><td>10ms 轮询</td></tr>
+<tr><td>storage_task</td><td>3</td><td>256</td><td>收数据 + 事件组触发，写 SD 卡</td><td>事件驱动</td></tr>
+<tr><td>acq_task</td><td>4</td><td>256</td><td>ADC 采样 → 队列发给 GUI（波形数据）</td><td>100ms 周期</td></tr>
+<tr><td>gui_task</td><td>5</td><td>1024</td><td><code>lv_timer_handler()</code> + 收队列更新控件</td><td>5ms 循环</td></tr>
+</table>
+
+<p>优先级设计的两条原则：<strong>数字越大优先级越高</strong>；<strong>"谁丢数据谁更高"</strong>——采集丢了就断波形，所以 acq 高于 storage；存储写卡很慢，放低了才不会把 GUI 卡死；GUI 渲染单次调用通常控制在几毫秒内，放最高也安全，但如果你发现采集被挤压，就把 gui_task 降到和 acq 同级再观察。栈大小是起点不是终点，第 2 节练习会用 <code>uxTaskGetStackHighWaterMark()</code> 实测校准。</p>
+
+<div class="tip">
+  <p>💡 定时器服务任务（daemon）提醒：如果你的界面大量使用 <code>lv_timer_create</code>，那是 LVGL 自己的定时器、由 <code>lv_timer_handler()</code> 驱动，不进 FreeRTOS 的软件定时器。只有用 <code>xTimerCreate</code> 才需要关注 <code>configTIMER_TASK_PRIORITY</code> 和 <code>configTIMER_TASK_STACK_DEPTH</code>——本课程不深讲，知道存在即可。</p>
+</div>
+
+<h2>2. LVGL 集成要点：时基、显示与互斥</h2>
+
+<h3>2.1 时基：别再手动喂 lv_tick_inc</h3>
+
+<p>裸机版靠定时器中断调 <code>lv_tick_inc()</code> 喂时基；有了 FreeRTOS，直接让 LVGL 从系统 tick 读时间。改 lv_conf.h（LVGL 指南 3.1 节 <span class="pg">PDF p.51</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== lv_conf.h：时基切换到 FreeRTOS ===== */</span>
+<span style="color:#008000">/* 使用自定义 tick 源，不再需要手动更新 lv_tick_inc() */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LV_TICK_CUSTOM                1</span>
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> LV_TICK_CUSTOM</span>
+    <span style="color:#267F99">#<span style="color:#0000FF">define</span> LV_TICK_CUSTOM_INCLUDE        <span style="color:#A31515">&quot;FreeRTOS.h&quot;</span>   <span style="color:#008000">/* 引入系统头文件 */</span></span>
+    <span style="color:#008000">/* 计算当前毫秒的表达式 */</span>
+    <span style="color:#267F99">#<span style="color:#0000FF">define</span> LV_TICK_CUSTOM_SYS_TIME_EXPR  (xTaskGetTickCount())</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span></pre>
+
+<p>前提：<code>configTICK_RATE_HZ</code> 必须是 <strong>1000</strong>（1 tick = 1ms，教材工程默认就是），否则 LVGL 所有动画、延时时间全错。如果你不想用 <code>LV_TICK_CUSTOM</code>，也可以保留裸机的 <code>lv_tick_inc()</code>，改由一个 1ms 周期任务喂——两种都行，本课用官方推荐的 <code>LV_TICK_CUSTOM</code>。</p>
+
+<h3>2.2 显示缓冲与刷新线程模型</h3>
+
+<p>你的 <code>lv_port_disp.c</code>（EXTERNAL/LVGL/porting/ 下）已经说明了刷新机制：LVGL 把控件画进 <code>buf_1</code>（320×10 行，约 6.4KB 单缓冲），画完通过 <code>disp_flush()</code> 回调交给 <code>lcd_color_fill()</code> 上屏，最后必须调 <code>lv_disp_flush_ready(disp_drv)</code> 告知"可以画下一块了"。关键认知：<strong>flush 回调是在 GUI 任务（lv_timer_handler 的调用者）的上下文里执行的</strong>，所以单缓冲同步刷新时，整个"渲染+刷屏"都发生在 gui_task 里——这是最简单的模型，也意味着 gui_task 的栈要够大（1024 字起步）。</p>
+
+<p>想提速：把 <code>lv_port_disp.c</code> 里注释掉的"双缓冲 + DMA"打开（Example 2 的 <code>buf_2_1/buf_2_2</code>），LVGL 画下一块的同时 DMA 在传上一块，刷屏和渲染并行。注意 DMA 模式下要等 DMA 传输完成再调 <code>lv_disp_flush_ready()</code>。这个优化留作进阶，验收标准不强制。</p>
+
+<h3>2.3 LVGL API 互斥保护</h3>
+
+<p>LVGL 和 RTOS 一样是"大循环 + 定时器"模型，官方文档（Operating system and interrupts 一节）明确警告：<strong>多个任务同时调 LVGL API 是线程不安全的</strong>。推荐的官方模板是"lvgl_thread 模式"：一个专职线程跑 <code>lv_timer_handler()</code>，其他线程访问 LVGL 必须加锁。落到我们的架构上，最稳妥的做法：</p>
+
+<ul>
+<li><strong>默认策略：LVGL API 只在 gui_task 里调用</strong>。其他任务一律通过队列/信号量把"数据"或"事件"发给 gui_task，由它统一更新控件——天然无锁，这是最推荐的架构。</li>
+<li><strong>万一必须跨任务碰控件</strong>（比如 storage_task 要直接改状态标签），就上互斥信号量：创建一把全局锁，任何碰 LVGL 的代码段先 <code>xSemaphoreTake</code> 再 <code>xSemaphoreGive</code>（注意不能在锁里 <code>vTaskDelay</code>，小心死锁）。</li>
+</ul>
+
+<h2>3. 任务间通信设计：数据走队列，事件走信号量</h2>
+
+<table>
+<tr><th>链路</th><th>机制</th><th>说明</th></tr>
+<tr><td>acq_task → gui_task</td><td>队列</td><td>每 100ms 发一个采样值；gui_task 阻塞接收，喂给 chart（波形页）和 meter（主页）</td></tr>
+<tr><td>key_task → gui_task</td><td>二值信号量 / 队列</td><td>按键按下给信号量（只关心"有事件"）；要区分哪个键就用队列传键值</td></tr>
+<tr><td>acq_task → storage_task</td><td>队列 + 事件组</td><td>数据入队；攒满 N 条或收到"保存"事件（事件组位）才触发一次落盘</td></tr>
+</table>
+
+<p>为什么要队列而不是全局变量？回顾第 8 课：全局变量在任务间共享有读写冲突问题，队列自带阻塞、容量和生产者-消费者语义。GUI 消费速度可能比采集慢，队列深度就是"缓冲水位"——深度不够会丢数据，深度太大延迟变高。先给 64 个采样值的容量，验收时统计丢包率再调。</p>
+
+<h2>4. 分步实现清单：五步走</h2>
+
+<ol>
+<li><strong>Step 1 移植验证</strong>：在 FreeRTOS 分支工程里先只建 gui_task，跑通你现有的控制台界面（LVGL 初始化 + <code>lv_timer_handler</code> 循环）。这一步先别拆任务，验证"LVGL 在 RTOS 里活着"。</li>
+<li><strong>Step 2 GUI 任务化</strong>：把裸机 main 循环的按键扫描拆成 key_task，页面分发逻辑收进 gui_task，按键事件走信号量/队列。</li>
+<li><strong>Step 3 采集任务</strong>：建 acq_task，100ms 周期采样（先用模拟数据或简单 ADC），数据进队列。</li>
+<li><strong>Step 4 通信打通</strong>：gui_task 阻塞收队列，波形页 chart 实时滚动、主页 meter 联动；需要时补互斥锁。</li>
+<li><strong>Step 5 存储落盘</strong>（可选加分）：storage_task 收数据 + 事件组触发，写 SD 卡，写卡时界面不许卡。</li>
+</ol>
+
+<div class="warn">
+  <p>⚠️ <strong>一步一烧录，别攒着一起调</strong>：嵌入式调试最贵的是"定位"，每步编译烧录验证一次，炸了范围最小。尤其 Step 1 没过之前不要动 Step 2——先确认"LVGL+FreeRTOS"这个组合本身没问题，再谈架构。</p>
+</div>
+
+<h2>5. 验收标准清单：逐项勾选</h2>
+
+<ul>
+<li>☐ <strong>界面流畅</strong>：LVGL 性能监控（lv_conf.h 已开 <code>LV_USE_PERF_MONITOR</code>）显示静止 FPS ≥ 25，动态数据时 ≥ 20</li>
+<li>☐ <strong>数据实时</strong>：波形曲线 ≤ 100ms 延迟滚动，表针连续转动无跳变</li>
+<li>☐ <strong>写卡不卡</strong>：Step 5 完成后，storage 写 SD 期间 GUI 不掉帧（验证优先级设计的正确性）</li>
+<li>☐ <strong>栈无溢出</strong>：所有任务 <code>uxTaskGetStackHighWaterMark()</code> 余量 ≥ 20%，连续运行 1 小时稳定</li>
+<li>☐ <strong>无数据丢失</strong>：acq→gui 队列不丢点（记录 drop 计数为 0），或明确记录丢弃率</li>
+<li>☐ <strong>内存稳定</strong>：用第 15 课的 <code>xPortGetFreeHeapSize()</code> 观察，长时间运行剩余堆不下降</li>
+<li>☐ <strong>互斥正确</strong>：多任务碰 LVGL 时 30 分钟压力测试无花屏、无死锁（若采用单任务访问策略，写明该策略即可）</li>
+<li>☐ <strong>版本配套</strong>：在工程 README 或笔记里写明 FreeRTOS V10.4.6 + LVGL v8.3.11 的配套说明与移植要点</li>
+</ul>
+
+<h2>6. 代码示例：骨架、GUI 任务与采集任务</h2>
+
+<h3>6.1 主框架：初始化 + 创建任务 + 启动调度器</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== lvgl_demo.c：参考《LVGL 开发指南 V1.5》3.2 节（PDF p.52~54） ===== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lvgl_demo.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;FreeRTOS.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;task.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;semphr.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;queue.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lvgl.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lv_port_disp.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lv_port_indev.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;app_console.h&quot;</span>          <span style="color:#008000">/* LVGL 第 12 课的控制台模块 */</span></span>
+
+<span style="color:#008000">/* ---- 任务配置 ---- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> GUI_TASK_PRIO     5</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> GUI_STK_SIZE      1024</span>
+TaskHandle_t GuiTask_Handler;
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ACQ_TASK_PRIO     4</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ACQ_STK_SIZE      256</span>
+TaskHandle_t AcqTask_Handler;
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> KEY_TASK_PRIO     2</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> KEY_STK_SIZE      128</span>
+TaskHandle_t KeyTask_Handler;
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_demo</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    lv_init();                    <span style="color:#008000">/* lvgl 系统初始化 */</span>
+    lv_port_disp_init();          <span style="color:#008000">/* 显示接口初始化，在 lv_init() 之后 */</span>
+    lv_port_indev_init();         <span style="color:#008000">/* 输入接口初始化（触摸），在 lv_init() 之后 */</span>
+
+    Console_Init();               <span style="color:#008000">/* 创建&quot;智能设备控制台&quot;界面（复用 LVGL 第 12 课代码） */</span>
+
+    <span style="color:#008000">/* 创建 start_task：由它统一创建其余任务（参照 LVGL 指南的写法） */</span>
+    xTaskCreate(start_task, <span style="color:#A31515">&quot;start_task&quot;</span>, <span style="color:#098658">128</span>, <span style="color:#098658">NULL</span>, <span style="color:#098658">1</span>, <span style="color:#098658">NULL</span>);
+
+    vTaskStartScheduler();        <span style="color:#008000">/* 开启任务调度（正常情况下不会返回） */</span>
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">start_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    taskENTER_CRITICAL();         <span style="color:#008000">/* 进临界区，防止创建过程中被调度 */</span>
+
+    xTaskCreate(gui_task, <span style="color:#A31515">&quot;gui_task&quot;</span>, GUI_STK_SIZE, <span style="color:#098658">NULL</span>, GUI_TASK_PRIO, &amp;GuiTask_Handler);
+    xTaskCreate(acq_task, <span style="color:#A31515">&quot;acq_task&quot;</span>, ACQ_STK_SIZE, <span style="color:#098658">NULL</span>, ACQ_TASK_PRIO, &amp;AcqTask_Handler);
+    xTaskCreate(key_task, <span style="color:#A31515">&quot;key_task&quot;</span>, KEY_STK_SIZE, <span style="color:#098658">NULL</span>, KEY_TASK_PRIO, &amp;KeyTask_Handler);
+
+    taskEXIT_CRITICAL();
+    vTaskDelete(<span style="color:#098658">NULL</span>);            <span style="color:#008000">/* 删除自己，收尾交给空闲任务 */</span>
+}</pre>
+
+<h3>6.2 GUI 任务模板：刷屏 + 收队列 + 互斥</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== gui_task：LVGL 专属线程（lvgl_thread 模板） ===== */</span>
+<span style="color:#267F99">static</span> SemaphoreHandle_t s_lvgl_lock;   <span style="color:#008000">/* LVGL API 互斥锁（默认策略下极少用到） */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">gui_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">int16_t</span> sample;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#008000">/* 从采集队列取数据（阻塞 100ms 超时），更新控件 */</span>
+        <span style="color:#0000FF">while</span> (xQueueReceive(s_data_queue, &amp;sample, pdMS_TO_TICKS(<span style="color:#098658">100</span>)) == pdPASS)
+        {
+            <span style="color:#008000">/* 队列里可能积压了多条，一口气消化完再刷屏 */</span>
+            xSemaphoreTake(s_lvgl_lock, portMAX_DELAY);   <span style="color:#008000">/* 跨任务碰 LVGL 才需要锁 */</span>
+            Console_PushSample(sample);   <span style="color:#008000">/* 更新 chart 与 meter（你的控制台模块） */</span>
+            xSemaphoreGive(s_lvgl_lock);
+        }
+
+        xSemaphoreTake(s_lvgl_lock, portMAX_DELAY);
+        lv_timer_handler();               <span style="color:#008000">/* LVGL 引擎：处理定时器、渲染、flush */</span>
+        xSemaphoreGive(s_lvgl_lock);
+
+        vTaskDelay(pdMS_TO_TICKS(<span style="color:#098658">5</span>));     <span style="color:#008000">/* 让出 CPU：给低优先级任务喘息的机会 */</span>
+    }
+}</pre>
+
+<h3>6.3 采集任务模板：采样 + 队列发送</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== acq_task：100ms 周期采样，数据走队列 ===== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> SAMPLE_QUEUE_LEN   64            <span style="color:#008000">/* 队列深度：缓冲水位 */</span></span>
+QueueHandle_t s_data_queue;
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">acq_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    TickType_t xLastWakeTime = xTaskGetTickCount();   <span style="color:#008000">/* 绝对周期基准（第 14 课） */</span>
+    <span style="color:#267F99">int16_t</span>    sample;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        sample = adc_read_channel(<span style="color:#098658">0</span>);     <span style="color:#008000">/* 换成你的实际采样代码 */</span>
+
+        <span style="color:#008000">/* 队列满就丢弃并计数（用于验收 drop 指标），不阻塞采集 */</span>
+        <span style="color:#0000FF">if</span> (xQueueSend(s_data_queue, &amp;sample, <span style="color:#098658">0</span>) != pdPASS)
+        {
+            s_dropped_count++;            <span style="color:#008000">/* 全局计数，GUI 任务可读取展示 */</span>
+        }
+
+        vTaskDelayUntil(&amp;xLastWakeTime, pdMS_TO_TICKS(<span style="color:#098658">100</span>));   <span style="color:#008000">/* 绝对周期 */</span>
+    }
+}</pre>
+
+<p>注意采集任务用的是第 14 课的 <code>vTaskDelayUntil</code>——100ms 采样周期绝不能漂。按键任务照葫芦画瓢：扫描到按下就给 gui_task 发一个二值信号量或键值队列，GUI 侧收到后走 <code>Console_GoPage()</code> 切页。</p>
+
+<h2>动手练习（约 90 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 17.1：完成清单第 1~3 步——GUI 任务化 + 采集任务 + 队列通信</h3>
+  <p class="step">1️⃣ <strong>Step 1</strong>：在你的 FreeRTOS 分支工程里只建 gui_task，把 lv_conf.h 的 <code>LV_TICK_CUSTOM</code> 按第 2.1 节配好，复用 LVGL 第 12 课的控制台代码，确认界面在 RTOS 下正常显示、触摸可用。</p>
+  <p class="step">2️⃣ <strong>Step 2</strong>：把裸机 main 循环里的按键扫描拆成 key_task，按键事件用队列发给 gui_task，页面分发逻辑收进 GUI 侧。</p>
+  <p class="step">3️⃣ <strong>Step 3</strong>：建 acq_task（先发模拟波形数据，如正弦），每 100ms 一个点，数据入队列；gui_task 收队列喂给波形页 chart。</p>
+  <p class="step"><strong>观察什么：</strong>波形应像裸机版一样平滑滚动；把 gui_task 的 <code>vTaskDelay(5)</code> 改成 <code>vTaskDelay(50)</code>，观察波形变"卡"的临界点——这能帮你理解 GUI 任务的刷新节奏对体验的影响。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 17.2：uxTaskGetStackHighWaterMark 校准任务栈</h3>
+  <p class="step">1️⃣ 在 start_task 里为每个任务保存句柄，另开一个"体检任务"（或复用 gui_task 的某个空闲时机）周期性调用：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 栈水位体检：返回任务创建以来从未用过的栈深度（字） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">health_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    UBaseType_t gui_left, acq_left, key_left;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        gui_left = uxTaskGetStackHighWaterMark(GuiTask_Handler);
+        acq_left = uxTaskGetStackHighWaterMark(AcqTask_Handler);
+        key_left = uxTaskGetStackHighWaterMark(KeyTask_Handler);
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;gui:%u acq:%u key:%u\n&quot;</span>,
+               (<span style="color:#267F99">unsigned</span>)gui_left, (<span style="color:#267F99">unsigned</span>)acq_left, (<span style="color:#267F99">unsigned</span>)key_left);
+        vTaskDelay(pdMS_TO_TICKS(<span style="color:#098658">1000</span>));
+    }
+}</pre>
+
+  <p class="step">2️⃣ 让系统"满负荷"跑一轮（切页、滚波形、狂按按键），读三分钟打印。<strong>观察什么：</strong>余量是否 ≥ 20%？gui_task 若余量 < 200 字（≈20%），就把栈从 1024 加到 1536；key_task 余量常年 100+ 字，可以降到 96 省 RAM。</p>
+  <p class="step">3️⃣ 收尾：把最终栈配置写进代码注释，并在工程 README 记录 FreeRTOS V10.4.6 + LVGL v8.3.11 版本配套说明。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 把 LVGL 时基从裸机 lv_tick_inc 切换到 FreeRTOS 的正确做法是？</p>
+  <p class="opt">A. lv_conf.h 里 LV_TICK_CUSTOM=1，表达式用 xTaskGetTickCount()</p>
+  <p class="opt">B. 在 SysTick 中断里直接调 lv_timer_handler()</p>
+  <p class="opt">C. 删掉 lv_tick_inc，LVGL 会自动用系统时间</p>
+  <details><summary>查看答案</summary><div class="answer">A。LV_TICK_CUSTOM=1 配合 xTaskGetTickCount()（且 configTICK_RATE_HZ=1000）；B 在中断里跑 LVGL 是大忌；C 不配置就没有时基（PDF p.51）。</div></details>
+
+  <p class="q">Q2. 多任务环境下 LVGL API 最安全的访问策略是？</p>
+  <p class="opt">A. 所有任务随时都能调，LVGL 自带线程安全</p>
+  <p class="opt">B. LVGL API 只集中在 gui_task 调用，其他任务发队列/信号量</p>
+  <p class="opt">C. 每个任务复制一份 LVGL 实例</p>
+  <details><summary>查看答案</summary><div class="answer">B。官方 lvgl_thread 模板：专职线程跑 lv_timer_handler，其他任务通过消息/队列间接更新控件；跨任务直调必须加互斥锁。</div></details>
+
+  <p class="q">Q3. 采集任务与 GUI 任务之间传波形数据，首选机制是？</p>
+  <p class="opt">A. 全局数组 + 中断标志</p>
+  <p class="opt">B. 消息队列，带容量与阻塞语义</p>
+  <p class="opt">C. 直接把数据写进 chart 内部结构</p>
+  <details><summary>查看答案</summary><div class="answer">B。队列自带生产者-消费者语义、容量缓冲与阻塞机制；全局变量有读写冲突问题（第 8 课）。</div></details>
+
+  <p class="q">Q4. 检查任务栈是否够用的标准 API 是？</p>
+  <p class="opt">A. xPortGetFreeHeapSize()</p>
+  <p class="opt">B. uxTaskGetStackHighWaterMark()</p>
+  <p class="opt">C. xTaskGetTickCount()</p>
+  <details><summary>查看答案</summary><div class="answer">B。uxTaskGetStackHighWaterMark 返回"从未使用过的栈深度"，余量应 ≥ 20%；A 查的是堆不是栈。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《LVGL 开发指南 V1.5》第 3 章 LVGL 带操作系统移植（PDF p.51~56）——带 OS 移植的官方参考，本课集成方案依据</li>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》——第 12 章时间管理（p.211）、第 20 章内存管理（p.411）回查必备</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/porting/os.html">LVGL 官方文档：Operating system and interrupts（v8.3）</a>——线程模型与互斥的官方说明</li>
+<li>🌐 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS Real Time Kernel</a>——官方免费书，任务设计与队列章节常读常新</li>
+<li>🔧 你工程里的 <code>EXTERNAL/LVGL/porting/lv_port_disp.c</code>——显示缓冲与刷新机制的活教材（双缓冲 DMA 方案在注释里）</li>
+</ul>
+
+<div class="footer-note">
+  <p>🎓 17 课到此收官。从"移植跑通"到"多任务产品"，你走完了 FreeRTOS 的全流程。以后做任何产品，都记得这条主线：<strong>先分任务、再定通信、小步验证、栈和堆都要体检、逐项验收</strong>。有任何不清楚的地方，随时回来问我（Agent 就是你的老师）——课程到这里结束，下一站由你来定。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0016-idle-task-and-low-power.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a class="disabled" href="#">下一课</a>
+</nav>
+
+</div>
+</body>
+</html>

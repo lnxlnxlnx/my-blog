@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 14 课：JPEG 原理：霍夫曼与文件结构 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 14 课</nav>
+
+<h1>第 14 课：JPEG 原理：霍夫曼与文件结构</h1>
+<p class="subtitle">把量化后的 64 个系数变成一串最短的比特，再装进带标记的文件容器（ISO/IEC 10918-1 核心）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>第 13 课我们把信息"归堆"到了左上角，这一课讲怎么把这一堆系数<strong>榨干成比特</strong>。学完你能：看懂 Zig-Zag 扫描、差分 DC 编码、AC 游程编码，理解霍夫曼"高频符号短码"的思想，并像侦探一样用十六进制工具解剖一个真实 JPEG 文件的每一个标记段。（预计 45~50 分钟）</p>
+</div>
+
+<h2>1. Zig-Zag 扫描：把 64 个系数排成压缩友好的顺序</h2>
+
+<p>量化后的 8×8 块里，能量在左上角、零在右下角。可是 Huffman 一次只能编"一串东西"，得先把二维系数<strong>拉直成一维序列</strong>。Zig-Zag 扫描（<span class="pg">§A.3.6、图 A.6</span>）按"之字形"从 (0,0) 走到 (7,7)：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 网格里每个格子的数字 = 它在 zig-zag 顺序中的编号</span>
+ 0  1  5  6 14 15 27 28
+ 2  4  7 13 16 26 29 42
+ 3  8 12 17 25 30 41 43
+ 9 11 18 24 31 40 44 53
+10 19 23 32 39 45 52 54
+20 22 33 38 46 51 55 60
+21 34 37 47 50 56 59 61
+35 36 48 49 57 58 62 63
+
+<span style="color:#008000"># 读法: 0,1,5,6,14,15,27,28,2,4,7,13,16,26,29,42,3,8,... 斜向往返</span></pre>
+
+<p>这样拉出来的序列 <code>ZZ(0)..ZZ(63)</code> 里，<strong>越靠前越可能是非零大数，越靠后越是一串零</strong>。顺序本身不压缩，但它把零"赶成一堆"，为下一节的游程编码铺路（<span class="pg">§F.1.1.5</span>）。代码里就是一张查表：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== Zig-Zag 重排: 把 8×8 系数按&quot;从低频到高频&quot;拉直 ===== */</span>
+<span style="color:#008000">/* zz[k] = 第 k 个 zig-zag 取样在原 8×8 块(行主序)里的下标 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">const</span> <span style="color:#267F99">uint8_t</span> zz[<span style="color:#098658">64</span>] = {
+     <span style="color:#098658">0</span>,  <span style="color:#098658">1</span>,  <span style="color:#098658">8</span>, <span style="color:#098658">16</span>,  <span style="color:#098658">9</span>,  <span style="color:#098658">2</span>,  <span style="color:#098658">3</span>, <span style="color:#098658">10</span>,
+    <span style="color:#098658">17</span>, <span style="color:#098658">24</span>, <span style="color:#098658">32</span>, <span style="color:#098658">25</span>, <span style="color:#098658">18</span>, <span style="color:#098658">11</span>,  <span style="color:#098658">4</span>,  <span style="color:#098658">5</span>,
+    <span style="color:#098658">12</span>, <span style="color:#098658">19</span>, <span style="color:#098658">26</span>, <span style="color:#098658">33</span>, <span style="color:#098658">40</span>, <span style="color:#098658">48</span>, <span style="color:#098658">41</span>, <span style="color:#098658">34</span>,
+    <span style="color:#098658">27</span>, <span style="color:#098658">20</span>, <span style="color:#098658">13</span>,  <span style="color:#098658">6</span>,  <span style="color:#098658">7</span>, <span style="color:#098658">14</span>, <span style="color:#098658">21</span>, <span style="color:#098658">28</span>,
+    <span style="color:#098658">35</span>, <span style="color:#098658">42</span>, <span style="color:#098658">49</span>, <span style="color:#098658">56</span>, <span style="color:#098658">57</span>, <span style="color:#098658">50</span>, <span style="color:#098658">43</span>, <span style="color:#098658">36</span>,
+    <span style="color:#098658">29</span>, <span style="color:#098658">22</span>, <span style="color:#098658">15</span>, <span style="color:#098658">23</span>, <span style="color:#098658">30</span>, <span style="color:#098658">37</span>, <span style="color:#098658">44</span>, <span style="color:#098658">51</span>,
+    <span style="color:#098658">58</span>, <span style="color:#098658">59</span>, <span style="color:#098658">52</span>, <span style="color:#098658">45</span>, <span style="color:#098658">38</span>, <span style="color:#098658">31</span>, <span style="color:#098658">39</span>, <span style="color:#098658">46</span>,
+    <span style="color:#098658">53</span>, <span style="color:#098658">60</span>, <span style="color:#098658">61</span>, <span style="color:#098658">54</span>, <span style="color:#098658">47</span>, <span style="color:#098658">55</span>, <span style="color:#098658">62</span>, <span style="color:#098658">63</span>,
+};
+
+<span style="color:#267F99">int16_t</span> sq[<span style="color:#098658">64</span>];      <span style="color:#008000">/* 量化后的 8×8 系数 */</span>
+<span style="color:#267F99">int16_t</span> zz_seq[<span style="color:#098658">64</span>];  <span style="color:#008000">/* 拉直后的序列 */</span>
+<span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> k = <span style="color:#098658">0</span>; k &lt; <span style="color:#098658">64</span>; k++)
+    zz_seq[k] = sq[zz[k]];</pre>
+
+<h2>2. 差分 DC 与 AC 游程：熵编码前的"符号化"</h2>
+
+<p>拉直之后，DC（ZZ(0)）和 AC（ZZ(1..63)）走两条完全不同的编码路（<span class="pg">§F.1.1.5.1/5.2</span>）。</p>
+
+<h3>DC 差分编码</h3>
+
+<p>相邻 8×8 块的平均亮度往往差不多，所以 DC 编码<strong>差（DIFF = 当前块 DC − 前一块 DC）</strong>，而不是原值。预测器 PRED 每个扫描（SOS）开始清零（<span class="pg">§F.1.1.5.1</span>）。差值按大小分 12 个类别（category），类别 <code>SSSS</code> = |DIFF| 的二进制位数：</p>
+
+<table>
+<tr><th>SSSS</th><th>DIFF 范围</th><th>SSSS</th><th>DIFF 范围</th></tr>
+<tr><td>0</td><td>0</td><td>6</td><td>-63..-32, 32..63</td></tr>
+<tr><td>1</td><td>-1, 1</td><td>7</td><td>-127..-64, 64..127</td></tr>
+<tr><td>2</td><td>-3..-2, 2..3</td><td>8</td><td>-255..-128, 128..255</td></tr>
+<tr><td>3</td><td>-7..-4, 4..7</td><td>9</td><td>-511..-256, 256..511</td></tr>
+<tr><td>4</td><td>-15..-8, 8..15</td><td>10</td><td>-1023..-512, 512..1023</td></tr>
+<tr><td>5</td><td>-31..-16, 16..31</td><td>11</td><td>-2047..-1024, 1024..2047</td></tr>
+</table>
+
+<p>编码规则（<span class="pg">§F.1.2.1.1</span>）：先发"类别 SSSS"的霍夫曼码，再补 <code>SSSS</code> 位附加位精确定位到具体差值——正数发 DIFF 的低 SSSS 位，<strong>负数发 (DIFF−1) 的低 SSSS 位</strong>（这样负数附加位的最高位恒为 0，解码才能区分正负）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== DC 差分编码 (示意) ===== */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> <span style="color:#795E26">diff_size</span><span style="color:#001080">(<span style="color:#267F99">int</span> diff)</span>      <span style="color:#008000">/* 类别 SSSS = |DIFF| 的二进制位数 */</span>
+{
+    <span style="color:#0000FF">if</span> (diff &lt; <span style="color:#098658">0</span>) diff = -diff;
+    <span style="color:#267F99">int</span> s = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (diff) { s++; diff &gt;&gt;= <span style="color:#098658">1</span>; }
+    <span style="color:#0000FF">return</span> s;                       <span style="color:#008000">/* 0..11 */</span>
+}
+
+<span style="color:#267F99">int</span> dc, pred = <span style="color:#098658">0</span>;                   <span style="color:#008000">/* pred 在扫描开始清零 (F.1.1.5.1) */</span>
+<span style="color:#008000">/* 对每个 8×8 块: */</span>
+<span style="color:#267F99">int</span> diff = dc - pred;
+pred = dc;                          <span style="color:#008000">/* 更新预测 */</span>
+<span style="color:#267F99">int</span> ssss = diff_size(diff);
+<span style="color:#0000FF">if</span> (diff &gt;= <span style="color:#098658">0</span>)                      <span style="color:#008000">/* 先发类别霍夫曼码, 再补附加位 */</span>
+    emit_huff(ssss, diff);          <span style="color:#008000">/* 正数: 低 ssss 位就是 DIFF */</span>
+<span style="color:#0000FF">else</span>
+    emit_huff(ssss, diff - <span style="color:#098658">1</span>);      <span style="color:#008000">/* 负数: 发 (DIFF-1) 的低 ssss 位 */</span></pre>
+
+<h3>AC 游程编码</h3>
+
+<p>AC 序列里隔一段才有非零值，中间全是 0。所以每个非零 AC 用一个字节 <code>RS = RRRRSSSS</code> 描述（<span class="pg">§F.1.2.2.1</span>）：</p>
+
+<ul>
+<li>高 4 位 <code>RRRR</code>：它前面<strong>连续多少个 0</strong>（0..15）</li>
+<li>低 4 位 <code>SSSS</code>：它自身幅度的类别（同 DC 的类别表）</li>
+<li>再跟 <code>SSSS</code> 位附加位：精确幅度（规则同 DC）</li>
+</ul>
+
+<p>两个特例：<code>0xF0</code> = 15 个 0 后跟一个 0 幅度系数（凑满 16 个 0，继续）；<code>0x00</code> = <strong>EOB（End of Block）</strong>，表示"本块剩下全 0，收工"（<span class="pg">§F.1.1.5.2</span>）。看个例子：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">ZZ 序列:  12, 0, 0, -3, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ...
+
+DC: DIFF = 12 - pred, 按类别走 DC 表
+AC:  -3 : 前有 2 个零 → R=2, |−3| 需 2 位 → RS=0x22 + 附加位(负数: −4 的低2位 = 00)
+     2  : 前有 6 个零 → R=6, S=2        → RS=0x62 + 附加位(2 的低2位 = 10)
+     剩下全 0                            → EOB (0x00)</code></pre>
+
+<p>一颗 8×8 块 64 个系数，可能就压成 "DC 码 + 3 个 AC 码 + EOB" 这么点东西——压缩率就是这么来的。</p>
+
+<h2>3. 霍夫曼编码：高频符号给短码</h2>
+
+<p>霍夫曼编码（Huffman coding）的思想一句话：<strong>出现频率高的符号用短码字，出现频率低的用长码字</strong>，总体比特数最少。JPEG 里符号就是"类别 SSSS"（DC）和"RS 字节"（AC），出现频率也是从标准里统计出来的——高频的类别 1、2（小差值/小幅度）给 2~3 位短码。</p>
+
+<p>标准 Annex K 给了典型亮度 DC 表（<span class="pg">§K.3.1 表 K.3</span>），注意一个规则：<strong>没有任何码字全由 1 组成</strong>，否则会撞上标记字节 0xFF（<span class="pg">§F.1.2.1.1</span>）：</p>
+
+<table>
+<tr><th>类别 SSSS</th><th>码长</th><th>码字</th><th>类别 SSSS</th><th>码长</th><th>码字</th></tr>
+<tr><td>0</td><td>2</td><td>00</td><td>6</td><td>4</td><td>1110</td></tr>
+<tr><td>1</td><td>3</td><td>010</td><td>7</td><td>5</td><td>11110</td></tr>
+<tr><td>2</td><td>3</td><td>011</td><td>8</td><td>6</td><td>111110</td></tr>
+<tr><td>3</td><td>3</td><td>100</td><td>9</td><td>7</td><td>1111110</td></tr>
+<tr><td>4</td><td>3</td><td>101</td><td>10</td><td>8</td><td>11111110</td></tr>
+<tr><td>5</td><td>3</td><td>110</td><td>11</td><td>9</td><td>111111110</td></tr>
+</table>
+
+<p>解码侧把表从 <strong>DHT 段</strong>读出来，重建一棵"前缀树"，然后一个比特一个比特顺着树往下走：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 霍夫曼解码骨架: 沿树逐位下行到叶子 ===== */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">int</span>    root;        <span style="color:#008000">/* 根节点下标, 正数表示非叶子 */</span>
+    <span style="color:#267F99">int8_t</span> child0[<span style="color:#098658">256</span>]; <span style="color:#008000">/* 0 分支 */</span>
+    <span style="color:#267F99">int8_t</span> child1[<span style="color:#098658">256</span>]; <span style="color:#008000">/* 1 分支 */</span>
+    <span style="color:#267F99">int</span>    sym[<span style="color:#098658">256</span>];    <span style="color:#008000">/* 叶子对应的符号 */</span>
+} HufTree;
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> <span style="color:#795E26">huff_decode</span><span style="color:#001080">(HufTree *t, BitReader *br)</span>
+{
+    <span style="color:#267F99">int</span> node = t-&gt;root;
+    <span style="color:#0000FF">while</span> (node &gt;= <span style="color:#098658">0</span>)                 <span style="color:#008000">/* 一直走到叶子为止 */</span>
+        node = (bit_read(br)) ? t-&gt;child1[node] : t-&gt;child0[node];
+    <span style="color:#0000FF">return</span> t-&gt;sym[-node];             <span style="color:#008000">/* 叶子用负数编码 */</span>
+}</pre>
+
+<h2>4. JPEG 文件结构：一列带着"名牌"的货车</h2>
+
+<p>码流要装进文件，就得靠<strong>标记（marker）</strong>分节。每个标记是 2 字节：<code>0xFF</code> 加一个码值；除 SOI/EOI/RST 外，标记段都自带 2 字节长度（含长度字段本身，不含标记）（<span class="pg">§B.1.1.4</span>）。典型 baseline 文件长这样（<span class="pg">§B.2.2</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">FFD8  SOI     开始图像                      <span style="color:#008000">// 无长度字段</span>
+FFE0  APP0    JFIF 段: "JFIF\0" + 版本 + DPI + 缩略图   <span style="color:#008000">// 应用段, 可省</span>
+FFDB  DQT     量化表段: 表号 + 64 个值 (zig-zag 序)     <span style="color:#008000">// 亮度、色度各一张</span>
+FFC4  DHT     霍夫曼表段: 16 个长度计数 + 符号序列       <span style="color:#008000">// DC 表 + AC 表</span>
+FFC0  SOF0    帧头: 精度8位 / 高 / 宽 / 分量数
+              └─ 每分量: 编号 + 采样因子(H/V) + 量化表号
+FFDA  SOS     扫描头: 分量 + DC表号/AC表号 + Ss/Se/Ah/Al
+[熵编码数据: DC差分码 + AC游程码, 字节间 0xFF 后补 0 填充]
+FFD9  EOI     结束图像                      <span style="color:#008000">// 无长度字段</span></pre>
+
+<p>记几个高频标记码（<span class="pg">§B.1.1.2</span>）：<code>FFC0</code>=SOF0 基线、<code>FFC1</code>=扩展、<code>FFC2</code>=渐进、<code>FFC4</code>=DHT、<code>FFDB</code>=DQT、<code>FFDA</code>=SOS、<code>FFE0..EF</code>=APPn（APP0 通常是 JFIF）、<code>FFFE</code>=COM 注释、<code>FFD0..D7</code>=RSTn 重启标记。还有一条重要约定（<span class="pg">§B.1.1.5 note 2</span>）：<strong>熵编码数据里任何 0xFF 字节后面必须补一个 0x00</strong>，防止被误认成标记——解码时要把这个 0 删掉。</p>
+
+<h2>5. baseline 解码全流程：倒着走一遍</h2>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">JPEG 码流 ──► 熵解码(Huffman, 去 0xFF 填充)
+   ──► DC: 差分恢复 (DIFF + PRED)  |  AC: 游程展开, 遇到 EOB 停
+   ──► 反 Zig-Zag: 一维序列填回 8×8
+   ──► 反量化: R = Sq × Q (查 DQT 表)
+   ──► IDCT: 频域 → 时域 (8×8 像素)
+   ──► +128 电平恢复 ──► YCbCr 插值放大 ──► RGB ──► 上屏</pre>
+
+<div class="tip">
+  <p>💡 <strong>记忆锚点：</strong>编码是"像素 → 系数 → 码流"，解码是"码流 → 系数 → 像素"。DCT/量化/霍夫曼三座山，各有自己的"表"（量化表、霍夫曼表），这些表全写在文件里（DQT/DHT 段），解码器照表办事——所以同一个文件任何解码器出来都一样。</p>
+</div>
+
+<h2>6. 与 LVGL 衔接：lv_split_jpeg（SJPG）</h2>
+
+<p>真机上直接解 JPEG 太贵：一个 320×240 的图要一次解出整个位图，RAM 不够。LVGL 的 <strong>SJPG（Split JPEG）</strong> 方案解决了它——原理正是把 JPEG 按行切分成许多<strong>独立的小帧</strong>，文件头写 <code>"_SJPG__" + "V1.00"</code>（<span class="pg">lv_sjpg.c:20</span>），解码器用内嵌的 <strong>TJpgDec</strong> 只解"当前该显示的帧"，其余帧跳过，内存占用只有一帧而非全图。</p>
+
+<p>用法三步（源码 <code>EXTERNAL/LVGL/src/extra/libs/sjpg/</code>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== SJPG 使用 (LVGL v8.3) ===== */</span>
+lv_split_jpeg_init();               <span style="color:#008000">/* 注册 SJPG 解码器, 启动时调一次 */</span>
+
+<span style="color:#008000">/* 方式 A: 文件系统 (SD 卡里放 .sjpg, 由 PC 端 lv_sjpg 转换工具生成) */</span>
+<span style="color:#267F99">lv_obj_t</span> *img = lv_img_create(lv_scr_act());
+lv_img_set_src(img, <span style="color:#A31515">&quot;A:/photo.sjpg&quot;</span>);
+
+<span style="color:#008000">/* 方式 B: 嵌成 C 数组 */</span>
+<span style="color:#0000FF">extern</span> <span style="color:#267F99">const</span> <span style="color:#267F99">uint8_t</span> photo_sjpg[];
+lv_img_set_src(img, photo_sjpg);</pre>
+
+<div class="warn">
+  <p>⚠️ 当前工程 <code>lv_conf.h</code> 里 <code>LV_USE_SJPG</code> 默认是 0，要用必须改成 1 并重新编译（<span class="pg">lv_conf.h:665</span>）。另外 .sjpg 文件要用 LVGL 的转换工具（<code>lv_sjpg_converter.exe</code>）从 JPG 预转换，不能在板子上现转。而且 SJPG 只支持 <strong>baseline JPEG</strong> 输入——现在你该明白为什么这一课的知识如此重要了。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 14.1：解剖一张真实 JPEG 的标记段</h3>
+  <p class="step">1️⃣ 随便拿一张 JPEG 照片，用 HxD（或 VS Code Hex 插件）打开，按 <code>FF xx</code> 定位每个标记。</p>
+  <p class="step">2️⃣ 逐个找到 SOI、APP0(JFIF)、DQT、DHT、SOF0、SOS、EOI，验证它们的字节和长度字段。</p>
+  <p class="step">3️⃣ 重点看 SOF0：把 2 字节高度、2 字节宽度、1 字节分量数读出来，再读每个分量的采样因子——验证它是 4:2:0（Y=2×2，Cb=Cr=1×1）还是别的。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 14.2：手算一个 DC 差分的编码</h3>
+  <p class="step">1️⃣ 假设前一块 DC=200，当前块 DC=195，DIFF 是多少？类别 SSSS 是多少？</p>
+  <p class="step">2️⃣ 对照 K.3 亮度 DC 表，写出"类别霍夫曼码 + 附加位"的完整码字（DIFF 为负，记得发 DIFF−1 的低位）。</p>
+  <p class="step">3️⃣ 再想想：DIFF=0 时文件里要写几个比特？为什么"相邻块亮度差不多"能省这么多字节？</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. Zig-Zag 扫描的主要目的是？</p>
+  <p class="opt">A. 让每个系数都变成等长编码</p>
+  <p class="opt">B. 把低频系数排前面，后面形成长零游程</p>
+  <p class="opt">C. 把彩色图像转换成灰度图</p>
+  <p class="opt">D. 对压缩后的数据做加密处理</p>
+  <details><summary>查看答案</summary><div class="answer">B。能量在左上、零在右下，拉直后零聚成堆，方便游程编码（§A.3.6）。</div></details>
+
+  <p class="q">Q2. DC 差分编码中，DIFF = ？</p>
+  <p class="opt">A. 当前块 DC 加上前一块 DC</p>
+  <p class="opt">B. 当前块 DC 乘以前一块 DC</p>
+  <p class="opt">C. 当前块 DC 减前一块 DC（同分量）</p>
+  <p class="opt">D. 当前块 DC 减固定常数 128</p>
+  <details><summary>查看答案</summary><div class="answer">C。DIFF = ZZ(0) − PRED，PRED 是同一分量上一块的 DC（§F.1.1.5.1）。</div></details>
+
+  <p class="q">Q3. AC 编码里 EOB（0x00）表示什么？</p>
+  <p class="opt">A. 块内剩余系数全为 0，块到此结束</p>
+  <p class="opt">B. 整个图像文件解码结束</p>
+  <p class="opt">C. 前面连续零的游程长度达到 15</p>
+  <p class="opt">D. 第一个 AC 系数恰好等于 0</p>
+  <details><summary>查看答案</summary><div class="answer">A。剩余系数全零时显式编码 EOB 收尾（§F.1.1.5.2）。</div></details>
+
+  <p class="q">Q4. JPEG 文件开头与结尾的标记分别是？</p>
+  <p class="opt">A. DQT（FFDB）与 DHT（FFC4）</p>
+  <p class="opt">B. SOF0（FFC0）与 SOS（FFDA）</p>
+  <p class="opt">C. APP0（FFE0）与 COM（FFFE）</p>
+  <p class="opt">D. SOI（FFD8）与 EOI（FFD9）</p>
+  <details><summary>查看答案</summary><div class="answer">D。SOI 开始、EOI 结束，中间是帧与扫描（§B.2.2）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 《E文 JPEG 编解码介绍》（ISO/IEC 10918-1 原文）：§F.1.1.5（DC/AC 编码模型）、§F.1.2（baseline 霍夫曼）、§A.3.6（zig-zag）、§B.1.1/B.2.2（标记与语法）、§K.3（典型霍夫曼表）</li>
+<li>🔧 工程源码：<code>EXTERNAL/LVGL/src/extra/libs/sjpg/lv_sjpg.c</code>——SJPG 的帧切分与 TJpgDec 对接实现</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 15 课——换一个赛道，走进 GIF 与 LZW 无损压缩：字典是怎么"边解边建"的，为什么 GIF 只有 256 色还能火这么多年。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0013-jpeg-principles-dct.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0015-gif-and-lzw.html">下一课：GIF 格式与 LZW 解码 →</a>
+</nav>
+
+</div>
+</body>
+</html>

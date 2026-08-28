@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 5 课：规范总览与排版注释 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 5 课</nav>
+
+<h1>第 5 课：规范总览与排版注释</h1>
+<p class="subtitle">从"能跑"到"好看"：正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 1、2 章（PDF p.3~15）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>你的代码能跑，但别人（包括三个月后的你）读得懂吗？学完你能说出正点原子规范的四大原则、背得出缩进/行宽/括号/空格四条硬规则，并会写标准的文件头注释、函数说明注释和对齐的行内注释。本课约 45~60 分钟，最后两个练习直接拿你工程里的 <code>lvgl_2048.c</code> 开刀。</p>
+</div>
+
+<h2>1. 规范说明与四大原则</h2>
+
+<p>正点原子团队写这份规范的动机很朴素：团队壮大了，代码风格五花八门，维护成本爆炸。新代码必须统一风格，老代码逐步重构，最终达到"统一风格、便于阅读、便于使用、便于移植、便于维护"（<span class="pg">PDF p.3</span>）。核心就四条原则：</p>
+
+<ol>
+<li><strong>简单、明了、清晰</strong>：代码首先是写给人看的，<strong>可读性优先于性能</strong>！规范原文的原话是："尤其是当你写的代码交给他人去维护的时候，请不要祸害别人！"</li>
+<li><strong>精简</strong>：一个 1000 多行的函数和一个最多 100 行的函数，谁好看？代码越长越容易出错，没用的代码和变量要及时清理，重复代码提炼成函数。</li>
+<li><strong>保持第三方代码风格</strong>：HAL 库、FATFS、LVGL、FreeRTOS、lwIP 这些第三方代码<strong>一律不改其风格</strong>。你的应用代码用自己的规范，与第三方库的接口程序允许两种风格并存。</li>
+<li><strong>减少封装</strong>：切记，<strong>不要对第三方代码库二次封装</strong>！</li>
+</ol>
+
+<div class="warn">
+  <p>⚠️ 第 4 条是重点。ST 官方 Cube 库为了"统一风格"，把 FreeRTOS 的 API 包了一层，结果无数客户跑来问：你们教程里的 <code>xTaskCreate</code> 和 ST 的 <code>osThreadNew</code> 有什么区别？——没有任何区别，纯属白包一层，还给学习者带来困惑（<span class="pg">PDF p.3</span>）。所以你的 LVGL 代码就直接调 <code>lv_obj_create</code>、FreeRTOS 就直接调 <code>xTaskCreate</code>，别给它们套一层 <code>my_gui_create_button()</code>、<code>my_rtos_create_task()</code>。</p>
+</div>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>"简单、精简、尊重第三方、不加壳"</strong>—— 写完代码问自己：这段代码三个月后还能一眼看懂吗？如果答案犹豫了，就按本课往下学。</p>
+</div>
+
+<h2>2. 排版格式：代码缩进</h2>
+
+<p>缩进规则只有一条，但有讲究（<span class="pg">PDF p.5</span>）：</p>
+
+<ul>
+<li><strong>统一用 TAB 键缩进，且 TAB 设为 4 个字符</strong></li>
+<li><strong>但 TAB 必须用空格替代</strong>——不同编译器/阅读软件对 TAB 的渲染长度不一样，用 txt 打开 .c 文件就现原形；空格替代后任何软件打开都一样</li>
+<li>MDK 设置：<code>Configuration → Edit → C/C++ Files</code> 勾选 <strong>Insert spaces for tabs</strong>；再在 <code>General Edit Settings</code> 勾选 <strong>View White Spaces</strong>，就能用"点"看到所有缩进是不是空格</li>
+<li>注意：<strong>注释的缩进对齐也统一用空格填充的 TAB</strong>，否则注释会错位</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：混用 TAB 与空格，换软件打开后注释列全错位 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">funa</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+	<span style="color:#267F99">int</span> count = <span style="color:#098658">0</span>;				<span style="color:#008000">/* 这里是真 TAB，长度不可控 */</span>
+	<span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">10</span>; i++)
+	{
+		count += i;				<span style="color:#008000">/* 这里 4 空格，和上一行对不齐 */</span>
+	}
+}
+
+<span style="color:#008000">/* 正例：全部用 4 空格填充，任何软件打开都对得齐齐整整 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">funa</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99">int</span> count = <span style="color:#098658">0</span>;              <span style="color:#008000">/* 注释和代码一起对齐 */</span>
+    <span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">10</span>; i++)
+    {
+        count += i;             <span style="color:#008000">/* 多级缩进依然对齐 */</span>
+    }
+}</pre>
+
+<h2>3. 代码行规范</h2>
+
+<p>几条硬规则，全部在 <span class="pg">PDF p.5~7</span>：</p>
+
+<ul>
+<li><strong>每行不超过 80 列</strong>。超长时在<strong>低优先级操作符处</strong>换行，操作符放<strong>新行之首</strong>，新行适当缩进与上一行对齐</li>
+<li><strong>相对独立的程序块之间、变量说明之后、函数之间必须加空行</strong></li>
+<li><strong>一行只写一条语句</strong>，禁止 <code>a = x+y; b = x-y;</code> 这种挤一行的写法</li>
+<li><strong>禁止连续赋值</strong> <code>a = b = 0;</code>，拆成两行</li>
+<li><strong>if、for、do、while、switch 等语句单独占一行</strong>；其执行语句<strong>无论多少条都必须加 {} </strong>，唯一例外是 while 后面确实没有代码</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：一锅端 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">funa</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#0000FF">if</span> (p_gpiox-&gt;IDR &amp; pinx) <span style="color:#0000FF">return</span> <span style="color:#098658">1</span>; <span style="color:#0000FF">else</span> <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+    a = b = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (((RCC-&gt;CR &amp; (<span style="color:#098658">1</span> &lt;&lt; <span style="color:#098658">17</span>)) == <span style="color:#098658">0</span>) &amp;&amp; (retry &lt; <span style="color:#098658">0X7FFF</span>)) { retry++; }
+}
+
+<span style="color:#008000">/* 正例：逐条拆开，括号齐全 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">funa</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#0000FF">if</span> (p_gpiox-&gt;IDR &amp; pinx)
+    {
+        <span style="color:#0000FF">return</span> <span style="color:#098658">1</span>;               <span style="color:#008000">/* pinx 的状态为 1 */</span>
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;               <span style="color:#008000">/* pinx 的状态为 0 */</span>
+    }
+
+    a = <span style="color:#098658">0</span>;                      <span style="color:#008000">/* 连续赋值拆开 */</span>
+    b = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (((RCC-&gt;CR &amp; (<span style="color:#098658">1</span> &lt;&lt; <span style="color:#098658">17</span>)) == <span style="color:#098658">0</span>) &amp;&amp; (retry &lt; <span style="color:#098658">0X7FFF</span>))
+    {
+        retry++;                <span style="color:#008000">/* while 有语句就必须加 {} */</span>
+    }
+}</pre>
+
+<p>80 列换行示例（<span class="pg">PDF p.5</span>）：操作符 <code>+</code> 放新行之首，第二行与上一行对齐：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">perm_count_msg.head.len = NO7_TO_STAT_PERM_COUNT_LEN
+                         + STAT_SIZE_PER_FRAM * <span style="color:#0000FF">sizeof</span>(<span style="color:#267F99">uint32_t</span>);</pre>
+
+<h2>4. 括号与空格</h2>
+
+<p>括号规则（<span class="pg">PDF p.8</span>）：</p>
+
+<ul>
+<li>单片机开发中，左大括号 <code>{</code> <strong>一律新起一行，且与程序块起始处同一列</strong>（教材明确把 <code>for (...) {</code> 这种行尾大括号列为"不规范的写法"）</li>
+<li><code>else</code> 独立成行，不跟在大括号后面</li>
+<li>例外：<code>while (xxx);</code> 空等待确实没有代码时，可以不加 <code>{}</code></li>
+</ul>
+
+<p>空格规则八条（<span class="pg">PDF p.9</span>），挑最常踩的几条：</p>
+
+<ul>
+<li>关键字 <code>if/switch/case/for/do/while</code> <strong>后面加空格</strong>；但 <code>sizeof/typeof/__attribute__</code> 后面<strong>不加</strong>（它们像函数调用）</li>
+<li>指针的 <code>*</code> <strong>靠变量名</strong>：<code>char *ptr;</code> 而不是 <code>char* ptr;</code></li>
+<li><strong>二元/三元运算符两侧各一个空格</strong>：<code>= + - &lt; &gt; * / % == != ? :</code></li>
+<li><strong>一元运算符后不加空格</strong>：<code>&amp; * + - ~ ! sizeof</code>；<code>++ --</code> 前后都不加</li>
+<li><code>.</code> 和 <code>-&gt;</code> 前后不加空格；逗号、分号只在<strong>后面</strong>加空格</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：教科书级丑代码 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">test_error</span><span style="color:#001080">(datax* p,<span style="color:#267F99">int</span> num,<span style="color:#267F99">char</span> baseval)</span>
+{
+    <span style="color:#267F99">int</span> x1 ,x2;
+    <span style="color:#267F99">int</span> t=<span style="color:#098658">0</span>;
+    x1=<span style="color:#098658">32</span>;
+    x2=<span style="color:#098658">23</span>;
+    <span style="color:#0000FF">for</span>(t=<span style="color:#098658">0</span>;t&lt;=num;t ++ ) <span style="color:#008000">/*循环赋值*/</span>
+    {
+        datax -&gt; buf[ t ]=x1*(x2+t)+baseval;
+    }
+}
+
+<span style="color:#008000">/* 正例：运算符两侧空格、* 靠变量、注释两侧留白 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">test_error</span><span style="color:#001080">(datax *p, <span style="color:#267F99">int</span> num, <span style="color:#267F99">char</span> baseval)</span>
+{
+    <span style="color:#267F99">int</span> x1, x2;
+    <span style="color:#267F99">int</span> t = <span style="color:#098658">0</span>;
+    x1 = <span style="color:#098658">32</span>;
+    x2 = <span style="color:#098658">23</span>;
+    <span style="color:#0000FF">for</span> (t = <span style="color:#098658">0</span>; t &lt;= num; t++)     <span style="color:#008000">/* 循环赋值 */</span>
+    {
+        datax-&gt;buf[t] = x1 * (x2 + t) + baseval;
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 你现在可以顺手看看 <code>BSP/LVGL_APP/lvgl_2048.c</code> 和 <code>lvgl_snake.c</code>：2048 用的是行尾大括号，snake 用的是新起一行，两个文件风格还不统一。学完这节，你就有依据把它们统一成教材风格了。</p>
+</div>
+
+<h2>5. 注释风格：做什么，而不是怎么做</h2>
+
+<p>注释的核心原则（<span class="pg">PDF p.10</span>）：<strong>告诉别人代码做了什么（结果），而不是怎么做的（过程）</strong>，并且不过度注释。正点原子统一采用 doxygen 风格：</p>
+
+<ul>
+<li>代码行内注释：<code>/* ... */</code>，<code>/*</code> 和 <code>*/</code> 内侧各留一个空格</li>
+<li>文件/函数说明注释：<code>/** ... */</code> 多行块，每行行首 <code>*</code> 对齐在一列</li>
+<li><strong>放弃 <code>// ...</code> 和 <code>/// ...</code> 风格</strong>；当且仅当<strong>屏蔽部分功能代码</strong>（留着以后调试用）时才可以用 <code>//</code>，比如注释掉一行 <code>printf</code> 调试输出</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：用 // 写正式注释（教材明确放弃这种风格） */</span>
+<span style="color:#008000">// 检查超时</span>
+<span style="color:#008000">// 如果超时就清除标记并返回</span>
+<span style="color:#0000FF">if</span> (timeout == <span style="color:#098658">0</span>)
+{
+    <span style="color:#008000">//printf(&quot;r fifo time out\r\n&quot;);</span>
+    SDMMC1-&gt;ICR = <span style="color:#098658">0X1FE00FFF</span>;
+    <span style="color:#0000FF">return</span> SD_DATA_TIMEOUT;
+}
+
+<span style="color:#008000">/* 正例：正式注释用 /* */</span>，<span style="color:#008000">// 只留给被屏蔽的调试代码 */</span>
+<span style="color:#0000FF">if</span> (timeout == <span style="color:#098658">0</span>)
+{
+    <span style="color:#008000">//printf(&quot;r fifo time out\r\n&quot;);</span>
+    SDMMC1-&gt;ICR = <span style="color:#098658">0X1FE00FFF</span>;                <span style="color:#008000">/* 清除所有标记 */</span>
+    sys_intx_enable();                       <span style="color:#008000">/* 开启总中断 */</span>
+    <span style="color:#0000FF">return</span> SD_DATA_TIMEOUT;
+}</pre>
+
+<div class="warn">
+  <p>⚠️ 注释会"撒谎"：代码改了，注释忘了改，比没有注释更坑人。看看你自己的 <code>lvgl_snake.c</code> 第 28 行——"游戏状态变量c"，结尾多了个字母 c 的小笔误；第 29 行的注释又长又绕。写注释要像写代码一样校对。</p>
+</div>
+
+<h2>6. 三类注释模板</h2>
+
+<h3>6.1 文件信息注释（<span class="pg">PDF p.11</span>）</h3>
+
+<p>文件开头放整体说明：文件名、作者、版本、日期、简要说明、版权、注意事项。分隔线规定为 <strong>100 个 *</strong>，注释块和第一行代码之间必须空一行：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/**
+******************************************************************************
+ * @file        lvgl_2048.c
+ * @author      你的名字
+ * @version     V1.0
+ * @date        2026-08-27
+ * @brief       2048 游戏：核心逻辑与 LVGL 界面
+ * @copyright   Copyright (c) 2026, 个人学习工程
+******************************************************************************
+ * @attention
+ *
+ * 平台: STM32F407 探索者 + 正点原子 4.3 寸屏
+ * 依赖: LVGL v8, AT24C02 驱动 (BSP/24CXX)
+ *
+ * 修改说明
+ * V1.0 20260827
+ * 第一次发布
+ *
+******************************************************************************
+ */</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lvgl_2048.h&quot;</span></span></pre>
+
+<h3>6.2 函数注释（<span class="pg">PDF p.12</span>）</h3>
+
+<p>放在函数实体前、紧挨函数：<code>@brief</code> 概要、<code>@param</code> 参数、<code>@arg</code> 参量列表、<code>@note</code> 注意事项、<code>@retval</code> 返回值：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/**
+ * @brief 将一个方向上的 16 位行数据进行滑动与合并
+ * @param line: 指向 4 元素数组, 原地修改为合并后的行
+ * @param score_acc: 指向累加分数, 合并时累加
+ * @retval true: 该行有移动, false: 该行无变化
+ * @note  合并只进行一次, 2048 规则: 4 4 4 4 -&gt; 8 8
+ */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">bool</span> <span style="color:#795E26">slide_and_merge_line</span><span style="color:#001080">(<span style="color:#267F99">uint16_t</span> *line, <span style="color:#267F99">uint32_t</span> *score_acc)</span>
+{
+    ...
+}</pre>
+
+<h3>6.3 行内代码注释（<span class="pg">PDF p.14</span>）</h3>
+
+<p>短注释放代码后面，<strong>多行注释尽可能对齐</strong>；长注释放到被注释代码的前面：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：注释乱飞，比代码本身还难看 */</span>
+RCC-&gt;CR = <span style="color:#098658">0x00000001</span>; <span style="color:#008000">/* 设置 HSI 开启 */</span>
+RCC-&gt;CFGR = <span style="color:#098658">0x00000000</span>;<span style="color:#008000">/* CFGR 清零 */</span>
+RCC-&gt;PLLCFGR = <span style="color:#098658">0x00000000</span>;             <span style="color:#008000">/* PLLCFGR 清零 */</span>
+
+<span style="color:#008000">/* 正例：注释对齐，一眼扫过 */</span>
+RCC-&gt;CR = <span style="color:#098658">0x00000001</span>;                  <span style="color:#008000">/* 设置 HSI 开启 */</span>
+RCC-&gt;CFGR = <span style="color:#098658">0x00000000</span>;                <span style="color:#008000">/* CFGR 清零 */</span>
+RCC-&gt;PLLCFGR = <span style="color:#098658">0x00000000</span>;             <span style="color:#008000">/* PLLCFGR 清零 */</span>
+
+sys_clock_set(plln, pllm, pllp, pllq); <span style="color:#008000">/* 设置时钟 */</span></pre>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 5.1：给 lvgl_2048.c 补全文件头注释</h3>
+  <p class="step">1️⃣ 用编辑器打开 <code>BSP/LVGL_APP/lvgl_2048.c</code>，你会发现它<strong>没有文件头注释</strong>（@file 块缺失），而且顶部全是 <code>//</code> 风格注释。</p>
+  <p class="step">2️⃣ 按 6.1 模板补一个完整的文件头：@file / @author / @version / @date / @brief / @attention（写上"依赖 LVGL v8 与 BSP/24CXX"），分隔线按规范用 100 个 *，并和 <code>#include</code> 之间空一行。</p>
+  <p class="step">3️⃣ 顺手把第 8 行起几处 <code>//</code> 正式注释改成 <code>/* */</code> 风格（仅保留真正"屏蔽调试代码"的 <code>//</code>）。</p>
+  <p class="step">验收标准：文件头字段齐全、分隔线 100 个 *、<code>#include</code> 前空一行、编译零警告。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 5.2（重构练习）：给"坨代码"格式化</h3>
+  <p class="step">1️⃣ 下面的代码违反了一大堆本课规则，先自己找出全部问题：</p>
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">funa</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+     <span style="color:#0000FF">if</span>(!valid_ni(ni)) <span style="color:#0000FF">return</span> <span style="color:#098658">1</span>;
+     <span style="color:#0000FF">else</span> <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+     <span style="color:#0000FF">while</span>(x==<span style="color:#098658">0</span>){ retry++; }
+     a = x+y; b = x-y;
+     a = b = <span style="color:#098658">0</span>;
+}</pre>
+  <p class="step">2️⃣ 按教材规则重写：大括号新起一行且与块同列、if/else 分块、while 非空必须加 {}、一行一语句、连续赋值拆开、运算符两侧加空格。</p>
+  <p class="step">3️⃣ 写完后逐条对照本课 2、3、4 节的检查清单自查一遍。</p>
+  <p class="step">验收标准：对照清单逐条勾选全部通过；代码在你脑子里的"第一印象"从烦躁变清爽。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 正点原子规范对代码缩进的要求是？</p>
+  <p class="opt">A. 直接用 TAB 字符缩进</p>
+  <p class="opt">B. TAB 缩进，但用 4 个空格替代</p>
+  <p class="opt">C. 一律使用 2 个空格</p>
+  <details><summary>查看答案</summary><div class="answer">B。统一 TAB=4 字符，且用空格填充替代，避免不同软件打开时缩进错位（PDF p.5）。</div></details>
+
+  <p class="q">Q2. 一行代码的长度限制是？</p>
+  <p class="opt">A. 60 列</p>
+  <p class="opt">B. 80 列</p>
+  <p class="opt">C. 120 列</p>
+  <details><summary>查看答案</summary><div class="answer">B。超过 80 列在低优先级操作符处换行，操作符放新行之首（PDF p.5）。</div></details>
+
+  <p class="q">Q3. 单片机开发中，左大括号 { 应该放在哪里？</p>
+  <p class="opt">A. 代码行尾（K&R 风格）</p>
+  <p class="opt">B. 新起一行，与块起始同列</p>
+  <p class="opt">C. 与 if 语句缩进一级</p>
+  <details><summary>查看答案</summary><div class="answer">B。教材明确把行尾大括号列为不规范写法，{ 一律新起一行且同列（PDF p.8）。</div></details>
+
+  <p class="q">Q4. 什么时候才允许使用 // 注释？</p>
+  <p class="opt">A. 屏蔽调试代码时</p>
+  <p class="opt">B. 行内短注释都可以</p>
+  <p class="opt">C. 任何地方都不允许</p>
+  <details><summary>查看答案</summary><div class="answer">A。正式注释统一 /* */，仅屏蔽功能代码（如注释掉的 printf）时可用 //（PDF p.10）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 1、2 章（PDF p.3~15）——本课全部依据</li>
+<li>🔧 MDK 设置：<code>Configuration → Edit → C/C++ Files → Insert spaces for tabs</code>——让编译器帮你守规矩</li>
+<li>🔍 翻一眼 <code>BSP/LVGL_APP/lvgl_snake.c</code> 第 8 行：<code>LVGL_SNAKE_MAX_LENGTH</code> 的括号问题，第 7 课重构实战会拿它开刀</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 6 课——命名与函数。学完你会知道 <code>GuiMenu_Init</code> 和 <code>menu_create</code> 为什么不能共存于一个文件。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0004-debugger-in-action.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0006-coding-style-naming.html">下一课：命名与函数 →</a>
+</nav>
+
+</div>
+</body>
+</html>

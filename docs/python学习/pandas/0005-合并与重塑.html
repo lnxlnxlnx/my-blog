@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0005 · 合并与重塑</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>合并与重塑</h1>
+<p class="meta">Pandas 专题 · 课程 0005 · 预计 30 分钟 · 补书第8章(用 hangsz 3/4/5)</p>
+
+<p>真实场景要把多张表拼起来:关系型<strong>合并 merge</strong>(像 SQL JOIN)、上下/左右<strong>拼接 concat</strong>、行列索引<strong>重塑 set_index/reset_index/stack/pivot</strong>。这是 [pydata-notebook](https://github.com/BrambleXu/pydata-notebook) 缺、但你必须会的内容,用 [hangsz 3/4/5](https://github.com/hangsz/pandas-tutorial) 和官方 <a href="https://pandas.pydata.org/docs/user_guide/merging.html">Merging</a> 补齐。</p>
+
+<h2>知识点 1:merge——像 SQL JOIN(hangsz 3)</h2>
+<p>两表按"共同键"配对,<code>on</code> 指定公共列,<code>how</code> 选内/左/右/外:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span>
+<span style="color: #001080">staff</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Cara&quot;</span><span style="color: #000">]})</span>
+<span style="color: #001080">dept</span>  <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;tech&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;fin&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;hr&quot;</span><span style="color: #000">]})</span>
+
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">staff</span><span style="color: #000">,</span> <span style="color: #001080">dept</span><span style="color: #000">,</span> <span style="color: #001080">on</span><span style="color: #000">=</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">)</span>            <span style="color: #008000"># 内连接(两边都有)</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">staff</span><span style="color: #000">,</span> <span style="color: #001080">dept</span><span style="color: #000">,</span> <span style="color: #001080">how</span><span style="color: #000">=</span><span style="color: #A31515">&quot;left&quot;</span><span style="color: #000">)</span>         <span style="color: #008000"># 左连接(保留staff全部)</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">staff</span><span style="color: #000">,</span> <span style="color: #001080">dept</span><span style="color: #000">,</span> <span style="color: #001080">how</span><span style="color: #000">=</span><span style="color: #A31515">&quot;outer&quot;</span><span style="color: #000">)</span>        <span style="color: #008000"># 外连接(并集,NaN补)</span>
+<span style="color: #008000"># 键名不同:</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">staff</span><span style="color: #000">,</span> <span style="color: #001080">dept</span><span style="color: #000">,</span> <span style="color: #001080">left_on</span><span style="color: #000">=</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">,</span> <span style="color: #001080">right_on</span><span style="color: #000">=</span><span style="color: #A31515">&quot;dept_id&quot;</span><span style="color: #000">)</span>
+<span style="color: #008000"># 键是行索引:</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">s1</span><span style="color: #000">,</span> <span style="color: #001080">s2</span><span style="color: #000">,</span> <span style="color: #001080">left_index</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">,</span> <span style="color: #001080">right_index</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>
+</pre>
+<p>merge 类比:inner=∩, outer=∪, left/right=保一边。用错配对记得还口 <code>on</code>+<code>how</code> 四个参数。</p>
+
+<h2>知识点 2:concat——上下/左右拼接(hangsz 3)</h2>
+<p>把多个 DataFrame"叠"起来(不是按值配对,而是按位置/索引堆叠),用 <code>concat</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">df1</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]})</span>
+<span style="color: #001080">df2</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">6</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">7</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">]})</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">concat</span><span style="color: #000">([</span><span style="color: #001080">df1</span><span style="color: #000">,</span> <span style="color: #001080">df2</span><span style="color: #000">])</span>                    <span style="color: #008000"># 竖向拼接(行变多),默认 axis=0</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">concat</span><span style="color: #000">([</span><span style="color: #001080">df1</span><span style="color: #000">,</span> <span style="color: #001080">df2</span><span style="color: #000">],</span> <span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>            <span style="color: #008000"># 横向拼接(列变多)</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">concat</span><span style="color: #000">([</span><span style="color: #001080">df1</span><span style="color: #000">,</span> <span style="color: #001080">df2</span><span style="color: #000">],</span> <span style="color: #001080">ignore_index</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span> <span style="color: #008000"># 重置索引连续编号</span>
+<span style="color: #008000"># 不同列的 DataFrame 拼接:缺列变 NaN</span>
+</pre>
+<p>merge=按值配对(行对齐);concat=按轴堆叠。<code>concat([...], axis=1)</code> 是"左右加列"的标准方式。</p>
+
+<h2>知识点 3:set_index / reset_index——列和索引互转(hangsz 5)</h2>
+<p>把某列提为行索引 <code>set_index</code>;把索引降回列 <code>reset_index</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;score&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">92</span><span style="color: #000">,</span> <span style="color: #098658">85</span><span style="color: #000">]})</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">set_index</span><span style="color: #000">(</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">)</span>         <span style="color: #008000"># name 变成行索引</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">set_index</span><span style="color: #000">([</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;score&quot;</span><span style="color: #000">]).</span><span style="color: #001080">index</span>   <span style="color: #008000"># 多列 → MultiIndex</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">set_index</span><span style="color: #000">(</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">,</span> <span style="color: #001080">append</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>       <span style="color: #008000"># 追加到现有索引</span>
+
+<span style="color: #001080">df2</span> <span style="color: #000">=</span> <span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">set_index</span><span style="color: #000">(</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">df2</span><span style="color: #000">.</span><span style="color: #001080">reset_index</span><span style="color: #000">()</span>            <span style="color: #008000"># 索引降回普通列</span>
+<span style="color: #001080">df2</span><span style="color: #000">.</span><span style="color: #001080">reset_index</span><span style="color: #000">(</span><span style="color: #001080">drop</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>   <span style="color: #008000"># 丢掉索引(不保留列)</span>
+</pre>
+<p>这是"表格 → 统计/分组"反复用到的基本动作。理解 set/reset 这对互为逆的变换,后面 groupby 和 pivot 就顺了。</p>
+
+<h2>知识点 4:重塑——stack / pivot(hangsz 4、5 + 官方)</h2>
+<p>行↔列互换的两种视图:<code>stack</code> 把列堆成行(变"长"),<code>unstack</code> 反向;数据透视用 <code>pivot/pivot_table</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #000">{</span>
+    <span style="color: #A31515">&quot;day&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Mon&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Mon&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Tue&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Tue&quot;</span><span style="color: #000">],</span>
+    <span style="color: #A31515">&quot;city&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;B&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;B&quot;</span><span style="color: #000">],</span>
+    <span style="color: #A31515">&quot;temp&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">20</span><span style="color: #000">,</span> <span style="color: #098658">22</span><span style="color: #000">,</span> <span style="color: #098658">19</span><span style="color: #000">,</span> <span style="color: #098658">24</span><span style="color: #000">],</span>
+<span style="color: #000">}</span>
+<span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+<span style="color: #001080">piv</span> <span style="color: #000">=</span> <span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">pivot</span><span style="color: #000">(</span><span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #A31515">&quot;day&quot;</span><span style="color: #000">,</span> <span style="color: #001080">columns</span><span style="color: #000">=</span><span style="color: #A31515">&quot;city&quot;</span><span style="color: #000">,</span> <span style="color: #001080">values</span><span style="color: #000">=</span><span style="color: #A31515">&quot;temp&quot;</span><span style="color: #000">)</span>
+<span style="color: #008000">#       A    B</span>
+<span style="color: #008000"># Mon  20  22</span>
+<span style="color: #008000"># Tue  19  24</span>
+<span style="color: #008000"># 等价于 set_index([&quot;day&quot;,&quot;city&quot;]).unstack(&quot;city&quot;)</span>
+</pre>
+<p>pivot 把"长表"转"宽表";逆操作 melt/stack。书第9章(作图)常用宽表,groupby 常用长表——pivot/stack 是切换器。</p>
+
+<h2>知识点 5:Index 与 MultiIndex 进阶(hangsz 4)</h2>
+<p>多级索引(MultiIndex)让你能按"外层/内层"取数,<code>xs</code> 取某层:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">idx</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">MultiIndex</span><span style="color: #000">.</span><span style="color: #001080">from_product</span><span style="color: #000">([[</span><span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;B&quot;</span><span style="color: #000">],</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">]])</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">),</span> <span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #001080">idx</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">[</span><span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">])</span>            <span style="color: #008000"># 外层取</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">xs</span><span style="color: #000">(</span><span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">,</span> <span style="color: #001080">level</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">))</span>  <span style="color: #008000"># 按内层取(s.loc[:, &quot;y&quot;] 也行)</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">index</span><span style="color: #000">.</span><span style="color: #001080">get_level_values</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">)</span>   <span style="color: #008000"># 取某一层标签</span>
+<span style="color: #008000"># Index 集合运算</span>
+<span style="color: #001080">idxA</span><span style="color: #000">,</span> <span style="color: #001080">idxB</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Index</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span><span style="color: #098658">2</span><span style="color: #000">,</span><span style="color: #098658">3</span><span style="color: #000">]),</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Index</span><span style="color: #000">([</span><span style="color: #098658">2</span><span style="color: #000">,</span><span style="color: #098658">3</span><span style="color: #000">,</span><span style="color: #098658">4</span><span style="color: #000">])</span>
+<span style="color: #001080">idxA</span><span style="color: #000">.</span><span style="color: #001080">union</span><span style="color: #000">(</span><span style="color: #001080">idxB</span><span style="color: #000">);</span> <span style="color: #001080">idxA</span><span style="color: #000">.</span><span style="color: #001080">intersection</span><span style="color: #000">(</span><span style="color: #001080">idxB</span><span style="color: #000">)</span>
+</pre>
+<p>MultiIndex 是"分组/按两层取数"的高级能力;先会用 <code>xs</code> 和 <code>get_level_values</code> 就够了。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">像 SQL JOIN 按键配对用?</p>
+  <button class="opt" data-ok="false">concat</button>
+  <button class="opt" data-ok="true">merge</button>
+  <button class="opt" data-ok="false">pivot</button>
+  <button class="opt" data-ok="false">stack</button>
+  <p class="reveal">merge=按共同键配对(JOIN);concat=按轴堆叠。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">横向加列(列变多)用?</p>
+  <button class="opt" data-ok="false">merge 不管</button>
+  <button class="opt" data-ok="true">concat(axis=1)</button>
+  <button class="opt" data-ok="false">fillna</button>
+  <button class="opt" data-ok="false">cut</button>
+  <p class="reveal">pd.concat([df1,df2], axis=1) 左右并排加列;axis=0 是竖向堆行。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">把某列提为行索引用?</p>
+  <button class="opt" data-ok="false">reset_index</button>
+  <button class="opt" data-ok="true">set_index</button>
+  <button class="opt" data-ok="false">merge</button>
+  <button class="opt" data-ok="false">drop_duplicates</button>
+  <p class="reveal">set_index 提升;reset_index 是把索引降回列,两者互为逆过程。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">长表转宽表(透视)用?</p>
+  <button class="opt" data-ok="false">stack</button>
+  <button class="opt" data-ok="true">pivot</button>
+  <button class="opt" data-ok="false">fillna</button>
+  <button class="opt" data-ok="false">qcut</button>
+  <p class="reveal">pivot 把"某列的值变列标题"成宽表;逆操作 melt/stack。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0005_合并与重塑.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A(hangsz 3)</strong>:造 staff/dept 两表,练 on/how 四种合并、concat 两个方向</li>
+  <li><strong>练习 B(hangsz 5)</strong>:set_index/reset_index 换着玩;把 movieLens 或 tips 转 pivot 宽表</li>
+  <li><strong>练习 C(额外)</strong>:MultiIndex 用 xs 取内层;union/intersection 集合运算</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>hangsz [笔记3 merge详解](https://github.com/hangsz/pandas-tutorial)、[笔记5 列/行index转化](https://github.com/hangsz/pandas-tutorial)、[笔记4 Index](https://github.com/hangsz/pandas-tutorial);官方 <a href="https://pandas.pydata.org/docs/user_guide/merging.html">merge/join</a> 与 <a href="https://pandas.pydata.org/docs/user_guide/reshaping.html">reshaping</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:merge vs concat 分清了吗?下一课是分析核心——<strong>分组聚合 groupby</strong>(书第10章,仓库缺,我补)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-数据清洗与变换.html">← 上一篇:数据清洗与变换</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-分组聚合groupby.html">下一篇:分组聚合 groupby →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

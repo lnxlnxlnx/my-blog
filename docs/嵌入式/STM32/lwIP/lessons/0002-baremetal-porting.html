@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 2 课：无 OS 移植 — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 2 课</nav>
+
+<h1>第 2 课：无 OS 移植</h1>
+<p class="subtitle">以太网 DMA 描述符、ethernetif.c 收发包、arch 配置、裸机主循环跑通 ping</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>把 lwIP 2.1.3 装进裸机工程，让探索者板子第一次"上网"。学完你能说清：以太网 DMA 描述符怎么追踪数据包、ethernetif.c 的收发函数各干什么、lwipopts.h 里哪些宏决定内核形态、无 OS 模式下协议栈靠什么"活着"。最后动手：开发板静态 IP <code>192.168.1.10</code>，电脑 <code>ping</code> 通它，再用 Wireshark 亲眼看到 ARP 请求/应答和 ICMP 报文——这是你第一次"看见"协议在跑。</p>
+</div>
+
+<h2>1. 前期准备：搭好移植的"房间"</h2>
+
+<p>教材以裸机内存管理实验为基础工程（PDF 第 2.1 节 <span class="pg">PDF p.32</span>），因为 lwIP 后面要借用内存管理来给 DMA 描述符、缓冲区分配空间。做法很简单：</p>
+
+<ul>
+<li>在 <code>Middlewares</code> 下建 <code>lwip</code> 文件夹，里面再建两个子文件夹：</li>
+<li>📁 <code>arch</code> —— 放 lwIP 的配置文件（lwipopts.h / cc.h / ethernetif.c / lwip_comm.c 等）</li>
+<li>📁 <code>lwip_app</code> —— 放你自己的应用代码（后面 UDP/TCP 实验都在这里写）</li>
+</ul>
+
+<p>目录结构就一句话：<strong>内核源码一个仓库，配置归 arch，应用归 lwip_app</strong>。你动手时在"你的 lwIP 实验工程"里照这个结构建即可。</p>
+
+<div class="tip">
+  <p>💡 移植的本质不是"写代码"，而是"接水管"：lwIP 内核不知道你的网卡长什么样，它只认 <code>ethernetif.c</code> 提供的四个口子（init / input / output / 时基）。本课后面就是把这四个口子焊到 STM32 的 ETH 硬件上。</p>
+</div>
+
+<h2>2. 以太网 DMA 描述符：数据搬运的"快递单"</h2>
+
+<p>STM32 的以太网模块里，<strong>内存 ⇄ 收发 FIFO 的数据搬运全靠 DMA 完成</strong>，而 DMA 怎么搬、搬到哪，全靠"描述符"说了算（PDF 第 2.2 节 <span class="pg">PDF p.32</span>）。</p>
+
+<h3>2.1 两种链表结构</h3>
+
+<p>模块有两条描述符列表（接收一条、发送一条），基地址分别写入 <code>DMARDLAR</code> / <code>DMATDLAR</code> 寄存器。描述符之间可以连成两种结构：</p>
+
+<ul>
+<li><strong>环形结构</strong>：最后一个描述符指回第一个，头尾相连</li>
+<li><strong>链接结构</strong>：每个描述符的"下一个描述符"字段指向下一个（HAL 驱动库用的是这种）</li>
+</ul>
+
+<h3>2.2 描述符长什么样</h3>
+
+<p>描述符由结构体 <code>ETH_DMADescTypeDef</code> 描述（F4 V1.26.0 版本，探索者/DMF407）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span>
+{</span>
+  __IO <span style="color:#267F99">uint32_t</span> Status;              <span style="color:#008000">/* 状态：OWN 位、帧长度等都在这里 */</span>
+  <span style="color:#267F99">uint32_t</span> ControlBufferSize;        <span style="color:#008000">/* 控制和 buffer1、buffer2 的长度 */</span>
+  <span style="color:#267F99">uint32_t</span> Buffer1Addr;              <span style="color:#008000">/* 缓冲区 1 地址 */</span>
+  <span style="color:#267F99">uint32_t</span> Buffer2NextDescAddr;      <span style="color:#008000">/* 缓冲区 2 地址或下一个描述符地址 */</span>
+  <span style="color:#267F99">uint32_t</span> ExtendedStatus;           <span style="color:#008000">/* 增强描述符状态（常规描述符不用） */</span>
+  <span style="color:#267F99">uint32_t</span> Reserved1;                <span style="color:#008000">/* 保留 */</span>
+  <span style="color:#267F99">uint32_t</span> TimeStampLow;             <span style="color:#008000">/* 时间戳低位 */</span>
+  <span style="color:#267F99">uint32_t</span> TimeStampHigh;            <span style="color:#008000">/* 时间戳高位 */</span>
+} ETH_DMADescTypeDef;</pre>
+
+<p>注意：这 8 个成员并不是 STM32 里真实存在的寄存器，而是被称作<strong>"软件寄存器"（描述符字）</strong>（<span class="pg">PDF p.35</span>）。常规描述符只用前 4 个描述符字 <code>TDES0~TDES3</code>，对应关系：TDES0=Status（状态/控制）、TDES1=ControlBufferSize（缓冲长度）、TDES2=Buffer1Addr、TDES3=Buffer2NextDescAddr。增强描述符才有 8 个字（TDES4~7 用于时间戳等）。本教程用常规描述符。</p>
+
+<p>三条使用规则必须记牢：</p>
+<ul>
+<li>⚠️ 一个以太网数据包可以<strong>跨越多个</strong> DMA 描述符</li>
+<li>⚠️ 一个 DMA 描述符只能服务于<strong>一个</strong>数据包</li>
+<li>⚠️ 描述符列表最后一个指向第一个，形成<strong>循环链</strong></li>
+</ul>
+
+<h3>2.3 例程里怎么组织 + 怎么追踪</h3>
+
+<p>例程在 <code>ethernet.c</code> 里定义两个指向描述符数组的指针，接收发送各一条链：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">ETH_DMADescTypeDef *g_eth_dma_rx_dscr_tab;  <span style="color:#008000">/* 以太网 DMA 接收描述符表指针 */</span>
+ETH_DMADescTypeDef *g_eth_dma_tx_dscr_tab;  <span style="color:#008000">/* 以太网 DMA 发送描述符表指针 */</span>
+
+<span style="color:#008000">/* 用 HAL 库函数把&quot;数组&quot;变成&quot;链接结构&quot;，并绑定缓冲区 */</span>
+HAL_ETH_DMATxDescListInit(&amp;g_eth_handler, g_eth_dma_tx_dscr_tab,
+                          g_eth_tx_buf, ETH_TXBUFNB);  <span style="color:#008000">/* 初始化发送描述符 */</span>
+HAL_ETH_DMARxDescListInit(&amp;g_eth_handler, g_eth_dma_rx_dscr_tab,
+                          g_eth_rx_buf, ETH_RXBUFNB);  <span style="color:#008000">/* 初始化接收描述符 */</span></pre>
+
+<p><strong>追踪</strong>（<span class="pg">PDF p.37</span>）：句柄 <code>g_eth_handler</code>（ETH_HandleTypeDef）内部有两个指针 <code>TxDesc</code> 和 <code>RxDesc</code>，它们始终指向<strong>下一个要发送/接收的描述符</strong>。驱动程序每处理完一个包就把描述符的 OWN 位交还给 DMA，然后沿着 <code>Buffer2NextDescAddr</code> 走到下一个——这就是收发流程的"游标"。看 <code>low_level_output</code> / <code>low_level_input</code> 源码时留意这两个指针的用法。</p>
+
+<h2>3. 添加网卡驱动：ethernet.c 与 PHY</h2>
+
+<p>移植第一步：把正点原子例程 <code>Drivers\BSP\ETHERNET\ethernet.c/h</code> 拷进你的工程（PDF 第 2.3.1 节 <span class="pg">PDF p.38</span>），同时把 <code>stm32f4xx_hal_eth.c</code> 加进 HAL 分组，并在 <code>stm32f4xx_hal_conf.h</code> 顶部使能 <code>HAL_ETH_MODULE_ENABLED</code>。ethernet.c 里几个关键函数：</p>
+
+<table>
+<tr><th>函数</th><th>职责</th></tr>
+<tr><td><code>ethernet_init()</code></td><td>配置 MAC 并调用 <code>HAL_ETH_Init</code> 初始化以太网</td></tr>
+<tr><td><code>HAL_ETH_MspInit()</code></td><td>RMII 引脚、时钟、中断使能、PHY 硬件复位</td></tr>
+<tr><td><code>ethernet_read_phy / write_phy</code></td><td>SMI 通道读写 PHY 寄存器（封装 HAL 函数）</td></tr>
+<tr><td><code>ethernet_chip_get_speed()</code></td><td>读取 PHY 的速度/双工状态</td></tr>
+<tr><td><code>ETH_IRQHandler()</code></td><td>接收中断服务函数，交给 <code>lwip_pkt_handle()</code></td></tr>
+<tr><td><code>ethernet_get_eth_rx_size()</code></td><td>从接收描述符解析出帧长度</td></tr>
+<tr><td><code>ethernet_mem_malloc/free</code></td><td>为描述符表和收发缓冲区申请内存</td></tr>
+</table>
+
+<p><code>ethernet_init</code> 的核心就是填一个"配置全家桶"再调 <code>HAL_ETH_Init</code>（<span class="pg">PDF p.39</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">g_eth_handler.Instance = ETH;
+<span style="color:#008000">/* 使能自协商模式 */</span>
+g_eth_handler.Init.AutoNegotiation = ETH_AUTONEGOTIATION_ENABLE;
+g_eth_handler.Init.Speed = ETH_SPEED_100M;          <span style="color:#008000">/* 自协商开启时此配置无效 */</span>
+g_eth_handler.Init.DuplexMode = ETH_MODE_FULLDUPLEX;
+g_eth_handler.Init.PhyAddress = ETHERNET_PHY_ADDRESS;   <span style="color:#008000">/* 板载 PHY 地址 0x00 */</span>
+g_eth_handler.Init.MACAddr = macaddress;
+g_eth_handler.Init.RxMode = ETH_RXINTERRUPT_MODE;       <span style="color:#008000">/* 中断接收模式 */</span>
+g_eth_handler.Init.ChecksumMode = ETH_CHECKSUM_BY_HARDWARE; <span style="color:#008000">/* 硬件校验 */</span>
+g_eth_handler.Init.MediaInterface = ETH_MEDIA_INTERFACE_RMII; <span style="color:#008000">/* RMII 接口 */</span>
+
+<span style="color:#0000FF">if</span> (HAL_ETH_Init(&amp;g_eth_handler) == HAL_OK)
+{
+     <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;   <span style="color:#008000">/* 成功 */</span>
+}
+<span style="color:#0000FF">else</span>
+{
+     <span style="color:#0000FF">return</span> <span style="color:#098658">1</span>;   <span style="color:#008000">/* 失败 */</span>
+}</pre>
+
+<p>你的板子有两个"个性设置"要留意：</p>
+
+<ul>
+<li>🔌 <strong>RMII 引脚</strong>（探索者）：MDIO=PA2、MDC=PC1、REF_CLK=PA1、CRS_DV=PA7、RXD0=PC4、RXD1=PC5、TX_EN=PG11、TXD0=PG13、TXD1=PG14、<strong>RESET=PD3</strong>（DMF407 是 PI8，这是两块板第一处区别）。RMII 需要 <code>ETH_CLK</code> 提供 50MHz 参考时钟，<code>HAL_ETH_MspInit</code> 里全配好了，复用功能 <code>GPIO_AF11_ETH</code>。</li>
+<li>🔌 <strong>PHY 型号</strong>：你的探索者板载 <strong>LAN8720A</strong>，要在 <code>stm32f4xx_hal_conf.h</code> 里把 <code>PHY_TYPE</code> 设为 <code>LAN8720</code>（教材里写的是 0），它对应 <code>PHY_SR = 0x1F</code>（LAN8720 的状态寄存器是 31 号，bit2 是速度位）。DMF407 板载 LAN8720A、新款探索者板载 YT8512C，<code>ethernet_chip_get_speed()</code> 就是用 <code>PHY_TYPE</code> 宏选择从哪个寄存器读速度的（<span class="pg">PDF p.42</span>）。</li>
+</ul>
+
+<p>再补三个常量：<code>MAC_ADDR0~5</code>（在 stm32f4xx_hal_conf.h 里定义）、<code>ETH_RXBUFNB = ETH_TXBUFNB = 5</code>、<code>ETHERNET_PHY_ADDRESS = 0x00</code>。最后 <code>ETH_IRQHandler</code> 中断里判断收到帧就调 <code>lwip_pkt_handle()</code>，清标志位（<span class="pg">PDF p.43</span>）——此时编译会报这个函数未定义，别慌，它在 lwip_comm.c 里，第 5 节会补上。</p>
+
+<div class="warn">
+  <p>⚠️ 本课实验环境是<strong>网线直连电脑</strong>（没有路由器），所以必须用<strong>静态 IP</strong>：把 <code>lwip_comm_default_ip_set()</code> 里的开发板 IP 改成 <code>192.168.1.10</code>，电脑网卡配 <code>192.168.1.2</code>，并把 <code>LWIP_DHCP</code> 改为 0（或保持 1 但等它超时回落静态 IP）。教材例程默认 IP 是 192.168.1.30，你实验时改成 192.168.1.10 即可。</p>
+</div>
+
+<h2>4. 添加 lwIP 源文件与 arch 配置</h2>
+
+<p>把 <code>lwip-2.1.3/src</code> 整个拷进 <code>Middlewares\lwip</code>，然后建四个分组加文件（PDF 第 2.3.2 节 <span class="pg">PDF p.46</span>）：</p>
+
+<ul>
+<li><code>src/api</code> —— 全部 .c（Netconn/Socket 层）</li>
+<li><code>src/core</code> —— 除 ipv6 外的全部 .c（协议栈内核）</li>
+<li><code>src/netif</code> —— 只加 <code>ethernet.c</code>（通用以太网封装）</li>
+<li><code>arch</code> —— 你自己准备的 lwipopts.h / cc.h / ethernetif.c / lwip_comm.c</li>
+</ul>
+
+<p>arch 文件来源：<code>lwipopts.h</code> 和 <code>cc.h</code> 推荐从 ST 官方 STM32Cube_FW_F4_V1.26.0 包里拷（已针对 ST 芯片调好），ethernetif.c 用 contrib 包的模板或正点原子写好的版本。</p>
+
+<h3>4.1 lwipopts.h：内核的"裁剪清单"</h3>
+
+<p>这个文件决定 lwIP 编译成什么样（<span class="pg">PDF p.49</span>）。无 OS 移植的命根子就三个宏：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* NO_SYS 表示无操作系统模拟层，无操作系统为 1，有操作系统设置为 0 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> NO_SYS                        1</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> SYS_LIGHTWEIGHT_PROT          0     <span style="color:#008000">/* 无 OS 时不需要任务间保护 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> NO_SYS_NO_TIMERS              0     <span style="color:#008000">/* 允许 sys_timeout 定时机制 */</span></span></pre>
+
+<p>其他关键项（教材裸机配置值）：</p>
+<ul>
+<li>内存：<code>MEM_ALIGNMENT=4</code>、<code>MEM_SIZE=30*1024</code>（堆）、<code>MEMP_NUM_PBUF=25</code>、<code>PBUF_POOL_SIZE=20</code></li>
+<li>TCP：<code>TCP_MSS=1460</code>（1500-40）、<code>TCP_SND_BUF=11*TCP_MSS</code>、<code>TCP_WND=20*TCP_MSS</code>、<code>TCP_QUEUE_OOSEQ=0</code>（省内存）</li>
+<li>协议：<code>LWIP_TCP=1</code>、<code>LWIP_UDP=1</code>、<code>LWIP_ICMP=1</code>、<code>LWIP_DHCP=1</code>（本课实验可改 0）</li>
+<li>校验和：<code>CHECKSUM_BY_HARDWARE</code> —— 定义后 <code>CHECKSUM_GEN_*</code> 全为 0，IP/UDP/TCP 校验交给 MAC 硬件算，省 CPU</li>
+<li>接口：<code>LWIP_NETCONN=0</code>、<code>LWIP_SOCKET=0</code>（裸机精简版先用 RAW 编程接口，第 9 课才打开）</li>
+</ul>
+
+<h3>4.2 cc.h：数据类型的"翻译官"</h3>
+
+<p>cc.h 告诉 lwIP 你的编译器和平台特性（<span class="pg">PDF p.53</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">typedef</span> <span style="color:#267F99">int</span> <span style="color:#267F99">sys_prot_t</span>;   <span style="color:#008000">/* 无 OS 时临界区保护类型，直接定义成 int */</span>
+
+<span style="color:#008000">/* 按编译器定义结构体紧凑打包宏（MDK 用 __CC_ARM 分支） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> PACK_STRUCT_BEGIN __packed</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> PACK_STRUCT_STRUCT</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> PACK_STRUCT_END</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> PACK_STRUCT_FIELD(x) x</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LWIP_PLATFORM_ASSERT(x) do \
+        {printf(<span style="color:#A31515">&quot;Assertion \&quot;%s\&quot; failed at line %d in %s\n&quot;</span>, \
+        x, __LINE__, __FILE__); } while(0)</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LWIP_RAND() ((u32_t)rand())   <span style="color:#008000">/* 随机数种子：协议栈 ARP 等用 */</span></span></pre>
+
+<p>教材特别提醒：原模板里 <code>#include "cpu.h"</code>（F4 没有这文件）和 <code>LWIP_PROVIDE_ERRNO</code>（已在 lwipopts.h 定义）要删掉，否则重复定义报错。类型定义（u8_t、u16_t 等）lwIP 自带 arch.h 会处理，F4 上不需要手写。</p>
+
+<h2>5. ethernetif.c：协议栈与网卡的"桥梁"</h2>
+
+<p>这个文件一共六个函数（<span class="pg">PDF p.54</span>），三个给内核当回调，两个干活，一个报时：</p>
+
+<table>
+<tr><th>函数</th><th>角色</th></tr>
+<tr><td><code>ethernetif_init()</code></td><td>网卡初始化入口：填 netif 字段，把收发钩子绑给 low_level_output/input</td></tr>
+<tr><td><code>low_level_init()</code></td><td>设置 MAC、mtu=1500、flags，初始化 DMA 描述符并启动 ETH</td></tr>
+<tr><td><code>low_level_output()</code></td><td>把 pbuf 链拷进 Tx Buffer，调 <code>HAL_ETH_TransmitFrame</code> 发出去</td></tr>
+<tr><td><code>low_level_input()</code></td><td>从 Rx Buffer 拷数据进新建的 pbuf，返回给上层</td></tr>
+<tr><td><code>ethernetif_input()</code></td><td>取包 → 调 <code>netif->input</code> 送进内核</td></tr>
+<tr><td><code>sys_now()</code></td><td>毫秒时基（裸机版 = <code>HAL_GetTick()</code>）</td></tr>
+</table>
+
+<h3>5.1 发送：low_level_output</h3>
+
+<p>核心逻辑（<span class="pg">PDF p.56</span>）：遍历 pbuf 链表，逐段检查当前 Tx 描述符的 <strong>OWN 位</strong>（归 DMA 所有才可用），把数据 <code>memcpy</code> 进描述符的 Buffer；一段装不下就走 <code>Buffer2NextDescAddr</code> 换下一个描述符（这就是"一个包跨多个描述符"）。全部拷完后：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 所有数据都放入 Tx Buffer 后，发送此帧 */</span>
+HAL_ETH_TransmitFrame(&amp;g_eth_handler, framelength);
+errval = ERR_OK;
+error:
+<span style="color:#008000">/* 发送缓冲区下溢会让 TxDMA 挂起，必须清标志并向 DMATPDR 写值唤醒 */</span>
+<span style="color:#0000FF">if</span> ((g_eth_handler.Instance-&gt;DMASR &amp; ETH_DMASR_TUS) != (<span style="color:#267F99">uint32_t</span>)RESET)
+{
+    g_eth_handler.Instance-&gt;DMASR = ETH_DMASR_TUS;   <span style="color:#008000">/* 清除下溢标志 */</span>
+    g_eth_handler.Instance-&gt;DMATPDR = <span style="color:#098658">0</span>;             <span style="color:#008000">/* 唤醒 Tx DMA */</span>
+}</pre>
+
+<h3>5.2 接收：low_level_input</h3>
+
+<p>流程（<span class="pg">PDF p.59</span>）：<code>HAL_ETH_GetReceivedFrame</code> 判断收到帧 → 从 <code>RxFrameInfos</code> 拿长度和缓冲区 → <code>pbuf_alloc(PBUF_RAW, len, PBUF_POOL)</code> 申请 pbuf（这正是第 4 课内存池的用武之地）→ 沿描述符链拷数据 → 把用过的描述符 OWN 位置 1 归还 DMA，并用 <code>DMARPDR</code> 唤醒可能挂起的 RxDMA：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);   <span style="color:#008000">/* 申请 pbuf，从内存池取 */</span>
+<span style="color:#0000FF">if</span> (p != <span style="color:#098658">NULL</span>)                              <span style="color:#008000">/* pbuf 申请成功 */</span>
+{
+    <span style="color:#008000">/* ……沿接收描述符链把 Rx Buffer 数据拷进 pbuf（可跨多个描述符）…… */</span>
+}
+<span style="color:#0000FF">else</span>
+{
+    LINK_STATS_INC(link.memerr);            <span style="color:#008000">/* 池耗尽就丢包，统计 +1 */</span>
+    LINK_STATS_INC(link.drop);
+}
+<span style="color:#008000">/* 释放 DMA 描述符：置 OWN 位归还 DMA */</span>
+<span style="color:#0000FF">for</span> (i = <span style="color:#098658">0</span>; i &lt; g_eth_handler.RxFrameInfos.SegCount; i++)
+{
+    dmarxdesc-&gt;Status |= ETH_DMARXDESC_OWN;
+    dmarxdesc = (ETH_DMADescTypeDef *)(dmarxdesc-&gt;Buffer2NextDescAddr);
+}
+<span style="color:#0000FF">return</span> p;</pre>
+
+<h3>5.3 无 OS 运行模型：中断收包 + 主循环喂时基</h3>
+
+<p>裸机没有线程，lwIP 靠两件事"活着"（<span class="pg">PDF p.63~69</span>）：</p>
+
+<ul>
+<li><strong>收包走中断</strong>：<code>ETH_IRQHandler</code> → <code>lwip_pkt_handle()</code> → 间接调 <code>ethernetif_input()</code>（在 lwip_comm.c 里），取包后调 <code>netif->input(p, netif)</code> 把数据喂给内核（ip/arp/icmp 层）</li>
+<li><strong>定时靠轮询</strong>：主循环每 2ms 调一次 <code>lwip_periodic_handle()</code>，它内部调 <code>sys_check_timeouts()</code> 处理所有超时事件（TCP 重传、ARP 老化、DHCP 重试等），再按需调 DHCP 的粗/细定时器</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">int</span> <span style="color:#795E26">main</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* ……外设初始化…… */</span>
+    <span style="color:#0000FF">while</span> (lwip_comm_init() != <span style="color:#098658">0</span>)   <span style="color:#008000">/* 初始化失败则重试 */</span>
+    {
+        delay_ms(<span style="color:#098658">500</span>);
+    }
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        lwip_periodic_handle();     <span style="color:#008000">/* lwIP 轮询任务：超时 + DHCP 处理 */</span>
+        delay_ms(<span style="color:#098658">2</span>);                <span style="color:#008000">/* 每 2ms 喂一次 */</span>
+        <span style="color:#008000">/* ……其他业务代码，比如翻转 LED…… */</span>
+    }
+}</pre>
+
+<p>初始化链（lwip_comm_init，<span class="pg">PDF p.63</span>）：<code>ethernet_mem_malloc</code> 给描述符表/缓冲区申请内存 → <code>lwip_comm_default_ip_set</code> 写死 IP/掩码/网关 → <code>ethernet_init</code> 起硬件 → <code>lwip_init()</code> 初始化内核（内存堆、内存池、pbuf、netif 链表）→ <code>netif_add()</code> 挂网卡（回调传 <code>ethernetif_init</code> 和 <code>ethernet_input</code>）→ <code>netif_set_default</code> + <code>netif_set_up</code> 开网口。</p>
+
+<div class="tip">
+  <p>💡 记忆锚点：裸机版 lwIP 是"<strong>中断喂包、轮询喂时</strong>"的被动打工仔——它没有自己的线程，全靠你的 main 循环推着走。下一课换成 FreeRTOS 后，内核会变成独立的 tcpip_thread，自己"主动吃饭"，你对比着学就通了。</p>
+</div>
+
+<h2>动手练习（约 60 分钟，真机验证）</h2>
+
+<div class="practice">
+  <h3>练习 2.1：无 OS 移植 + 静态 IP 跑通 ping</h3>
+  <p class="step">1️⃣ 在"你的 lwIP 实验工程"里按第 3、4 节步骤添加 ethernet.c、hal_eth.c、lwIP 源码分组和 arch 四个文件（lwipopts.h / cc.h / ethernetif.c / lwip_comm.c）。</p>
+  <p class="step">2️⃣ 确认 <code>PHY_TYPE</code> = LAN8720（探索者板载 LAN8720A），<code>stm32f4xx_hal_conf.h</code> 里使能 <code>HAL_ETH_MODULE_ENABLED</code>，RESET 引脚为 PD3。</p>
+  <p class="step">3️⃣ 把 <code>lwip_comm_default_ip_set()</code> 里的 IP 改为 <code>192.168.1.10</code>、掩码 <code>255.255.255.0</code>、网关 <code>192.168.1.1</code>；<code>LWIP_DHCP</code> 改 0（直连无路由器）。</p>
+  <p class="step">4️⃣ 网线直连电脑（电脑网卡静态 IP <code>192.168.1.2</code>），编译下载，串口助手观察打印的 IP 信息。</p>
+  <p class="step">5️⃣ 电脑上 <code>ping 192.168.1.10</code>。</p>
+  <p class="step">✅ <strong>怎么做/观察什么</strong>：ping 应显示"字节=32 时间&lt;1ms TTL=255"（TTL=255 是 lwIP 的 TCP_TTL 默认值，一眼认出对端是 lwIP）。若不通：先查网线灯（LAN8720 链路灯），再看串口打印的 PHY 通信是否成功（<code>ethernet_read_phy(PHY_SR)</code> 卡死就是 SMI 没通），最后确认电脑网卡 IP 是否在同一网段。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2.2：Wireshark 抓 ARP/ICMP，第一次"看见"协议</h3>
+  <p class="step">1️⃣ 电脑上打开 Wireshark，选网线直连那块网卡，过滤条件写 <code>icmp || arp</code>。</p>
+  <p class="step">2️⃣ 清空 ARP 缓存（<code>arp -d</code>），再 <code>ping 192.168.1.10</code>。</p>
+  <p class="step">3️⃣ 观察抓包列表。</p>
+  <p class="step">✅ <strong>怎么做/观察什么</strong>：你应该看到三幕戏——① 电脑先发 <strong>ARP 请求</strong>"谁是 192.168.1.10？"，目标 MAC 是广播 ff:ff:ff:ff:ff:ff；② 开发板回 <strong>ARP 应答</strong>（注意它的源 MAC 就是 lwip_comm_default_ip_set 里配的那 6 字节）；③ 之后才是成对的 <strong>ICMP Echo Request / Echo Reply</strong>。这个顺序解释了为什么"通信前要先问 MAC 地址"——ARP 就是第 7 课的伏笔。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 以太网 DMA 描述符在 STM32 中的本质是什么？</p>
+  <p class="opt">A. 芯片内部真实存在的硬件寄存器</p>
+  <p class="opt">B. 由结构体 ETH_DMADescTypeDef 描述的内存结构，也称"软件寄存器"</p>
+  <p class="opt">C. 一段固定的 FIFO 存储区</p>
+  <details><summary>查看答案</summary><div class="answer">B。描述符是内存里的结构体数组，用 TDES0~TDES3 等描述符字描述状态和缓冲区，不是硬件寄存器（PDF p.35）。</div></details>
+
+  <p class="q">Q2. 无 OS 移植中，lwIP 的收包和时基分别由谁驱动？</p>
+  <p class="opt">A. 收包走 ETH 中断，时基靠主循环轮询 sys_check_timeouts</p>
+  <p class="opt">B. 收包靠轮询，时基走 SysTick 中断</p>
+  <p class="opt">C. 收包和时基都靠硬件 DMA 自动完成</p>
+  <details><summary>查看答案</summary><div class="answer">A。ETH_IRQHandler → lwip_pkt_handle → ethernetif_input 收包；main 循环每 2ms 调 lwip_periodic_handle 处理超时（PDF p.63~69）。</div></details>
+
+  <p class="q">Q3. NO_SYS 宏在 lwipopts.h 中分别取值时代表什么？</p>
+  <p class="opt">A. 1 表示无操作系统，0 表示有操作系统</p>
+  <p class="opt">B. 0 表示无操作系统，1 表示有操作系统</p>
+  <p class="opt">C. 该宏只影响内存分配，与操作系统无关</p>
+  <details><summary>查看答案</summary><div class="answer">A。NO_SYS=1 编译无操作系统版本（本课），NO_SYS=0 编译带 OS 版本（第 3 课），注意这个参数不同编译出的内核代码不同（PDF p.50）。</div></details>
+
+  <p class="q">Q4. 发送数据包时，如果数据超过一个 Tx Buffer 的大小怎么办？</p>
+  <p class="opt">A. 丢弃超出的部分，只发一帧</p>
+  <p class="opt">B. 沿 Buffer2NextDescAddr 链使用多个发送描述符分片拷贝</p>
+  <p class="opt">C. 扩大单个描述符的 Buffer 后再发送</p>
+  <details><summary>查看答案</summary><div class="answer">B。一个以太网数据包可以跨越多个 DMA 描述符，low_level_output 按 ETH_TX_BUF_SIZE 分片 memcpy，最后一次 HAL_ETH_TransmitFrame 发出（PDF p.57）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 2 章（PDF p.32~87）——重点 2.1~2.3 探索者部分，本课全部依据</li>
+<li>📕 STM32F407 中文参考手册以太网章节——DMA 描述符各描述符字位含义的权威出处</li>
+<li>🌐 <a href="https://savannah.nongnu.org/projects/lwip/">lwIP 官网</a>——lwIP 2.1.3 源码与 contrib 包（ethernetif.c 模板、freertos 移植目录）</li>
+<li>🌐 <a href="https://www.wireshark.org/">Wireshark</a>——本课练习 2.2 的抓包工具</li>
+</ul>
+
+<div class="footer-note">
+  <p>有不清楚的地方直接问我（Agent 就是你的老师）。下一课预告：第 3 课——把 lwIP 移植到 FreeRTOS 上，内核变成独立的 tcpip_thread，你会看到信号量、邮箱和协议栈线程的"同居生活"。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0001-lwip-intro.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0003-freertos-porting.html">下一课：FreeRTOS 移植 →</a>
+</nav>
+
+</div>
+</body>
+</html>

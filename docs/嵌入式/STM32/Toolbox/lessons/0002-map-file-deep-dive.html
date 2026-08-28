@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 2 课：MAP 文件深读 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 2 课</nav>
+
+<h1>第 2 课：MAP 文件深读</h1>
+<p class="subtitle">把 Program Size 四个数彻底看懂（正点原子《STM32 MAP 文件浅析》第 2 章）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>第 1 课我们只记下了 Code/RO-data/RW-data/ZI-data 四个数，这课把它们逐个解剖。学完你能：读懂 .map 文件五大组成部分，算清工程到底吃掉多少 FLASH 和 RAM，一眼揪出"占空间最多的模块"和"被编译器悄悄删掉的冗余函数"——优化代码、排查栈溢出全靠它。</p>
+</div>
+
+<h2>1. 怎么让 MDK 吐出 .map 文件</h2>
+
+<p>.map 文件是链接器（armlink）生成的一份"工程体检报告"（<span class="pg">PDF p.7</span>）。默认情况下 MDK 已经在生成它了，但你得知道开关在哪：</p>
+
+<ul>
+<li>① 魔术棒（Options for Target）→ <strong>Listing 选项卡</strong>：里面勾选与链接器输出相关的项（默认全勾，取消会少输出部分信息，一般不建议动）</li>
+<li>② 全编译工程（Rebuild，无错误），.map 文件随 .axf 一起生成</li>
+<li>③ 在工程树里<strong>双击目标名</strong>（如 LED、Project），.map 就在编辑器里打开了</li>
+</ul>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 打开路径：MDK → 魔术棒(Options for Target) → Listing 选项卡</span>
+<span style="color:#008000"># 关键输出选项（默认全勾）：</span>
+  [x] Assembly Listing     <span style="color:#008000">// 汇编列表 .lst</span>
+  [x] C Preprocessor Listing
+  [x] C Compiler Listing
+  [x] Linker Listing (.map) <span style="color:#008000">// ★ 本课主角，别关它</span>
+<span style="color:#008000"># 打开方式：编译成功后，双击工程树顶部的工程目标名</span></pre>
+
+<div class="tip">
+  <p>💡 咱们当前工程是 CubeMX/CMake 工程，编译器是 GCC——生成的 map 在 <code>build\EmbedOrigin_4s.map</code>（GCC 链接器也产 map）。文件格式和 MDK 的略有差异，但"看占用、找符号、查未使用段"的套路完全通用，本课后面会两边对照着看。</p>
+</div>
+
+<h2>2. 基础概念：Section 与 RO/RW/ZI</h2>
+
+<p>读 map 前先认几个词（<span class="pg">PDF p.8</span>）：</p>
+
+<table>
+<tr><th>术语</th><th>含义</th><th>占哪</th></tr>
+<tr><td><strong>Section（程序段）</strong></td><td>描述映像文件的代码或数据块，链接的最小单元</td><td>—</td></tr>
+<tr><td><strong>RO（Read Only）</strong></td><td>只读数据（RO data）+ 只读代码（RO code）</td><td>FLASH</td></tr>
+<tr><td><strong>RW（Read Write）</strong></td><td>有初值且不为 0 的可读写数据</td><td>FLASH 存初值 + RAM 读写</td></tr>
+<tr><td><strong>ZI（Zero initialized）</strong></td><td>初始化为 0 的数据</td><td>RAM</td></tr>
+<tr><td>.text / .constdata / .data / .bss</td><td>分别对应 RO code / RO data / RW data / ZI data（GCC 侧叫法）</td><td>同上</td></tr>
+</table>
+
+<p>用一段 C 代码把四个类别对号入座：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* RO data：const 修饰的只读数据，跟着代码进 FLASH */</span>
+<span style="color:#267F99">const</span> <span style="color:#267F99">uint8_t</span> logo_buf[] = {<span style="color:#098658">0x10</span>, <span style="color:#098658">0x32</span>, <span style="color:#098658">0x54</span>, <span style="color:#098658">0x76</span>};
+
+<span style="color:#008000">/* RW data：有初值且非 0，FLASH 里存一份初值，上电拷贝到 RAM 后读写 */</span>
+<span style="color:#267F99">uint8_t</span> g_count = <span style="color:#098658">5</span>;
+
+<span style="color:#008000">/* ZI data：初值为 0（或没初始化），只在 RAM 里占地方 */</span>
+<span style="color:#267F99">uint8_t</span> g_buffer[<span style="color:#098658">1024</span>];
+<span style="color:#267F99">uint8_t</span> g_flag;    <span style="color:#008000">/* 未初始化 = 自动清零 = ZI */</span></pre>
+
+<p>为什么 RW 要两头占？因为 RAM 掉电就丢，程序一上电就必须从 FLASH 的"初值区"把 g_count 的 5 拷进 RAM——这正是第 3 课启动文件里 <code>__scatterload</code> 干的事。</p>
+
+<h2>3. 五大组成部分，逐个解剖</h2>
+
+<p>.map 文件主体分为 5 部分（<span class="pg">PDF p.7</span>）。下面以教材的 H750 例程片段为例，每一段都标好了地址和大小。</p>
+
+<h3>3.1 程序段交叉引用（Section Cross References）</h3>
+<p>描述文件之间函数调用关系（<span class="pg">PDF p.9</span>）：</p>
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">main.o(i.main) refers to sys.o(i.sys_stm32_clock_init) for sys_stm32_clock_init
+<span style="color:#008000">//        ↑main 函数            ↑调用关系                 ↑被调函数</span>
+<span style="color:#008000">// 读法：main.c 的 main 调用了 sys.c 的 sys_stm32_clock_init</span>
+<span style="color:#008000">// i.xxx = 该函数入口地址（函数名本身）</span></pre>
+
+<h3>3.2 删除未使用的程序段（Removing Unused input sections）</h3>
+<p>列出被优化掉、从未被调用的函数/数据（<span class="pg">PDF p.9</span>）。末尾一行是总账：</p>
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">Removing Unused input sections from the image.
+    stm32h7xx_hal_usart_ex.o(USARTEx_SetNbDataToProcess)    <span style="color:#008000">// 例：没用到的函数被移除</span>
+    ...
+361 unused section(s) (total 43234 bytes) removed from the image.
+<span style="color:#008000">// 共删 361 个冗余段、省下 43234 字节 Flash</span></pre>
+<p>要让删除更彻底，MDK 可在 魔术棒 → C/C++ 选项卡勾选 <strong>One ELF Section per Function</strong>（每个函数独立成段，才能按函数粒度删）<span class="pg">PDF p.9</span>。</p>
+
+<h3>3.3 映像符号表（Image Symbol Table）</h3>
+<p>记录每个符号的地址、类型、大小（<span class="pg">PDF p.10</span>）。分两类：</p>
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 本地符号 Local Symbols（static 变量/函数、汇编标号，只在本文件可见）</span>
+0x08002bc8   Section   sys.o(i.sys_stm32_clock_init)   <span style="color:#008000">// 仅入口地址，大小 0</span>
+
+<span style="color:#008000"># 全局符号 Global Symbols（全局变量、函数，全工程可见）</span>
+0x08002bc9   Thumb Code  sys.o(i.sys_stm32_clock_init)   <span style="color:#008000">// 代码，大小 344 字节</span></pre>
+<p>注意两个地址 <strong>0x08002bc8 与 0x08002bc9 其实是同一个函数</strong>——ARM 规定 Thumb 指令最低位必须为 1，奇数地址表示"这是 Thumb 代码"，所以永远是差 1（<span class="pg">PDF p.11</span>）。</p>
+
+<h3>3.4 映像内存分布图（Memory Map of the image）</h3>
+<p>这是最直观的一张图（<span class="pg">PDF p.11-13</span>）。先搞清两个域：</p>
+<ul>
+<li><strong>加载域（Load Region）</strong>：映像实际存放的地方（就是 FLASH/QSPI 里的"货"）</li>
+<li><strong>执行域（Execution Region）</strong>：MCU 上电后的运行状态（RW 被拷进 RAM、ZI 在 RAM 里清零）</li>
+</ul>
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 教材 H750 例程的内存分布（加载域 + 执行域清单）</span>
+  LR_m_stmflash   0x08000000   size 0x2D8C   <span style="color:#008000">// 加载域：整块映像躺在 FLASH</span>
+  ├── ER_m_stmflash   0x08000000  size 0x2D6C  <span style="color:#008000">// 执行域：代码+只读数据，就地执行</span>
+  └── RW_m_stmsram   0x24000000  size 0x2D6C  <span style="color:#008000">// 执行域：RW+ZI 拷贝/清零后在这跑</span>
+  LR_m_qspiflash 0x90000000   size 0x0720   <span style="color:#008000">// 第二个加载域：外部 QSPI FLASH</span>
+  └── ER_m_qspiflash  0x90000000  size 0x0720</pre>
+<p>从这个清单能查到任何一个函数所在运行域、入口地址、大小——比如教材中 <code>sys_stm32_clock_init</code> 在 ER_m_stmflash 域、入口 0x08002BC8、大小 0x168 字节。</p>
+
+<h3>3.5 映像组件大小（Image component sizes）</h3>
+<p>按 .o 文件汇总每个源文件的占用，末尾给全工程总账（<span class="pg">PDF p.13-15</span>）：</p>
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># ① 每个 .c/.s 的占用（以 delay.o 为例）</span>
+  Code (inc. data)   RO Data   RW Data   ZI Data   Debug
+  142  (8)              0         0         0        23    delay.o
+<span style="color:#008000"># ② 库成员占用 Library Totals（如 fpinit.o 来自 fz_wv.l 库）</span>
+<span style="color:#008000"># ③ 全工程汇总 Grand Totals</span>
+  Total RO Size (Code + RO Data)  = 13452 Bytes    <span style="color:#008000">// 纯代码+只读</span>
+  Total RW Size (RW + ZI)         = 3032  Bytes    <span style="color:#008000">// 需占 SRAM</span>
+  Total ROM Size (Code+RO+RW)     = 13484 Bytes    <span style="color:#008000">// 需占 FLASH</span></pre>
+
+<h2>4. Program Size 四个数，一页看懂</h2>
+
+<p>回到编译输出的那行 <code>Program Size: Code=... RO-data=... RW-data=... ZI-data=...</code>，现在它的含义全明白了（<span class="pg">PDF p.14-15</span>）：</p>
+
+<div class="tip">
+  <p>💡 核心公式（请背下来）：</p>
+  <ul>
+    <li><strong>FLASH 占用 = Code + RO-data + RW-data</strong>（RW 的初值得存 FLASH）</li>
+    <li><strong>RAM 占用 = RW-data + ZI-data</strong>（运行期两者都躺在 SRAM）</li>
+  </ul>
+</div>
+
+<p>换算关系：</p>
+<ul>
+<li><strong>Total RO Size = Code + RO-data</strong>：纯只读部分（代码 + const 数据）</li>
+<li><strong>Total RW Size = RW-data + ZI-data</strong>：SRAM 需求</li>
+<li><strong>Total ROM Size = Code + RO-data + RW-data</strong>：FLASH 需求（教材 H750 例程 13484 字节）</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 常见误区：别拿 Program Size 的 ZI-data 去跟 RAM 总量比——ZI 只算 RAM；也别把 RW 只算成 RAM——它还额外吃 FLASH。做 Bootloader 时 FLASH 空间计算最容易在这栽跟头。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 2.1：打开你自己的 .map</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>MDK 工程 → 魔术棒 → Listing 选项卡确认 Linker Listing 已勾选 → Rebuild 一次 → 双击工程树目标名打开 .map。当前 CMake 工程直接打开 <code>build\EmbedOrigin_4s.map</code>。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>先搜 <code>Cross Reference</code>、<code>removed from the image</code>、<code>Image Symbol Table</code>、<code>Memory Map</code> 等关键词，把 5 个部分的位置都标出来。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>数一数你的工程被删了几个未使用段、省了多少字节？入口地址 0x0800xxxx 的"奇数地址"现象看到了吗？</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2.2：算账 + 找最大模块</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>找到 Grand Totals 区，读出 Total RO/RW/ROM Size。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>用公式自己算一遍：FLASH = Code+RO+RW，RAM = RW+ZI，对照 ROM Size 验证。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>在 Image component sizes 里找出占 Code 最大的 3 个 .o（大概率是 lvgl 或 FATFS 相关），想想怎么优化；再对照 STM32F407 的 1MB FLASH / 192KB RAM（本工程 RAM 128K + CCM 64K），估算资源余量。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 一个非 0 初值的全局变量，同时占用哪种空间？</p>
+  <p class="opt">A. 只占 RAM，因为它要读写</p>
+  <p class="opt">B. 只占 FLASH，因为它是代码</p>
+  <p class="opt">C. FLASH 存初值 + RAM 运行期读写</p>
+  <details><summary>查看答案</summary><div class="answer">C。RW data 的初值存在 FLASH，上电由启动文件拷贝到 RAM 后读写，两头都占（PDF p.8、p.14）。</div></details>
+
+  <p class="q">Q2. FLASH 占用量的正确公式是？</p>
+  <p class="opt">A. Code + RO-data + RW-data</p>
+  <p class="opt">B. Code + RO-data + ZI-data</p>
+  <p class="opt">C. RW-data + ZI-data</p>
+  <details><summary>查看答案</summary><div class="answer">A。RW 的初值需要 FLASH 存放；ZI 只在 RAM（PDF p.14-15）。</div></details>
+
+  <p class="q">Q3. 全局符号表中函数地址为什么是奇数？</p>
+  <p class="opt">A. 编译器随机生成的填充位</p>
+  <p class="opt">B. Thumb 指令最低位必须为 1</p>
+  <p class="opt">C. 表示函数有错误标记</p>
+  <details><summary>查看答案</summary><div class="answer">B。ARM 规定 Thumb 指令最低位为 1（LSB=1），所以真实地址 0x...C8 记作 0x...C9（PDF p.11）。</div></details>
+
+  <p class="q">Q4. "Removing Unused input sections" 部分告诉你什么？</p>
+  <p class="opt">A. 哪些函数被删了、省了多少空间</p>
+  <p class="opt">B. 哪些变量越界了需要修复</p>
+  <p class="opt">C. 哪些外设没有初始化</p>
+  <details><summary>查看答案</summary><div class="answer">A。它列出未被调用的冗余段并统计节省字节数，配合 One ELF Section per Function 可更彻底瘦身（PDF p.9）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《STM32 MAP 文件浅析 V1.1》第 2 章（PDF p.7~15）——本课全部依据</li>
+<li>🔧 MDK 帮助：<code>uVision Help → armlink User Guide → Map file</code>——map 各字段官方定义</li>
+</ul>
+
+<div class="footer-note">
+  <p>算不清的占用、找不到的模块，随时来问我。下一课预告：第 3 课——从复位到 main 的启动文件。上电后第一个程序到底做了什么，Stack_Size 那行 EQU 又藏着什么秘密。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0001-build-artifacts.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0003-startup-file.html">下一课：启动文件：从复位到 main →</a>
+</nav>
+
+</div>
+</body>
+</html>

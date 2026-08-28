@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L10 · pinctrl 与 gpio 子系统 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L10 · pinctrl 与 GPIO 子系统：用 Linux 的"正规军"点灯</h1>
+<p class="meta"><span class="tag">阶段 2</span> · 动手约 35 分钟</p>
+<p class="lead">你这几课都在"手搓寄存器"。但 Linux 早把 GPIO 事件封装成了<b>子系统</b>：pinctrl（管复用电/引脚下拉等）+ gpio 子系统（管方向和电平）。学会用它们，你的驱动能跑在任何用这套框架的 SoC 上，还自动有了 sysfs 接口。这是从"能点亮"到"工程化"的一课。</p>
+
+<h2>两个子系统管什么</h2>
+<table>
+<tr><th>子系统</th><th>管的活</th><th>你的 LED 例子里对应</th></tr>
+<tr><td><b>pinctrl</b></td><td>引脚复用功能、上下拉/速度/驱动能力的电气配置</td><td>• 选定函数 mux=GPIO alt5 • 配置 pad 属性</td></tr>
+<tr><td><b>gpio 子系统</b></td><td>方向、读写电平、中断请求</td><td>• 方向输出 • DR 写 1/0</td></tr>
+</table>
+<p>你把这两块的寄存器调用，换成内核提供的 API。应用侧甚至不用写驱动测试——gpio 子系统自带 <code>/sys/class/gpio</code> 用户接口（gpiolib 的 sysfs 导岀），可以 <code>echo 3 &gt; export</code> 之后直接 <code>echo 1/0 &gt; value</code>。</p>
+
+<h2>在 GPIO 子系统的用法（设备树 + 驱动 API）</h2>
+<pre><code class="language-dts">/* 设备树里这样描述 pinctrl 和 gpio */
+leds {
+    compatible = "gpio-leds";            /* 内核自带的，直接就亮了 */
+    led-red {
+        gpios = &lt;&amp;gpio1 3 GPIO_ACTIVE_LOW&gt;;
+        default-state = "on";
+    };
+};</code></pre>
+<p class="callout"><span class="t">事件点</span> 只要设备树有 <code>compatible = "gpio-leds"</code>，内核自带的 <code>leds-gpio</code> 驱动就会接管，而且 <code>/sys/class/leds/red</code> 立即生成。这就是 L10 最大的爽点：<b>设备树换成官方子系统的描述，驱动都不用写，灯就亮了</b>。这是 官方驱动 vs 手写驱动的分界。</p>
+
+<h2>驱动侧 API（你还是要会用）</h2>
+<pre><code class="language-c">struct gpio_desc *gpiod_get(struct device *dev, const char *con, int flags);
+gpiod_direction_output(gpio, 1);   /* 输出高电平 */
+gpiod_set_value(gpio, 0);          /* 写电平 */
+gpiod_to_irq(gpio);                /* GPIO 转中断号（L06 里若用中断就用它替代手数） */</code></pre>
+
+<div class="exercise">
+<div class="t">练习 L10：三个层次点亮同一个 LED</div>
+<p>同一个红灯，用三种姿势点它，理解"手写 vs 写半套 vs 不写"：</p>
+<ol>
+<li><b>sysfs 白嫖</b>：先查 GPIO1_IO03 在 sysfs/gpiolib 里的编号——<code>cat /sys/kernel/debug/gpio</code>（无权限则 <code>dmesg | grep gpio</code>）找到 "gpio-XX"；然后 <code>echo XX &gt; /sys/class/gpio/export</code>、<code>echo out &gt; /sys/class/gpio/gpioXX/direction</code>、<code>echo 0 &gt; /sys/class/gpio/gpioXX/value</code> 点亮——注意不同板子 gpio 编号基址不同，别照抄，要现场查。</li>
+<li><b>设备树叫官方驱动</b>：把设备树 led 节点 <code>compatible = "gpio-leds"</code>，重编 dtb 上板，看 <code>/sys/class/leds/red/brightness</code> 出现，<code>echo 1 &gt; brightness</code> 灯亮——<b>你一行驱动代码都没写</b>。</li>
+<li><b>驱动里用 gpiolib</b>：把你的 platform 驱动改成 <code>gpiod_*</code> API，删掉手写寄存器。</li>
+</ol>
+<p>做完你会彻底明白：为什么 Linux 说"能用子系统就别手搓寄存器"。子系统的价值不在"少写字"，而在<b>跨平台 + 有标准接口 + 别人能复用</b>。</p>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>pinctrl 和 gpio 子系统各自管什么？</summary><p class="a">pinctrl 管引脚功能复用电特和电气属性；gpio 管方向和电平。GPIO1_IO03 的"选 GPIO 功能、配置上下拉"是 pinctrl，"设输出、写0/1"是 gpio。</p></details>
+<details><summary>为什么推荐尽量用子系统而不是手写寄存器？</summary><p class="a">跨 SoC 可移植、有标准 sysfs/中断 API、驱动更简洁、内核社区维护且验证充分。缺点是要学它的抽象——但价值大于成本。</p></details>
+<details><summary>gpio-leds 驱动的设备树里，gpios 怎么写才表示"低电平点亮"?</summary><p class="a">在 gpios 属性里加 <code>GPIO_ACTIVE_LOW</code> 标志。驱动看到它就知道"电平反转"。这比手写寄存器里记得"低有效"高级——语义化。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① pinctrl/gpio 子系统的职责分工；② "设备树调用官方驱动"三层里最上层的最爽路径；③ gpiolib API。<b>到这里，你的"点灯"已经能隔着多个抽象层完成——是时候准备重编整个系统镜像了。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 45 章「pinctrl 和 gpio 子系统实验」(gpioled)、第 44 章设备树 led(dtsled)</li>
+<li>内核文档 <code>Documentation/driver-api/gpio/</code></li>
+<li>本工作区 <a href="../reference/imx6ull-cheatsheet.html">速查表</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。特别是"gpiod 怎么拿、拿错了会不会烧板"这类疑虑——问清楚再动手，毕竟之后要碰系统镜像了。</p>
+</body>
+</html>

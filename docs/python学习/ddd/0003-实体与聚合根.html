@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0003 · 实体与聚合根</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>实体 Entity 与聚合根 Aggregate</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0003 · 预计 25 分钟</p>
+
+<p>领域层第一个积木是<strong>实体(Entity)</strong>:有身份、生命周期里身份不变、能保护自己<strong>不变量</strong>的业务对象。再往上,把「一组要一致变更的领域对象」包在一个根下,它就是<strong>聚合(Aggregate)</strong>。本课全用 Python 讲。</p>
+
+<h2>知识点 1:实体 = 有身份 + 业务逻辑,不只是数据结构</h2>
+<p>实体(User、Product、Order)有唯一 id,相等性看 id;<strong>关键:业务逻辑放实体上</strong>,不能有空的只存字段的贫血模型(<a href="https://martinfowler.com/bliki/AnemicDomainModel.html">Anemic Domain Model</a>)。用项目里 wallet 实体做例子:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Wallet</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">wallet_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">,</span> <span style="color: #001080">balance</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">id</span> <span style="color: #000">=</span> <span style="color: #001080">wallet_id</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">balance</span> <span style="color: #000">=</span> <span style="color: #001080">balance</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">credit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">amount</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">):</span>      <span style="color: #008000"># 业务方法:入账</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">amount</span> <span style="color: #000">&lt;=</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">&quot;金额必须为正&quot;</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">balance</span> <span style="color: #000">+=</span> <span style="color: #001080">amount</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">debit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">amount</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">):</span>      <span style="color: #008000"># 业务方法:出账(保护不变量)</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">amount</span> <span style="color: #000">&lt;=</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">&quot;金额必须为正&quot;</span><span style="color: #000">)</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">amount</span> <span style="color: #000">&gt;</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">balance</span><span style="color: #000">:</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">&quot;余额不足&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># ← 不变量:不能为负</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">balance</span> <span style="color: #000">-=</span> <span style="color: #001080">amount</span>
+</pre>
+<p>注意:没有公开 setter 让人随便改 balance;所有改变都走 <code>credit</code>/<code>debit</code>,在这两个方法里做校验。这就是「实体保护自己的不变量」。</p>
+
+<h2>知识点 2:构造时就要合法——fail fast</h2>
+<p>实体在<strong>创建时就该合法</strong>。别写无参构造再慢慢 set;把必填都收进构造函数校验,不合格直接抛错(快速失败 fail fast):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">User</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">,</span> <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #A31515">&quot;@&quot;</span> <span style="color: #AF00DB">not</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">email</span><span style="color: #000">:</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;非法邮箱: {</span><span style="color: #001080">email</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">id</span> <span style="color: #000">=</span> <span style="color: #001080">user_id</span>          <span style="color: #008000"># 创建后不可变</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">email</span> <span style="color: #000">=</span> <span style="color: #001080">email</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">wallet_id</span> <span style="color: #000">=</span> <span style="color: #00F">None</span>      <span style="color: #008000"># 可选,后续关联</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">attach_wallet</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">wallet_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">wallet_id</span> <span style="color: #000">=</span> <span style="color: #001080">wallet_id</span>
+</pre>
+<p>这些「保证对象永远正确」的规则,就是 <a href="https://en.wikipedia.org/wiki/Class_invariant">不变量 invariants</a>——实体存在的前提。</p>
+
+<h2>知识点 3:值对象(预告)vs 实体</h2>
+<p>对比一下,方便你记:实体有 id、可变;<strong>值对象</strong>没 id、不可变、按内容相等。营销邮箱、金额、地址这类"只是一组值"的东西通常是值对象(下一课细讲)。实体 vs 值对象是 DDD 最先要分清的两种对象。</p>
+
+<h2>知识点 4:聚合根——一整组要一起变的对象的大门</h2>
+<p><strong>聚合(Aggregate)</strong>是把多个实体/值对象包成一个边界,只通过一个<strong>聚合根(Aggregate Root)</strong>访问。聚合根是外界能直接拿到的唯一入口;聚合内的一致性由根保证。项目里 user 聚合根:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">User</span><span style="color: #000">:</span>                     <span style="color: #008000"># 项目里 user.entity.ts 即聚合根(一个实体当根)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">,</span> <span style="color: #001080">email</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">id</span> <span style="color: #000">=</span> <span style="color: #001080">user_id</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">email</span> <span style="color: #000">=</span> <span style="color: #001080">email</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">wallet</span> <span style="color: #000">=</span> <span style="color: #00F">None</span>      <span style="color: #008000"># 聚合内部可含其他对象(如钱包)</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_wallet</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">initial_balance</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">):</span>
+        <span style="color: #008000"># 聚合根协调内部对象,保证一致性</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">wallet</span> <span style="color: #000">=</span> <span style="color: #001080">Wallet</span><span style="color: #000">(</span><span style="color: #001080">wallet_id</span><span style="color: #000">=</span><span style="color: #001080">new_uuid</span><span style="color: #000">(),</span> <span style="color: #001080">balance</span><span style="color: #000">=</span><span style="color: #001080">initial_balance</span><span style="color: #000">)</span>
+</pre>
+<p>规则:外界对聚合的一切操作都<strong>只能走聚合根</strong>,不能跳过根直接摸内部成员(<a href="https://martinfowler.com/bliki/DDD_Aggregate.html">Aggregate</a>)。</p>
+
+<h2>知识点 5:聚合的几条铁律</h2>
+<ul>
+  <li>聚合根有<strong>全局身份</strong>(UUID/PK);聚合内实体只有局部身份</li>
+  <li>聚合内一致性:改任一对象,整个聚合的不变量都要成立(一致性边界)</li>
+  <li>对聚合的操作是<strong>事务性</strong>的:要么全成要么全不做</li>
+  <li>聚合根可与别的聚合根用「id 引用」而非直接对象引用</li>
+  <li>聚合能发布<strong>领域事件</strong>(0006 讲)——这是解耦的关键</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">实体的相等性看什么?</p>
+  <button class="opt" data-ok="false">所有字段值</button>
+  <button class="opt" data-ok="true">它的身份 id</button>
+  <button class="opt" data-ok="false">内存地址</button>
+  <button class="opt" data-ok="false">创建时间</button>
+  <p class="reveal">实体有身份,相等性由 id 决定,生命周期里 id 不变。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">业务逻辑应放哪?</p>
+  <button class="opt" data-ok="false">服务里全包</button>
+  <button class="opt" data-ok="true">实体方法里</button>
+  <button class="opt" data-ok="false">控制器里</button>
+  <button class="opt" data-ok="false">数据库里</button>
+  <p class="reveal">业务逻辑放实体方法上,否则变贫血模型。服务只做编排。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">聚合外界只能访问谁?</p>
+  <button class="opt" data-ok="false">内部任意成员</button>
+  <button class="opt" data-ok="true">聚合根</button>
+  <button class="opt" data-ok="false">值对象直接</button>
+  <button class="opt" data-ok="false">没有限制</button>
+  <p class="reveal">对聚合的一切操作只能走聚合根这一个入口,保证一致性和不变量。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">对聚合的操作必须是?</p>
+  <button class="opt" data-ok="false">可部分保存</button>
+  <button class="opt" data-ok="true">事务性(全有或全无)</button>
+  <button class="opt" data-ok="false">任意顺序</button>
+  <button class="opt" data-ok="false">异步完成</button>
+  <p class="reveal">聚合内变更要么全保存要么全不保存,保证一致性边界不破裂。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0003_实体与聚合根.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:实现一个 Order 实体(有 id、金额、状态),加 pay() 方法保护「不能重复付款」不变量</li>
+  <li><strong>练习 B</strong>:把 Order + OrderItem 组成一个聚合,只有 Order 能增删 item,写一致性校验</li>
+  <li><strong>练习 C</strong>:对照项目 user.entity.ts / wallet.entity.ts 形状,用 Python 各写一个等价类</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Entities 与 Aggregates 两小节</strong>;再看 <a href="https://martinfowler.com/bliki/DDD_Aggregate.html">Fowler Aggregate</a> 与 <a href="https://martinfowler.com/bliki/AnemicDomainModel.html">Anemic Domain Model</a>(为什么别写「只有字段没方法」的类)。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:聚合根的「唯一入口」你体会到了吗?下一课讲<strong>值对象与领域不变量</strong>——怎么把「字符串邮箱」变成「一口就合法的 Email」。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0002-模块与垂直切片.html">← 上一篇:模块与垂直切片</a>
+  <a href="index.html">课程地图</a>
+  <a href="0004-值对象与领域不变量.html">下一篇:值对象与领域不变量 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

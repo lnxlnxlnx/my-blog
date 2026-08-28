@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0008 · 组合优于继承与依赖注入</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>组合优于继承与依赖注入</h1>
+<p class="meta">架构与设计模式 · 课程 0008 · 预计 20 分钟</p>
+
+<p>前七课都是「招式」(设计模式)。从这课开始是「内功」——<strong>不依赖具体模式、却贯穿所有代码的架构原则</strong>。今天两条:组合优于继承、依赖注入。</p>
+
+<h2>知识点 1:继承的问题——基类一改,全链发抖</h2>
+<p>课本教我们用继承复用行为,但现实里深继承链是著名反模式。看这个越攒越深的金字塔:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">BaseModel</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>        <span style="color: #008000"># 基类:大家都要的</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">evaluate</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SupervisedModel</span><span style="color: #000">(</span><span style="color: #001080">BaseModel</span><span style="color: #000">):</span>     <span style="color: #008000"># 第二层</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">TabularModel</span><span style="color: #000">(</span><span style="color: #001080">SupervisedModel</span><span style="color: #000">):</span>  <span style="color: #008000"># 第三层</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">impute_missing</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">NNModel</span><span style="color: #000">(</span><span style="color: #001080">TabularModel</span><span style="color: #000">):</span>          <span style="color: #008000"># 第四层……</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">backward</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+</pre>
+<p>问题链条:</p>
+<ul>
+  <li><strong>脆</strong>:改基类一个方法,所有后代都受影响,哪怕无关</li>
+  <li><strong>表达力差</strong>:一个模型可能「既是监督的、又能表格化、又能 NN」,多重分类只能用多继承,越搭越乱</li>
+  <li><strong>测试难</strong>:想测一个层级,得先构造一串祖先</li>
+</ul>
+
+<h2>知识点 2:组合——用「拥有」代替「继承」</h2>
+<p><strong>组合优于继承(Composition over Inheritance)</strong>:一个对象<strong>拥有</strong>其他对象(作为字段),把行为委托给它们,而不是靠血缘关系(继承)获得行为。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Trainer</span><span style="color: #000">:</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;组合:Trainer『拥有』一个模型 + 一个数据管道 + 一个报告器。&quot;&quot;&quot;</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">preprocessor</span><span style="color: #000">,</span> <span style="color: #001080">reporter</span><span style="color: #000">):</span>   <span style="color: #008000"># 依赖从外面来</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">model</span>          <span style="color: #008000"># 拥有</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">preprocessor</span> <span style="color: #000">=</span> <span style="color: #001080">preprocessor</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">reporter</span> <span style="color: #000">=</span> <span style="color: #001080">reporter</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train_and_report</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span>
+        <span style="color: #001080">X_clean</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">preprocessor</span><span style="color: #000">.</span><span style="color: #001080">fit_transform</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X_clean</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">reporter</span><span style="color: #000">.</span><span style="color: #001080">emit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span><span style="color: #000">)</span>
+</pre>
+<p>现在想换预处理、换模型、换报告方式——<strong>只换对象,不改 Trainer 的代码</strong>。这就是「组合 = 可插拔」;而继承把一切焊死。</p>
+
+<h2>知识点 3:依赖注入——依赖从外面「传进来」</h2>
+<p>上面 <code>__init__(self, model, ...)</code> 把依赖从构造函数传进来,这就是<strong>依赖注入(Dependency Injection, DI)</strong>。反例是「内部 new」:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Trainer</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">RandomForest</span><span style="color: #000">()</span>      <span style="color: #008000"># 坏:依赖在内部写死,换不了</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">store</span> <span style="color: #000">=</span> <span style="color: #001080">FileStore</span><span style="color: #000">()</span>         <span style="color: #008000">#      测试也没法替换</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Trainer</span><span style="color: #000">:</span>                            <span style="color: #008000"># 好:依赖从外面传</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">store</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">model</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">store</span> <span style="color: #000">=</span> <span style="color: #001080">store</span>
+</pre>
+<p>DI 的三个层次(越往下越强):</p>
+<ul>
+  <li><strong>构造器注入</strong>:构造时传入(最常用,<code>__init__</code> 参数)</li>
+  <li><strong>参数注入</strong>:调用函数时传(<code>train(model, X, y)</code>)</li>
+  <li><strong>属性注入</strong>:之后 <code>trainer.model = ...</code>(灵活但不直观)</li>
+</ul>
+
+<h2>知识点 4:DI 让测试脱胎换骨</h2>
+<p>依赖从外部来,测试就能「偷梁换柱」——这正是工厂那课「注册假对象」的底气:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Trainer</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">store</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">model</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">store</span> <span style="color: #000">=</span> <span style="color: #001080">store</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_trainer_uses_fake_store</span><span style="color: #000">():</span>
+    <span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">FakeStore</span><span style="color: #000">:</span>                      <span style="color: #008000"># 测试专用的假依赖</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+            <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">saved</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">m</span><span style="color: #000">):</span>
+            <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">saved</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">m</span><span style="color: #000">)</span>
+
+    <span style="color: #001080">fake</span> <span style="color: #000">=</span> <span style="color: #001080">FakeStore</span><span style="color: #000">()</span>
+    <span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">Trainer</span><span style="color: #000">(</span><span style="color: #001080">FakeModel</span><span style="color: #000">(),</span> <span style="color: #001080">fake</span><span style="color: #000">)</span>  <span style="color: #008000"># 注入假的,不碰真实 IO/模型</span>
+    <span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">train</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+    <span style="color: #00F">assert</span> <span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">fake</span><span style="color: #000">.</span><span style="color: #001080">saved</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">1</span>          <span style="color: #008000"># 快速、无副作用、可断言</span>
+</pre>
+<p>没有 DI 的话,测试里 new 出的真实模型和真实文件系统又慢、又不可控、还可能污染磁盘。</p>
+
+<h2>知识点 5:什么时候才用继承</h2>
+<p>「组合优于继承」不是说禁用继承。继承仍然合适在<strong>真正的 is-a 关系 + 要复用基类的结构/默认行为</strong>时——典型就是模板方法那课的 <code>BaseTrainer</code>:</p>
+<div class="grid">
+  <div class="card"><h3>用继承</h3><p>是-a 关系,子类要复用父类的流程/字段。例:所有 Trainer 共享 run 骨架。</p></div>
+  <div class="card"><h3>用组合</h3><p>只是「需要某能力」而非「是一种」。例:Trainer 需要存储能力 → 拥有 store,而不是 extends Store。</p></div>
+</div>
+<p>经验法则:<strong>「是一种」用继承,「拥有一个 / 需要一个」用组合</strong>。80% 的场景答案是组合。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">组合优于继承指?</p>
+  <button class="opt" data-ok="false">永远不要用继承</button>
+  <button class="opt" data-ok="false">用深继承树共享</button>
+  <button class="opt" data-ok="false">把所有逻辑内聚</button>
+  <button class="opt" data-ok="true">拥有依赖来复用</button>
+  <p class="reveal">让对象「拥有」其他对象、把行为委托给它们,而不是靠昂贵的遗传关系获得行为。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">依赖注入是指什么?</p>
+  <button class="opt" data-ok="false">在内部 new 依赖</button>
+  <button class="opt" data-ok="false">用单例共享依赖</button>
+  <button class="opt" data-ok="false">禁用一切依赖项</button>
+  <button class="opt" data-ok="true">从外部传入依赖</button>
+  <p class="reveal">依赖由外面(构造器/参数)传进来,而不是类内部写死;换依赖、测依赖都容易。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">继承适合真正的?</p>
+  <button class="opt" data-ok="false">临时的行为复用</button>
+  <button class="opt" data-ok="false">任意的相似结构</button>
+  <button class="opt" data-ok="false">参数的便捷传递</button>
+  <button class="opt" data-ok="true">本质的类别关系</button>
+  <p class="reveal">继承留给真正的「is-a」关系 + 共享结构/逻辑;只要「需要某能力」就优先组合。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0008_组合优于继承与依赖注入.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把一个「继承辣条」式的模型改成「组合」版(拥有预处理 + 模型 + 报告器)</li>
+  <li><strong>练习 B</strong>:把内部 new 改成构造器注入,并用假依赖写一个测试</li>
+  <li><strong>练习 C</strong>:判断题:每个场景该继承还是组合(答案内联)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 组合优于继承</strong>(<a href="https://refactoringguru.cn/design-patterns/factory-comparison">概览</a>里的讨论):读「继承 vs 组合」对比。再看 Cosmic Python 的<a href="https://www.cosmicpython.com/">目录</a>里「依赖注入」相关章节,提前感受真实项目的做法。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 的假 store 测试跑通时,你有没有觉得「原来测试能这么干净」?下一课<strong>分层架构与依赖方向</strong>——把「单向依赖、高层依赖抽象」变成项目地图。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0007-模板方法与装饰器.html">← 上一篇:模板方法与装饰器</a>
+  <a href="index.html">课程地图</a>
+  <a href="0009-分层架构与依赖方向.html">下一篇:分层架构与依赖方向 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0003 · 真值与空判断</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>真值与空判断</h1>
+<p class="meta">Pythonic 代码 · 课程 0003 · 预计 15 分钟</p>
+
+<p>C 程序员最常踩的坑:<code>if (x)</code> 判断的是「x 是不是零」,可 Python 里它判断的是「x 是不是<strong>真值</strong>」。本课把「判空」「判 None」这两件事用 Python 的方式讲清楚——你会发现很多显式判断其实是多余的。</p>
+
+<h2>知识点 1:真值(truthiness)不是「非零」</h2>
+<p>C 里 <code>if (ptr)</code> 是「指针非零」。Python 里每个对象都「天生带真假」:<code>None、False、0、0.0、""、[]、{}、()、set()</code> 都是<strong>假值</strong>,其余都是真值。所以很多判断不用显式写:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">name</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;&quot;</span>
+<span style="color: #00F">if</span> <span style="color: #001080">name</span><span style="color: #000">:</span>            <span style="color: #008000"># 空字符串是假 → 不进入</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;有名字&quot;</span><span style="color: #000">)</span>
+<span style="color: #008000"># 等价写法 if name != &quot;&quot; :</span>
+
+<span style="color: #001080">items</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>
+<span style="color: #00F">if</span> <span style="color: #001080">items</span><span style="color: #000">:</span>           <span style="color: #008000"># 空列表是假 → 不进入</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;有东西&quot;</span><span style="color: #000">)</span>
+<span style="color: #008000"># 等价写法 if len(items) &gt; 0 :</span>
+</pre>
+<p>关键:<code>if []</code> 就是「if 非空」,<code>if not []</code> 就是「if 为空」。别写 <code>if len(xs) &gt; 0</code>,直接 <code>if xs</code>。</p>
+
+<h2>知识点 2:判空别再 len(xs) > 0</h2>
+<p>C 思维(拿长度比大小):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">has_items</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">)</span> <span style="color: #000">&gt;</span> <span style="color: #098658">0</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">is_empty</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">0</span>
+</pre>
+<p>Pythonic——直接利用真值:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">has_items</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #0070C1">bool</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">)</span>      <span style="color: #008000"># 或直接 return xs</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">is_empty</span><span style="color: #000">(</span><span style="color: #001080">xs</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #AF00DB">not</span> <span style="color: #001080">xs</span>
+</pre>
+<p>更顺的用法是在条件里直接用 <code>if xs:</code>,根本不用写函数。</p>
+
+<h2>知识点 3:判 None 必须用 is,不能 ==</h2>
+<p>这是 C 程序员最容易搞错的:<code>None</code> 的判必须用 <code>is None</code> / <code>is not None</code>,<strong>不要</strong>用 <code>==</code>。<code>==</code> 比较「值是否相等」,<code>is</code> 比较「是不是同一个对象」;None 是唯一的单例,判断单例身份用 is。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">show</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">):</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">is</span> <span style="color: #00F">None</span><span style="color: #000">:</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;没给&quot;</span><span style="color: #000">)</span>
+    <span style="color: #00F">else</span><span style="color: #000">:</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;给了:&quot;</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">)</span>
+</pre>
+<p>同样地,<code>True</code> / <code>False</code> 判身份也用 <code>is</code>:<code>if flag is True</code>(更常见是直接 <code>if flag</code>)。</p>
+
+<h2>知识点 4:区分「空」和「None」</h2>
+<p>两者不是一回事:<code>[]</code> 是「有个空列表」,<code>None</code> 是「根本没有」。别混:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">a</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>      <span style="color: #008000"># 元素个数 0</span>
+<span style="color: #001080">b</span> <span style="color: #000">=</span> <span style="color: #00F">None</span>    <span style="color: #008000"># 不存在</span>
+
+<span style="color: #008000"># 错:想判断 a 是不是空</span>
+<span style="color: #008000"># if a == None:         # 不行,a 是 [],不是 None</span>
+
+<span style="color: #008000"># 对:判空</span>
+<span style="color: #008000"># if not a:</span>
+
+<span style="color: #008000"># 对:判 None</span>
+<span style="color: #008000"># if b is None:</span>
+</pre>
+<p>一句话:<code>None</code> 判「有没有」用 <code>is</code>;<code>空容器</code>判「有没有内容」用真值 <code>if x</code>。它们服务于两个不同的问题。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">[] 是真值还是假值?</p>
+  <button class="opt" data-ok="false">真值</button>
+  <button class="opt" data-ok="true">假值</button>
+  <button class="opt" data-ok="false">看长度</button>
+  <button class="opt" data-ok="false">会报错</button>
+  <p class="reveal">空容器([]{}{}()"")都是假值,直接 if x 即可判断非空。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">判断 xs 非空,最 Pythonic?</p>
+  <button class="opt" data-ok="false">len(xs) > 0</button>
+  <button class="opt" data-ok="false">xs != []</button>
+  <button class="opt" data-ok="true">if xs</button>
+  <button class="opt" data-ok="false">xs is not []</button>
+  <p class="reveal">if xs 直接利用真值判断非空,不用比长度。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">判断 x 是不是 None,用?</p>
+  <button class="opt" data-ok="false">x == None</button>
+  <button class="opt" data-ok="true">x is None</button>
+  <button class="opt" data-ok="false">not x</button>
+  <button class="opt" data-ok="false">x != 0</button>
+  <p class="reveal">None 是单例,判断身份用 is None。注意 not x 会把空容器也判成 True。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">x = [] 时,not x 的结果?</p>
+  <button class="opt" data-ok="false">False</button>
+  <button class="opt" data-ok="true">True</button>
+  <button class="opt" data-ok="false">None</button>
+  <button class="opt" data-ok="false">报错</button>
+  <p class="reveal">空列表是假值,not [] 是 True。这是判定空容器的正确姿势;判 None 则用 is None。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0003_真值与空判断.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:改写「len(xs)>0」「==None」等 C 风格判断为 Pythonic,再对答案</li>
+  <li><strong>练习 B</strong>:写三个函数:判名单空、判配置是否「没设」、区分空字符串和 None</li>
+  <li><strong>练习 C</strong>:判断题:下面这几个条件各是什么 / 改出你 repo 里一段显式判空代码</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 中文文档「<a href="https://docs.python.org/zh-cn/3/library/stdtypes.html#truth-value-testing">真值测试</a>」</strong>一小节:列出了所有判定为假的值的官方表。10 分钟看完就能背下来。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:你之前写没写过 <code>== None</code> 或 <code>len(xs) &gt; 0</code>?下一课进入<strong>字符串与 f-string</strong>,把 C 风格的 sprintf/拼接彻底干掉。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0002-内置函数与一等公民.html">← 上一篇:内置函数与函数当一等公民</a>
+  <a href="index.html">课程地图</a>
+  <a href="0004-字符串与f-string.html">下一篇:字符串与 f-string →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 4 课：位图就绪表 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 4 课</nav>
+
+<h1>第 4 课：位图就绪表</h1>
+<p class="subtitle">一个 32 位整数 + 一条 CLZ 指令 = O(1) 找到最高优先级任务</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>本课是手写 MiniOS 的<strong>理论预演</strong>，原理必须讲透。学完你能说清 µC/OS-III 用 <code>OSPrioTbl[]</code> 位图记录就绪任务、用前导零指令（CLZ）O(1) 查最高优先级的完整原理，理解"数值越小优先级越高"与位图方向的因果关系；能对比 FreeRTOS 链表就绪表的复杂度/内存/可扩展性差异；并能在源码里指出 <code>OS_PrioInsert/OS_PrioRemove/OS_PrioGetHighest</code> 的落点。最后亲手写一遍三个操作函数。</p>
+</div>
+
+<h2>1. 为什么用位图：调度器的高频操作必须 O(1)</h2>
+
+<p>调度器每时每刻都在做一件重复的事：<strong>从所有就绪任务里挑出优先级最高的那个</strong>。这个操作有多高频？任务每次让出 CPU、每次中断退出、每次 tick 都可能触发。如果挑一次要遍历几十个任务，系统越忙、任务越多，调度开销越大——这是实时内核不能接受的。</p>
+
+<p>µC/OS-III 的答案：把"哪些优先级上有就绪任务"压缩成一张位图（PDF 第 5.3 节 <span class="pg">PDF p.84</span>、第 7.3 节 <span class="pg">PDF p.113</span>）。每一位代表一个优先级：<strong>位 = 1 表示这个优先级上有就绪任务</strong>。找最高优先级任务 = 找位图里第一个 1——而"找第一个 1"在 ARM 上是一条硬件指令的事。这就是第 3 课埋的伏笔：<strong>优先级"数值越小越高"正是为了配合位图方向</strong>。</p>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>就绪表存的不是任务，是"哪些优先级有人"</strong>。真正排队的是就绪链表 <code>OSRdyList[prio]</code>（每优先级一条，存 OS_TCB 指针）；位图是它的"快速索引"。位图回答"谁最高"，链表回答"最高的人在哪"。两件事分开，各司其职。</p>
+</div>
+
+<h2>2. 数据结构：OSPrioTbl[] —— 一张位图数组</h2>
+
+<p>µC/OS-III 把位图存在全局数组 <code>OSPrioTbl[OS_PRIO_TBL_SIZE]</code> 里（os.h 中定义，<code>OS_PRIO_TBL_SIZE = OS_CFG_PRIO_MAX / 32</code> 向上取整）。教材配套工程把 <code>OS_CFG_PRIO_MAX</code> 配成 32，所以 <code>OSPrioTbl</code> 只有 1 个元素（PDF p.113）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* OS_CFG_PRIO_MAX = 32 时：一个 32 位字搞定 */</span>
+<span style="color:#008000">/* 位方向：bit31 = 优先级 0（最高），bit0 = 优先级 31（最低） */</span>
+<span style="color:#008000">/*
+ * OSPrioTbl[0]  =  bit31 bit30 ... bit2 bit1 bit0
+ *  优先级：        0    1   ...  29   30   31
+ *  bitN 置 1 = 优先级 N 上有就绪任务
+ *
+ * 例子：优先级 0、5、31 就绪
+ * OSPrioTbl[0] = 0b1000_0010_0000_0000_0000_0000_0000_0001
+ *                  ^优先级0  ^优先级5                     ^优先级31
+ */</span>
+</pre>
+
+<p>为什么优先级 0 坐在 bit31（最高位）而不是 bit0？因为这样"找最高优先级"恰好等于"找最高位的 1"，正好能交给 CLZ 前导零指令直接出结果——这是整节课最精巧的一个设计选择。</p>
+
+<p>如果 <code>OS_CFG_PRIO_MAX</code> 配得更大（比如 64），位图就变成数组，按"组"展开——思想与 µC/OS-II 经典的 <code>OSRdyGrp/OSRdyTbl</code> 双级位图一脉相承：</p>
+
+<table>
+<tr><th>配置</th><th>位图结构</th><th>查最高优先级</th></tr>
+<tr><td><strong>µC/OS-III</strong>（32 优先级）</td><td><code>OSPrioTbl[1]</code>：单字，bit31=优先级 0</td><td>CLZ 一条指令</td></tr>
+<tr><td><strong>µC/OS-III</strong>（64 优先级）</td><td><code>OSPrioTbl[2]</code>：组1 + 组2，每组 32 位（8 组 × 32 位同理扩展）</td><td>跳过全 0 的组，再对命中组 CLZ</td></tr>
+<tr><td><strong>µC/OS-II</strong>（256 优先级，历史经典）</td><td><code>OSRdyGrp</code>（组位图）+ <code>OSRdyTbl[8]</code>（组内位图），8 组 × 8 位</td><td>查 256 字节 OSUnMapTbl 表（无 CLZ 时代的办法）</td></tr>
+</table>
+
+<h2>3. 置位与清位：OS_PrioInsert / OS_PrioRemove</h2>
+
+<p>真实源码（os_prio.c，V3.08）在 <code>OS_CFG_PRIO_MAX ≤ 32</code> 时被优化成单字运算——置位就是"或一个位"，清位就是"与一个取反位"。下面两段直接对应官方实现：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_prio.c —— 插入优先级（置位）：优先级 N 就绪 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OS_PrioInsert</span><span style="color:#001080">(OS_PRIO prio)</span>
+{
+    <span style="color:#008000">/* 单字优化版（OS_CFG_PRIO_MAX &lt;= 32）：
+     * 优先级 N 对应第 (31 - N) 位，即 1 &lt;&lt; (31 - N) */</span>
+    OSPrioTbl[<span style="color:#098658">0</span>] |= (CPU_DATA)<span style="color:#098658">1u</span> &lt;&lt; (((CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>) - <span style="color:#098658">1u</span>) - prio);
+    <span style="color:#008000">/* 例：prio=5  →  OSPrioTbl[0] |= 1 &lt;&lt; 26 */</span>
+}
+
+<span style="color:#008000">/* os_prio.c —— 移除优先级（清位）：优先级 N 不再就绪 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OS_PrioRemove</span><span style="color:#001080">(OS_PRIO prio)</span>
+{
+    OSPrioTbl[<span style="color:#098658">0</span>] &amp;= ~((CPU_DATA)<span style="color:#098658">1u</span> &lt;&lt; (((CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>) - <span style="color:#098658">1u</span>) - prio));
+    <span style="color:#008000">/* 例：prio=5  →  OSPrioTbl[0] &amp;= ~(1 &lt;&lt; 26) */</span>
+}
+</pre>
+
+<p>多字版本（<code>OS_CFG_PRIO_MAX &gt; 32</code>）就是分组思想：先算"在哪一组"（<code>ix = prio / 32</code>），再算"组内第几位"（<code>bit = 31 - (prio % 32)</code>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_prio.c —— 多字版 OS_PrioInsert（64 优先级时） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OS_PrioInsert</span><span style="color:#001080">(OS_PRIO prio)</span>
+{
+    CPU_DATA bit_nbr;
+    OS_PRIO  ix;
+
+    ix      = (OS_PRIO)(prio / (CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>));   <span style="color:#008000">/* 组索引：prio/32 */</span>
+    bit_nbr = (CPU_DATA)prio &amp; ((CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>) - <span style="color:#098658">1u</span>);  <span style="color:#008000">/* 组内位号：prio%32 */</span>
+    OSPrioTbl[ix] |= (CPU_DATA)<span style="color:#098658">1u</span> &lt;&lt; (((CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>) - <span style="color:#098658">1u</span>) - bit_nbr);
+}
+</pre>
+
+<div class="warn">
+  <p>⚠️ 注意位方向！µC/OS-III 的"组内"也是 <code>1 &lt;&lt; (31 - bit)</code>——组内最高位对应组内最小优先级。这和 µC/OS-II 的 <code>OSRdyTbl</code>（bit0=组内优先级 0）方向相反。写 MiniOS 时先定方向，写错方向查最高优先级就会"差之毫厘、谬以千里"。</p>
+</div>
+
+<h2>4. 查最高优先级：CLZ 前导零，一次指令出结果</h2>
+
+<p>最精彩的一步。CPU_CntLeadZeros() 是 µC/CPU 提供的"数前导零"函数，在 ARMv7-M 上直接映射到 <strong>CLZ 指令</strong>（cpu_a.asm 汇编实现，由 <code>CPU_CFG_LEAD_ZEROS_ASM_PRESENT</code> 开关控制，PDF p.67）。真实源码：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_prio.c —— 获取最高就绪优先级：O(1)，无循环无查表 */</span>
+OS_PRIO <span style="color:#795E26">OS_PrioGetHighest</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> (OS_CFG_PRIO_MAX &lt;= (CPU_CFG_DATA_SIZE * 8u))   <span style="color:#008000">/* 32 优先级：单字优化 */</span></span>
+    <span style="color:#0000FF">return</span> ((OS_PRIO)CPU_CntLeadZeros(OSPrioTbl[<span style="color:#098658">0</span>]));
+<span style="color:#267F99">#<span style="color:#0000FF">else</span>                                              <span style="color:#008000">/* 多字：先找组，再组内 CLZ */</span></span>
+    CPU_DATA *p_tbl;
+    OS_PRIO   prio;
+
+    prio  = <span style="color:#098658">0u</span>;
+    p_tbl = &amp;OSPrioTbl[<span style="color:#098658">0</span>];
+    <span style="color:#0000FF">while</span> (*p_tbl == <span style="color:#098658">0u</span>) {                          <span style="color:#008000">/* 跳过全 0 的组 */</span>
+        prio += (CPU_CFG_DATA_SIZE * <span style="color:#098658">8u</span>);           <span style="color:#008000">/* 累计组偏移 */</span>
+        p_tbl++;
+    }
+    prio += (OS_PRIO)CPU_CntLeadZeros(*p_tbl);      <span style="color:#008000">/* 组内：前导零数 = 组内优先级 */</span>
+    <span style="color:#0000FF">return</span> (prio);
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+}
+</pre>
+
+<p>算一笔账：假设优先级 0、5、31 就绪，<code>OSPrioTbl[0] = 0x84000001</code>。CLZ 数前导零 = 0 个 → 返回 0 → 最高优先级就是 0。✅ 只做一次算术移位和一次查表/指令，无论多少个任务就绪，耗时恒定。</p>
+
+<p>历史注脚：µC/OS-II 时代 Cortex-M 还没普及，没有 CLZ 指令，就用 <strong>256 字节查表法</strong>——<code>OSUnMapTbl[256]</code> 把 8 位值的"最低位 1 的位置"预先算好，查一次表出结果（这正是 µC/OS-II 双级位图 + 查表的结构，PDF p.84 提到前导零的两种实现路线）。<strong>CLZ 是查表法的硬件加速版</strong>，本质都是 O(1)。</p>
+
+<h2>5. 对比 FreeRTOS：链表就绪表 vs 位图就绪表</h2>
+
+<p>FreeRTOS 课第 5 课学过：<code>pxReadyTasksLists[configMAX_PRIORITIES]</code> 每个优先级一条链表。有趣的是，FreeRTOS 也偷偷用了位图——<code>uxTopReadyPriority</code> 整型变量以位图记录"哪些优先级有人"，配 <code>portGET_HIGHEST_PRIORITY()</code> 宏用 CLZ 找最高优先级（configUSE_PORT_OPTIMISED_TASK_SELECTION=1 时）。两个内核在这个问题上殊途同归：</p>
+
+<table>
+<tr><th>维度</th><th>FreeRTOS（已学）</th><th>µC/OS-III（本课）</th></tr>
+<tr><td>就绪组织</td><td>链表为主：<code>pxReadyTasksLists[]</code> 按优先级分链表</td><td>位图为主：<code>OSPrioTbl[]</code> 记优先级，<code>OSRdyList[]</code> 记任务</td></tr>
+<tr><td>优先级方向</td><td>数值大 = 高</td><td><strong>数值小 = 高</strong>（配合位图高位）</td></tr>
+<tr><td>查最高优先级</td><td><code>uxTopReadyPriority</code> 位图 + CLZ（可选）</td><td><code>OSPrioTbl</code> + CLZ（必选，单字零成本）</td></tr>
+<tr><td>取任务复杂度</td><td>从链表头取，O(1)</td><td>从 <code>OSRdyList[prio].HeadPtr</code> 取，O(1)</td></tr>
+<tr><td>同优先级轮转</td><td>列表项 pxIndex 步进（时间片）</td><td>链表头移尾 <code>OS_RdyListMoveHeadToTail</code>（时间片）</td></tr>
+<tr><td>内存开销</td><td>每个任务 2 个列表项（约 24 字节/项）</td><td>OS_TCB 内嵌链表指针，位图仅 4~N 字节</td></tr>
+<tr><td>可扩展性</td><td>优先级数量几乎不限（软件选择算法时）</td><td>32 位字一组，多字需循环跳组（仍是 O(组数)）</td></tr>
+</table>
+
+<p>结论：<strong>位图是"空间换时间"的极致</strong>——32 优先级下找最高优先级是真正的一条指令；链表则更灵活，任务数不限、优先级可扩展。两者都稳，µC/OS-III 把"选最高优先级"压到了硬件极限，这就是它敢宣称调度器 O(1) 的底气。</p>
+
+<h2>6. 位图在 UCOS 源码中的落点</h2>
+
+<p>光会背原理不算会，要能在源码里找到它。位图的生命周期贯穿内核每个角落（PDF 第 7 章 <span class="pg">PDF p.113~128</span>）：</p>
+
+<table>
+<tr><th>调用点</th><th>文件</th><th>做什么</th></tr>
+<tr><td><code>OSInit() → OS_PrioInit()</code></td><td>os_core.c / os_prio.c</td><td>清空位图（OS_CFG_PRIO_MAX=32 时 1 个字清零）</td></tr>
+<tr><td><code>OSTaskCreate() → OS_PrioInsert(prio)</code></td><td>os_task.c</td><td>任务创建即就绪：把优先级"点亮"（PDF p.126）</td></tr>
+<tr><td>任务阻塞/删除 → <code>OS_PrioRemove(prio)</code></td><td>os_core.c 等</td><td>任务不再就绪：把优先级"熄灭"</td></tr>
+<tr><td><code>OSSched()/OSIntExit()/OSStart() → OS_PrioGetHighest()</code></td><td>os_core.c</td><td>调度三处全部走位图查最高优先级（PDF p.128, 133, 138）</td></tr>
+</table>
+
+<p>动手验证路径：在你的 µC/OS-III 分支工程里打开 <code>os_prio.c</code>（约 100 行），你会看到本课贴的几乎就是它的原貌；再到 <code>os_core.c</code> 搜 <code>OS_PrioGetHighest</code>，能看到它在 OSSched/OSIntExit/OSStart 三处的调用——<strong>一处实现，三处复用</strong>，这就是"内核把高频操作集中优化"的范例。</p>
+
+<div class="tip">
+  <p>💡 MiniOS 预告：第 8 课（MiniOS 第一步）你会从零写一张自己的位图就绪表。记住这课的三个函数名字和方向约定，到那时它们会原样复活——只是名字换成你起的。</p>
+</div>
+
+<h2>动手练习（约 40 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 4.1：手写位图三操作，单步验证</h3>
+  <p class="step">1️⃣ 新建一个 <code>bitmap_demo.c</code>（可放工程里用串口打印，也可放 Keil 模拟器裸跑）：定义 <code>uint32_t OSPrioTbl = 0;</code>，按本课代码写 <code>PrioInsert(prio)</code>、<code>PrioRemove(prio)</code>、<code>PrioGetHighest()</code>（用 <code>__CLZ()</code> 内建函数或自己写软件前导零）。</p>
+  <p class="step">2️⃣ 测试序列：插入 0、5、31 → 期望最高为 0；移除 0 → 期望最高为 5；移除 5、31 → 期望返回 32（无人就绪的约定值）。</p>
+  <p class="step"><strong>观察什么：</strong>在 Watch 里盯着 <code>OSPrioTbl</code> 的二进制值，每一步都心算出"下一个 1 在哪"，再和函数返回值对表。把位方向（1 &lt;&lt; (31 - prio)）写错一次，你就永远记住它了。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 4.2：源码落点大搜查</h3>
+  <p class="step">1️⃣ 在你的 µC/OS-III 分支工程里打开 <code>os_prio.c</code>，把 <code>OS_PrioInsert/OS_PrioRemove/OS_PrioGetHighest/OS_PrioInit</code> 四个函数通读一遍，对照本课代码找差异（版本可能有微调）。</p>
+  <p class="step">2️⃣ 在 <code>os_core.c</code> 里搜 <code>OS_PrioGetHighest</code>，数出它被调用的位置，逐个记录"调用者是谁、在什么时机"。</p>
+  <p class="step"><strong>观察什么：</strong>再搜一次 <code>OS_PrioRemove</code>——找到任务阻塞时（如 <code>OS_TaskBlock</code>）它被调用的证据，你就把"就绪表"和"任务状态"两课打通了。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. µC/OS-III 中，优先级 0 对应 OSPrioTbl[0] 的哪一位？</p>
+  <p class="opt">A. bit0</p>
+  <p class="opt">B. bit31</p>
+  <p class="opt">C. bit16</p>
+  <details><summary>查看答案</summary><div class="answer">B。优先级 0（最高）坐 bit31（最高位），配合 CLZ 前导零直接出结果。</div></details>
+
+  <p class="q">Q2. 查最高优先级用的 CPU_CntLeadZeros() 在 ARMv7-M 上对应什么？</p>
+  <p class="opt">A. CLZ 指令</p>
+  <p class="opt">B. RBIT 指令</p>
+  <p class="opt">C. 软件查表</p>
+  <details><summary>查看答案</summary><div class="answer">A。CLZ 数前导零，由 cpu_a.asm 实现；µC/OS-II 时代无 CLZ 才用 256 字节查表。</div></details>
+
+  <p class="q">Q3. 任务创建后 OS_PrioInsert(prio) 把位图置 1，表示什么？</p>
+  <p class="opt">A. 该优先级有就绪任务</p>
+  <p class="opt">B. 该优先级被禁用</p>
+  <p class="opt">C. 该任务正在运行</p>
+  <details><summary>查看答案</summary><div class="answer">A。位图记录"哪些优先级上有就绪任务"，创建即就绪即点亮（PDF p.126）。</div></details>
+
+  <p class="q">Q4. FreeRTOS 找最高优先级任务靠什么（启用优化时）？</p>
+  <p class="opt">A. 遍历所有链表</p>
+  <p class="opt">B. uxTopReadyPriority 位图</p>
+  <p class="opt">C. 随机选择</p>
+  <details><summary>查看答案</summary><div class="answer">B。uxTopReadyPriority 以位图记录就绪优先级，taskSELECT_HIGHEST_PRIORITY_TASK 用 CLZ 找最高位（FreeRTOS 课第 6 课）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 5.5 节（PDF p.85~89）——TCB 与就绪表的关系</li>
+<li>📖 同书第 7.3/7.4/7.5 节（PDF p.113, 126, 128）——OS_PrioInit、OS_PrioInsert、OS_PrioGetHighest 的源码现场</li>
+<li>🌐 <a href="https://weston-embedded.com/uc-os-iii">Weston Embedded（Micrium 后继）µC/OS-III 主页</a>——GitHub 源码 os_prio.c 在线阅读</li>
+<li>🔁 对照：FreeRTOS 课程第 5 课（链表与列表项）和第 6 课（启动流程）——链表就绪表 vs 位图就绪表</li>
+</ul>
+
+<div class="footer-note">
+  <p>位图解决了"选谁"的问题，下一课解决"怎么换人"——OSSched、OSIntExit 与 PendSV 里的任务切换，把"选人"和"换人"串成完整链路。有疑问随时问我 😄</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0003-task-basics.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0005-task-switching.html">下一课：任务切换原理 →</a>
+</nav>
+
+</div>
+</body>
+</html>

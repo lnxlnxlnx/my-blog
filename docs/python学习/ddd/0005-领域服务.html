@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0005 · 领域服务领域服务</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>领域服务 Domain Service</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0005 · 预计 20 分钟</p>
+
+<p>Eric Evans 的定义:领域服务用于「一个不是单个实体或值对象自然职责的过程或变换」。也就是说——有段业务逻辑,<strong>放哪个实体都不合适</strong>(它要协调两个以上的实体/聚合),就抽成一个<strong>领域服务</strong>。本课把「领域服务」和「应用服务」这两个容易混的东西彻底分清。</p>
+
+<h2>知识点 1:什么时候需要领域服务</h2>
+<p>当一个操作涉及多个实体、又不想让其中任何一个「知道太多/管别人的事」时,逻辑就放领域服务。典型的:转账需要「从 A 账户扣钱、给 B 账户加钱」,让 A 或 B 谁来做都不公平:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">TransferService</span><span style="color: #000">:</span>                     <span style="color: #008000"># 领域服务</span>
+    <span style="color: #AF00DB">@staticmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">transfer</span><span style="color: #000">(</span><span style="color: #001080">src</span><span style="color: #000">:</span> <span style="color: #001080">Wallet</span><span style="color: #000">,</span> <span style="color: #001080">dst</span><span style="color: #000">:</span> <span style="color: #001080">Wallet</span><span style="color: #000">,</span> <span style="color: #001080">amount</span><span style="color: #000">:</span> <span style="color: #001080">Money</span><span style="color: #000">):</span>
+        <span style="color: #001080">src</span><span style="color: #000">.</span><span style="color: #001080">debit</span><span style="color: #000">(</span><span style="color: #001080">amount</span><span style="color: #000">)</span>                  <span style="color: #008000"># 各实体只做自己的事</span>
+        <span style="color: #001080">dst</span><span style="color: #000">.</span><span style="color: #001080">credit</span><span style="color: #000">(</span><span style="color: #001080">amount</span><span style="color: #000">)</span>
+</pre>
+<p>要点:领域服务只操作<strong>领域类型</strong>(实体/值对象),不含外部技术细节;它把「牵涉多个实体」的业务过程集中一处,又不破坏封装。</p>
+
+<h2>知识点 2:领域服务 vs 应用服务(最容易混)</h2>
+<p>两个名字像,但层次完全不同:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 领域服务:在领域层,协调实体,全是业务规则,不碰外部/数据库</span>
+<span style="color: #008000">#   TransferService.transfer(src, dst, amount)</span>
+
+<span style="color: #008000"># 应用服务:在应用层,编排「一个用例」,调领域对象 + 通过端口取/存数据</span>
+<span style="color: #008000">#   CreateUserService.handle(command):</span>
+<span style="color: #008000">#       user = User(...)          # 造领域对象</span>
+<span style="color: #008000">#       repo.save(user)           # 通过端口存库(基础设施)</span>
+<span style="color: #008000">#       emit_event(...)           # 通过端口发事件</span>
+</pre>
+<p>一句话:<strong>领域服务处理"跨实体"的业务规则;应用服务编排"一个用户请求"的完整流程(含存库/发事件)</strong>。项目里 user 模块的 create-user.service.ts 是应用服务;整个 DDD 里把"转账"这种跨 Wallet 的逻辑设为领域服务。</p>
+
+<h2>知识点 3:领域服务很"细",应用服务是"门面"</h2>
+<p>项目(源自 Evans)说:领域服务<strong>很粒度小</strong>,是某个明确领域概念上的操作;应用服务则是给外部世界的<strong>门面/API</strong>,把多个领域操作串成完整用例。一个用例通常一个应用服务;领域服务更像领域内的"工具箱"。</p>
+
+<h2>知识点 4:判断逻辑该不该放领域服务</h2>
+<p>放实体/值对象 <strong>vs</strong> 放领域服务,判断:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 适合放实体内部:只跟自身状态有关的方法</span>
+<span style="color: #008000">#   Wallet.debit(amount)   # 只改自己 balance</span>
+
+<span style="color: #008000"># 适合放领域服务:需要协调多个实体,或放任何单个实体里都别扭</span>
+<span style="color: #008000">#   TransferService.transfer(a, b, amount)   # 牵涉两个账户</span>
+
+<span style="color: #008000"># 不适合放领域服务:需要访问数据库/外部API → 那是应用服务或端口的事</span>
+<span style="color: #008000">#   (领域服务只碰领域类型,不碰数据库!)</span>
+</pre>
+<p>守则:领域服务<strong>不 import 数据库、不发 HTTP、只操作领域对象</strong>。「需要外部资源」的那层交给应用服务/端口(0007/0008)。</p>
+
+<h2>知识点 5:别滥用</h2>
+<p>优先级:先试着把逻辑放进一个实体;真要跨实体、放哪都别扭,才上领域服务。如果发现领域服务里全是"掩盖贫血实体"的代码,那问题在实体上(业务逻辑应该回到实体)。领域服务是补充,不是兜底垃圾场。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">跨多个实体的业务逻辑放哪?</p>
+  <button class="opt" data-ok="false">数据库</button>
+  <button class="opt" data-ok="true">领域服务</button>
+  <button class="opt" data-ok="false">控制器</button>
+  <button class="opt" data-ok="false">端口</button>
+  <p class="reveal">协调多个实体的业务过程放领域服务,避免任一实体管别人的事。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">领域服务操作的对象类型?</p>
+  <button class="opt" data-ok="false">数据库行</button>
+  <button class="opt" data-ok="true">领域类型</button>
+  <button class="opt" data-ok="false">HTTP 响应</button>
+  <button class="opt" data-ok="false">DTO 传输</button>
+  <p class="reveal">领域服务只操作领域类型(实体/值对象),不碰数据库/外部API。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">「一个用户请求完整流程」由谁编排?</p>
+  <button class="opt" data-ok="false">领域服务</button>
+  <button class="opt" data-ok="true">应用服务</button>
+  <button class="opt" data-ok="false">值对象</button>
+  <button class="opt" data-ok="false">元类</button>
+  <p class="reveal">应用服务编排完整用例(含调领域对象、经端口存库/发事件),是外部世界的门面。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">出现大量"掩盖贫血实体"的领域服务,说明?</p>
+  <button class="opt" data-ok="false">服务太少</button>
+  <button class="opt" data-ok="true">实体该有方法</button>
+  <button class="opt" data-ok="false">数据库该改</button>
+  <button class="opt" data-ok="false">端口太多</button>
+  <p class="reveal">业务逻辑应回到实体,而不是全靠领域服务兜底。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0005_领域服务.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:实现 TransferService.transfer(两个 Wallet,用 Money)</li>
+  <li><strong>练习 B</strong>:写一个「订单下单」应用服务:造 Order、校验库存(领域服务)、经端口保存</li>
+  <li><strong>练习 C</strong>:判断题:下面逻辑该放 实体/值对象/领域服务/应用服务 哪一层</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Domain Services</strong> 与 <strong>Application Services</strong> 两小节,你就能把「领域服务 vs 应用服务」钉死。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:领域服务 vs 应用服务分清了吗?下一课讲<strong>领域事件与集成事件</strong>——怎么让聚合「做完一件事就通知别人」而不用直接耦合。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-值对象与领域不变量.html">← 上一篇:值对象与领域不变量</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-领域事件与集成事件.html">下一篇:领域事件与集成事件 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

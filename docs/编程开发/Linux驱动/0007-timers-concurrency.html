@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L07 · 内核定时器与并发 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L07 · 内核定时器与并发：驱动也会"多线程"</h1>
+<p class="meta"><span class="tag">阶段 1</span> · 动手约 30 分钟</p>
+<p class="lead">两个驱动入门的"隐形关卡"：一是让内核<b>过一段时间后自己调你</b>（定时器），二是意识到你的驱动代码可能<b>同时在多个地方跑</b>（并发）。这两关不过，复杂驱动会莫名其妙崩。</p>
+
+<h2>内核定时器：不是 sleep，是"预定闹钟"</h2>
+<p>想"1 秒后翻转 LED 一次"，能不能在驱动里 <code>sleep(1)</code>？不行——内核态阻塞整个系统。正确做法：注册一个 <code>timer_list</code>，到期了内核在<b>软中断上下文</b>回调你，回调里可以再重新注册，形成周期：</p>
+<pre><code class="language-c">static struct timer_list my_timer;
+static void my_timer_cb(struct timer_list *t) {
+    /* 到点了：翻转 LED 电平 */
+    led_reverse();
+    /* 重新安排下一次，形成周期定时 */
+    mod_timer(&amp;my_timer, jiffies + msecs_to_jiffies(1000));
+}
+
+/* init 里启动 */
+timer_setup(&amp;my_timer, my_timer_cb, 0);
+mod_timer(&amp;my_timer, jiffies + msecs_to_jiffies(1000));
+
+/* exit 里销毁，否则模块卸载后回调还在 → 崩溃 */
+del_timer_sync(&amp;my_timer);</code></pre>
+<p><code>jiffies</code> 是内核的心跳节拍（HZ 次/秒）。不必深究精度，先能"1 秒一次"稳定跑即可。</p>
+
+<h2>并发：驱动不是单线程的！</h2>
+<p>你的 read 回调可能被两个应用同时调用；中断也可能和主流程同时碰同一个变量。这就叫<b>竞争（race condition）</b>。内核提供了锁：</p>
+<table>
+<tr><th>锁</th><th>适用</th><th>手感</th></tr>
+<tr><td><code>mutex</code>（互斥锁/信号量）</td><td>可以长时间持有、可能睡眠的临界区</td><td>像拿钥匙：拿不到就排队等着</td></tr>
+<tr><td><code>spinlock</code>（自旋锁）</td><td>极短临界区、不能睡眠（如中断下半部）</td><td>拿不到就原地打转，不敢睡觉</td></tr>
+<tr><td>原子变量 <code>atomic_t</code></td><td>就是加加减减的计数器</td><td>不用锁，硬件保证一次完成</td></tr>
+</table>
+<p class="callout"><span class="t">新手铁律</span> 用锁没有最好的，只有"别在持锁时睡眠/做复杂事"。习惯：先加 <code>mutex</code> 保护你驱动里的"共享状态"（比如 LED 当前亮灭），再意识到这个状态要是被中断碰，就得注意 spinlock 或原子操作。</p>
+
+<div class="exercise">
+<div class="t">练习 L07：LED 自动闪烁 + 用互斥锁保护状态</div>
+<ol>
+<li>在 L05 的 led 驱动里加定时器：加载后 LED 每 1 秒翻转一次。</li>
+<li>应用 <code>echo 1/0</code> 手动覆盖时，和定时器翻转<b>不会打架</b>（用 mutex 把"读当前状态+改状态"包成临界区）。</li>
+<li>故意不加锁跑一下看现象，再加上锁对照，体会"并发"是真实存在的。</li>
+<li>然后把闪烁周期改成可配置（通过 file_operations 写入），进阶体会"定时器+状态+锁"三者协作。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>驱动里为什么不能用 sleep(1) 实现延迟？</summary><p class="a">sleep 让当前执行体让出 CPU、整个系统流程不可控（内核态不能随便睡眠挂起）。用 jiffies + 定时器，到期由内核在回调点叫你，不阻塞其他工作。</p></details>
+<details><summary>mutex 和 spinlock 什么时候选谁？</summary><p class="a">临界区短且可能在中断上下文 → spinlock（不能睡）；可能睡眠/等待漫长的临界区 → mutex。记：能睡 mutex，不能睡 spinlock。</p></details>
+<details><summary>定时器回调和 read 同时操作 LED 状态，不加锁会怎样？</summary><p class="a">可能读到"读到一半"的中间状态，或互相覆盖。驱动共享状态必须被锁或原子操作保护，否则是典型数据竞争 bug。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① jiffies + mod_timer 周期定时；② mutex/spinlock/atomic 的选型直觉；③ 共享状态必须加锁。"并发"意识是写好驱动与只会"照搬例程"的分水岭。</p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 50 章（内核定时器）、第 47/48 章（并发与竞争/实验）</li>
+<li><a href="https://www.kernel.org/doc/html/latest/kernel-hacking/locking.html">Linux 内核锁教程</a>（官方权威）</li>
+<li>本工作区 <a href="../reference/glossary.html">术语表</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。定时器/锁概念一次没透没关系，Phase 2 的驱动会反复用到——带着"我到底哪里可能同时在跑?"这个问题学，会越学越清楚。</p>
+</body>
+</html>

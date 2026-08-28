@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 9 课：BMP 文件结构 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 9 课</nav>
+
+<h1>第 9 课：BMP 文件结构</h1>
+<p class="subtitle">把像素矩阵装进文件：BITMAPFILEHEADER / BITMAPINFOHEADER / 调色板 / 像素数据（《BMP 图片文件详解》第 2 部分）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课在脑子里有了"像素矩阵 + 调色板"，这一课看它怎么落地成文件。学完你能说清 BMP 的四大组成部分和两个头部结构的所有字段，看懂"每行 4 字节对齐"和"自下而上存储"这两个最容易踩坑的规则，并能用十六进制工具逐字节读出任意 BMP 的参数——这是 0010 课真机解析器的全部前置知识。</p>
+</div>
+
+<h2>1. BMP 文件总体结构：四个部分</h2>
+
+<p>Windows 位图文件大体分四部分（<span class="pg">章节 2</span>）：文件头 + 信息头 + 调色板（可无）+ 像素数据。前两部分是固定长度的结构体，调色板只有索引色图才有。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">偏移      长度     内容
+0x00      14 字节  BITMAPFILEHEADER   <span style="color:#008000">// ① 位图文件头：文件类型/大小/数据偏移</span>
+0x0E      40 字节  BITMAPINFOHEADER   <span style="color:#008000">// ② 位图信息头：宽高/色深/压缩方式</span>
+0x36      N 字节   调色板 RGBQUAD[]   <span style="color:#008000">// ③ 调色板（16/256 色图才有；真彩图没有）</span>
+...       M 字节   像素数据            <span style="color:#008000">// ④ 索引值（索引色）或 BGR 值（真彩）</span>
+
+<span style="color:#008000">// 前三个部分的长度之和 = bfOffBits，即像素数据的起点</span></pre>
+
+<div class="tip">
+  <p>💡 教材给的快速验证：一个最常见的 24 位真彩 BMP，头部就是 14 + 40 = 54 字节（0x36），像素数据从 0x36 开始。用 WinHex 打开，看到 <code>42 4D</code> 开头就对了。</p>
+</div>
+
+<h2>2. 位图文件头 BITMAPFILEHEADER：14 字节</h2>
+
+<p>固定 14 字节（WORD=无符号 16 位，DWORD=无符号 32 位）（<span class="pg">章节 2</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tagBITMAPFILEHEADER</span> {</span>
+    WORD   bfType;       <span style="color:#008000">/* 0x4D42 = &#x27;BM&#x27;，所有 BMP 的头两个字节 */</span>
+    DWORD  bfSize;       <span style="color:#008000">/* 整个文件大小，包括这 14 字节 */</span>
+    WORD   bfReserved1;  <span style="color:#008000">/* 保留，置 0 */</span>
+    WORD   bfReserved2;  <span style="color:#008000">/* 保留，置 0 */</span>
+    DWORD  bfOffBits;    <span style="color:#008000">/* 从文件头到像素数据的偏移 = 前三部分长度之和 */</span>
+} BITMAPFILEHEADER;      <span style="color:#008000">/* 共 14 字节 */</span></pre>
+
+<ul>
+<li><strong>bfType</strong>：必须 0x4D42，即字符 "BM"。编程时只用判断它——其他 BA/CI/CP/IC/PT 是 OS/2 的标识，不用管（<span class="pg">章节 2</span>）</li>
+<li><strong>bfOffBits 最有用</strong>：信息头和调色板长度随情况变化，靠这个偏移量直接定位像素数据，不用自己推算（<span class="pg">章节 2</span>）</li>
+</ul>
+
+<h2>3. 位图信息头 BITMAPINFOHEADER：40 字节</h2>
+
+<p>固定 40 字节（<span class="pg">章节 2</span>），描述尺寸、色深、压缩方式：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tagBITMAPINFOHEADER</span> {</span>
+    DWORD  biSize;             <span style="color:#008000">/* 本结构长度，= 40（也可能是 108/124 的新版，要读文件里的实际值） */</span>
+    LONG   biWidth;            <span style="color:#008000">/* 图像宽度，像素 */</span>
+    LONG   biHeight;           <span style="color:#008000">/* 图像高度，像素；正数=自下而上，负数=自上而下 */</span>
+    WORD   biPlanes;           <span style="color:#008000">/* 位面数，恒为 1 */</span>
+    WORD   biBitCount;         <span style="color:#008000">/* 每像素位数：1/4/8/16/24/32 */</span>
+    DWORD  biCompression;      <span style="color:#008000">/* 0=BI_RGB 不压缩；1=BI_RLE8；2=BI_RLE4；3=BI_BITFIELDS */</span>
+    DWORD  biSizeImage;        <span style="color:#008000">/* 像素数据字节数（BI_RGB 时可为 0，自己算） */</span>
+    LONG   biXPelsPerMeter;    <span style="color:#008000">/* 水平分辨率，像素/米（打印用，显示可忽略） */</span>
+    LONG   biYPelsPerMeter;    <span style="color:#008000">/* 垂直分辨率，像素/米 */</span>
+    DWORD  biClrUsed;          <span style="color:#008000">/* 实际用到的颜色数；0 = 用满 2^biBitCount 个 */</span>
+    DWORD  biClrImportant;     <span style="color:#008000">/* 重要颜色数；0 = 都重要 */</span>
+} BITMAPINFOHEADER;            <span style="color:#008000">/* 共 40 字节 */</span></pre>
+
+<ul>
+<li><strong>biBitCount</strong>：1=黑白二色、4=16 色、8=256 色、24=真彩色。本课程只处理不压缩（biCompression=0）的情况（<span class="pg">章节 2</span>）</li>
+<li><strong>biHeight 的符号藏了个大坑</strong>：正数说明图像是"倒向的"——像素数据自下而上存储，文件第一行是图像最底行；负数则是正向（自上而下），且负数高度不允许压缩（<span class="pg">章节 2</span>）</li>
+<li><strong>biSize 别写死 40</strong>：微软后来出了 BITMAPV4HEADER(108) / V5HEADER(124)，但绝大多数 BMP 还是 40（<span class="pg">章节 2</span>）。程序里读实际值，跳过时用 <code>sizeof(文件头14) + biSize + 调色板长度</code> 的方式兼容</li>
+<li><strong>biClrUsed</strong>：为 0 时用到的颜色数 = 2^biBitCount；非 0 时调色板尺寸按它算（<span class="pg">章节 2</span>）</li>
+</ul>
+
+<h2>4. 调色板与像素数据：两处经典陷阱</h2>
+
+<p><strong>调色板</strong>是一个 RGBQUAD 数组，每个元素 4 字节：<strong>蓝、绿、红、保留</strong>（B、G、R、0 的顺序！）（<span class="pg">章节 2</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tagRGBQUAD</span> {</span>
+    BYTE rgbBlue;      <span style="color:#008000">/* 蓝色分量 */</span>
+    BYTE rgbGreen;     <span style="color:#008000">/* 绿色分量 */</span>
+    BYTE rgbRed;       <span style="color:#008000">/* 红色分量 */</span>
+    BYTE rgbReserved;  <span style="color:#008000">/* 保留，置 0 */</span>
+} RGBQUAD;             <span style="color:#008000">/* 共 4 字节，注意顺序是 BGR */</span></pre>
+
+<p><strong>像素数据</strong>的形态取决于 biBitCount（<span class="pg">章节 2</span>）：</p>
+
+<table>
+<tr><th>biBitCount</th><th>含义</th><th>像素数据内容</th><th>字节数/像素</th></tr>
+<tr><td>1</td><td>2 色</td><td>调色板索引 0/1</td><td>1/8（1 字节存 8 像素）</td></tr>
+<tr><td>4</td><td>16 色</td><td>调色板索引（高 4 位=第 1 像素）</td><td>1/2</td></tr>
+<tr><td>8</td><td>256 色</td><td>调色板索引</td><td>1</td></tr>
+<tr><td>24</td><td>真彩色</td><td><strong>B、G、R</strong> 直接值（无调色板）</td><td>3</td></tr>
+</table>
+
+<p>两条铁律（<span class="pg">章节 2</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 铁律 1：每行字节数必须是 4 的整倍数，不足补齐</span>
+<span style="color:#008000"># 24 位宽 241 像素的图：裸行 241×3=723 字节 → 补齐到 724 字节</span>
+<span style="color:#008000"># 公式：biWidth' = 大于等于裸行的、离 4 最近的倍数</span>
+
+<span style="color:#008000"># 铁律 2：像素数据一般自下而上存储（biHeight 为正数时）</span>
+文件第 1 行 ──► 图像最底行（左下角第一个像素）
+文件第 2 行 ──► 倒数第二行
+    ...
+文件最后一行 ──► 图像最顶行（右上角最后一个像素）</pre>
+
+<div class="warn">
+  <p>⚠️ 两个最坑的细节：① <strong>真彩像素的字节序是 BGR</strong>（蓝在前红在后），不是直觉的 RGB；② <strong>行对齐和行序都必须在解析时处理</strong>——不做行对齐，读出来的数据整体错位；不翻转行序，图片上下颠倒。0010 课真机上这两个坑都会踩到。</p>
+</div>
+
+<h2>5. 代码示例</h2>
+
+<p>示例 1：解析时用的两个结构体定义。嵌入式里务必加打包对齐，否则结构体里会出现填充字节，f_read 直接读会错位。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 9 课：BMP 头部结构（解析专用，__packed 禁止编译器对齐填充） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&lt;stdint.h&gt;</span></span>
+
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint16_t</span> bfType;       <span style="color:#008000">/* 0x4D42 = &quot;BM&quot; */</span>
+    <span style="color:#267F99">uint32_t</span> bfSize;       <span style="color:#008000">/* 文件总大小 */</span>
+    <span style="color:#267F99">uint16_t</span> bfReserved1;  <span style="color:#008000">/* 0 */</span>
+    <span style="color:#267F99">uint16_t</span> bfReserved2;  <span style="color:#008000">/* 0 */</span>
+    <span style="color:#267F99">uint32_t</span> bfOffBits;    <span style="color:#008000">/* 像素数据偏移 */</span>
+} __attribute__((packed)) BMP_FILE_HEADER;    <span style="color:#008000">/* 14 字节 */</span>
+
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint32_t</span> biSize;           <span style="color:#008000">/* 信息头大小 40 */</span>
+    <span style="color:#267F99">int32_t</span>  biWidth;          <span style="color:#008000">/* 宽度（像素） */</span>
+    <span style="color:#267F99">int32_t</span>  biHeight;         <span style="color:#008000">/* 高度；正=自下而上，负=自上而下 */</span>
+    <span style="color:#267F99">uint16_t</span> biPlanes;         <span style="color:#008000">/* 恒为 1 */</span>
+    <span style="color:#267F99">uint16_t</span> biBitCount;       <span style="color:#008000">/* 1/4/8/24 常用 */</span>
+    <span style="color:#267F99">uint32_t</span> biCompression;    <span style="color:#008000">/* 0 = BI_RGB 不压缩 */</span>
+    <span style="color:#267F99">uint32_t</span> biSizeImage;      <span style="color:#008000">/* 像素数据字节数 */</span>
+    <span style="color:#267F99">int32_t</span>  biXPelsPerMeter;  <span style="color:#008000">/* 水平分辨率 */</span>
+    <span style="color:#267F99">int32_t</span>  biYPelsPerMeter;  <span style="color:#008000">/* 垂直分辨率 */</span>
+    <span style="color:#267F99">uint32_t</span> biClrUsed;        <span style="color:#008000">/* 实际颜色数，0 = 2^biBitCount */</span>
+    <span style="color:#267F99">uint32_t</span> biClrImportant;   <span style="color:#008000">/* 重要颜色数 */</span>
+} __attribute__((packed)) BMP_INFO_HEADER;    <span style="color:#008000">/* 40 字节 */</span>
+
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint8_t</span> rgbBlue;      <span style="color:#008000">/* 注意顺序：B、G、R、保留 */</span>
+    <span style="color:#267F99">uint8_t</span> rgbGreen;
+    <span style="color:#267F99">uint8_t</span> rgbRed;
+    <span style="color:#267F99">uint8_t</span> rgbReserved;
+} __attribute__((packed)) RGBQUAD;            <span style="color:#008000">/* 4 字节 */</span></pre>
+
+<p>示例 2：两个必会的计算——行字节数（4 字节对齐）和调色板大小。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 行字节数：裸字节向上取整到 4 的倍数 */</span>
+<span style="color:#008000">/* 教材公式：biWidth&#x27; = 大于等于裸行、离 4 最近的整倍数 */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">bmp_line_bytes</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> width, <span style="color:#267F99">uint32_t</span> bpp)</span>
+{
+    <span style="color:#0000FF">return</span> ((width * bpp + <span style="color:#098658">31</span>) &gt;&gt; <span style="color:#098658">5</span>) &lt;&lt; <span style="color:#098658">2</span>;   <span style="color:#008000">/* 等价于 ceil(width*bpp/32)*4 */</span>
+}
+
+<span style="color:#008000">/* 像素数据总字节数（未压缩时）：biSizeImage 可为 0，自己算更稳 */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">bmp_data_size</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> width, <span style="color:#267F99">int32_t</span> height, <span style="color:#267F99">uint32_t</span> bpp)</span>
+{
+    <span style="color:#267F99">uint32_t</span> lines = (<span style="color:#267F99">uint32_t</span>)(height &gt; <span style="color:#098658">0</span> ? height : -height); <span style="color:#008000">/* 高度取绝对值 */</span>
+    <span style="color:#0000FF">return</span> bmp_line_bytes(width, bpp) * lines;
+}
+
+<span style="color:#008000">/* 调色板项数：biClrUsed 为 0 时按 2^biBitCount 算 */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">bmp_palette_count</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> bpp, <span style="color:#267F99">uint32_t</span> clr_used)</span>
+{
+    <span style="color:#0000FF">return</span> (clr_used != <span style="color:#098658">0</span>) ? clr_used : (<span style="color:#098658">1u</span> &lt;&lt; bpp);
+}
+
+<span style="color:#008000">/* 验证：240 宽 24 位 → 240*3=720，已对齐，行字节数 720 */</span>
+<span style="color:#008000">/*       241 宽 24 位 → 723 → 向上取整到 724（教材原例） */</span></pre>
+
+<h2>6. 实例分析：逐字节读一个真彩 BMP</h2>
+
+<p>拿一个 24 位真彩 BMP 的开头做解剖（假设是张 320×240 的图，教材"表 6-01"与结构定义综合）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">偏移  十六进制                              ASCII     字段值
+0000  42 4D 36 84 03 00 00 00 00 00       BM6......  <span style="color:#008000">bfType=0x4D42 "BM"; bfSize=0x00038436=230,454</span>
+000A  36 00 00 00 28 00 00 00 40 01      6...(...@.  <span style="color:#008000">bfOffBits=0x36=54; biSize=40; biWidth=320</span>
+0014  00 00 F0 00 00 00 01 00 18 00       .........  <span style="color:#008000">biHeight=240; biPlanes=1; biBitCount=24</span>
+001E  00 00 00 00 00 84 03 00 00 00       .........  <span style="color:#008000">biCompression=0(BI_RGB); biSizeImage=0x38400=230,400</span>
+0028  00 00 00 00 00 00 00 00 00 00       .........  <span style="color:#008000">分辨率与颜色数全 0（=用满所有颜色）</span>
+0036  00 F8 80 FF 00 38 ...                数据区      <span style="color:#008000">像素从这里开始：每 3 字节 = B,G,R</span></pre>
+
+<p>对照公式验证：biSizeImage = 230400 = 320×240×3 ✓（320 宽恰好 4 对齐，无补齐）。bfOffBits = 14 + 40 = 54 ✓（真彩无调色板）。bfSize = 54 + 230400 = 230454 = 0x00038436 ✓。三个数字互相咬合，这就是"读懂文件"的样子。</p>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 9.1：解剖一张真实 BMP</h3>
+  <p class="step">1️⃣ 用画图工具随便存一张 24 位 BMP（或从 SD 卡读卡器取一张），用 WinHex 或 VS Code 的 Hex Editor 插件打开。</p>
+  <p class="step">2️⃣ 验证：头两个字节是 42 4D？bfSize 的 4 字节（小端）展开成十进制，和文件大小一致吗？</p>
+  <p class="step">3️⃣ 读出 biWidth / biHeight / biBitCount，再用本课公式手算 bfOffBits，看和文件里 bfOffBits 是否一致——一致说明你完全读懂了。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 9.2：找行对齐的补位字节</h3>
+  <p class="step">1️⃣ 用画图工具存一张宽 241 像素（或任何非 4 倍数宽度）的 24 位 BMP。</p>
+  <p class="step">2️⃣ 定位到像素数据起点，数第一行的 723 个数据字节，再看第 724 个字节是什么——它是不被显示的对齐填充。</p>
+  <p class="step">3️⃣ 顺便看看 biHeight 是正是负？像素数据第一行对应图像的哪一行？（提示：倒着看就对了）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. BMP 文件头 BITMAPFILEHEADER 的 bfType 字段值必须是？</p>
+  <p class="opt">A. 0x424D，即字符串 "BM"</p>
+  <p class="opt">B. 0x4D42，即字符串 "BM"</p>
+  <p class="opt">C. 0x4D42，即字符串 "MB"</p>
+  <details><summary>查看答案</summary><div class="answer">B。bfType 为 0x4D42，文件头两个字节显示为 "BM"（章节 2）。</div></details>
+
+  <p class="q">Q2. biHeight 为正数时，像素数据的存储顺序是？</p>
+  <p class="opt">A. 自上而下：第一行是图像最顶行</p>
+  <p class="opt">B. 自下而上：第一行是图像最底行</p>
+  <p class="opt">C. 与扫描方向无关，按颜色排序</p>
+  <details><summary>查看答案</summary><div class="answer">B。正数 = 倒向位图，数据自下而上存；负数才是自上而下（章节 2）。</div></details>
+
+  <p class="q">Q3. 24 位真彩 BMP 中，每个像素的 3 字节顺序是？</p>
+  <p class="opt">A. 红、绿、蓝（RGB）</p>
+  <p class="opt">B. 蓝、绿、红（BGR）</p>
+  <p class="opt">C. 绿、红、蓝（GRB）</p>
+  <details><summary>查看答案</summary><div class="answer">B。位图数据每 3 字节为 B、G、R 顺序（章节 2 像素数据说明）。</div></details>
+
+  <p class="q">Q4. 宽 241 像素的 24 位 BMP，每行实际占用多少字节？</p>
+  <p class="opt">A. 723 字节，直接用裸行大小</p>
+  <p class="opt">B. 724 字节，补齐到 4 的整倍数</p>
+  <p class="opt">C. 728 字节，补齐到 8 的整倍数</p>
+  <details><summary>查看答案</summary><div class="answer">B。241×3=723，向上取 4 的倍数得 724（教材原例：biWidth=241 → biWidth'=244）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 《BMP 图片文件详解》第 2 部分（"BMP 文件格式分析"）——本课全部依据：两个头结构的全部字段、表 6-01 偏移表、彩色表与像素数据细节</li>
+<li>🔧 VS Code 插件 <code>Hex Editor</code> 或 WinHex——练习 9.1/9.2 的解剖工具</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 10 课——真机实战！用 FATFS 从 SD 卡读出 BMP，解析头部、转换 RGB565，用 lcd_color_fill 把图片显示到你的 320×240 LCD 上，8 位调色板 BMP 也顺手支持。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0008-pixels-and-palette.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0010-bmp-parser-in-action.html">下一课：真机实战 BMP 解析器 →</a>
+</nav>
+
+</div>
+</body>
+</html>

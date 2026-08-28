@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 3 课：启动文件：从复位到 main — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 3 课</nav>
+
+<h1>第 3 课：启动文件：从复位到 main</h1>
+<p class="subtitle">上电后第一个程序做了什么（正点原子《STM32 启动文件浅析》全文）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>你已经知道了 map 里的 RW 会被拷进 RAM、ZI 会被清零——但这活儿谁干的？就是本课的启动文件。学完你能：读懂 <code>startup_stm32f4xx.s</code> 每一行，说清上电后 CPU 从取地址到进入 main 的完整路径，并且能自己改栈/堆大小、给启动文件加中文注释。</p>
+</div>
+
+<h2>1. 启动文件：上电后第一个执行的程序</h2>
+
+<p>启动文件由 ST 官方提供、用汇编写成，是系统<strong>上电复位后第一个执行</strong>的程序（<span class="pg">PDF p.3</span>）。它一口气干 7 件事：</p>
+
+<ol>
+<li>初始化堆栈指针 <code>SP = __initial_sp</code></li>
+<li>初始化程序计数器 <code>PC = Reset_Handler</code></li>
+<li>设置堆和栈的大小</li>
+<li>初始化中断向量表</li>
+<li>配置外部 SRAM 作为数据存储器（可选）</li>
+<li>调用 <code>SystemInit</code> 配置系统时钟（可选）</li>
+<li>调用 C 库 <code>__main</code> 初始化用户堆栈，最终调用 <code>main</code></li>
+</ol>
+
+<p>一句话：<strong>它负责把汇编的世界平稳交接给 C 的世界</strong>——这就是为什么每个 C 工程都要求有一个 <code>main</code>。</p>
+
+<h2>2. 汇编指令速查</h2>
+
+<p>读启动文件前，先把这些关键指令认全（<span class="pg">PDF p.3-4</span>）。注意 EQU/ALIGN/WEAK 是<strong>编译器的伪指令</strong>，不是 ARM 指令：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">指令            作用                                       类似 C
+EQU             给数字常量取符号名                           #define
+AREA            汇编一个新的代码段或数据段                  --
+ALIGN           指令/数据对齐（缺省 4 字节）[伪指令]         --
+SPACE           分配一块内存空间                            --
+PRESERVE8       当前文件栈按 8 字节对齐                     --
+THUMB           后面指令兼容 THUMB-2 指令集                 --
+EXPORT          声明标号全局可用                            extern
+DCD             按字分配内存并初始化（4 字节对齐）          const 数组
+PROC/ENDP       定义/结束一个子程序                         --
+WEAK            弱定义：优先用外部同名定义 [伪指令]          __weak
+IMPORT          声明标号来自外部文件                        extern 引用
+LDR             从存储器加载字                              --
+BLX             跳转（保存返回地址，可切换状态）            函数调用
+BX              跳转（不返回）                             goto
+B               跳转到标号                                 goto
+IF/ELSE/ENDIF   汇编条件分支                                #if/#else
+END             文件结束                                    --</pre>
+
+<h2>3. 栈空间的开辟</h2>
+
+<p>启动文件开头先划一块栈（MDK 版写法，<span class="pg">PDF p.5</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">Stack_Size      EQU     0x400               <span style="color:#008000">// 栈大小 1024 字节（可改）</span>
+                AREA    STACK, NOINIT, READWRITE, ALIGN=3   <span style="color:#008000">// 段名 STACK，不初始化，8 字节对齐</span>
+Stack_Mem       SPACE   Stack_Size          <span style="color:#008000">// 分配 Stack_Size 字节连续空间</span>
+__initial_sp                             <span style="color:#008000">// 紧挨 SPACE 放置：栈的结束地址（栈顶）</span></pre>
+
+<p>要点：栈<strong>从高地址往低地址生长</strong>，所以结束地址就是栈顶 <code>__initial_sp</code>。它存局部变量、函数形参，由编译器自动分配释放。程序莫名进 HardFault，先怀疑是不是栈溢出（<span class="pg">PDF p.5</span>）。</p>
+
+<h2>4. 堆空间的开辟</h2>
+
+<p>紧接着划堆（<span class="pg">PDF p.5-6</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">Heap_Size       EQU     0x200               <span style="color:#008000">// 堆大小 512 字节</span>
+                AREA    HEAP, NOINIT, READWRITE, ALIGN=3
+__heap_base                                 <span style="color:#008000">// 堆起始地址（低地址）</span>
+Heap_Mem        SPACE   Heap_Size
+__heap_limit                                <span style="color:#008000">// 堆结束地址</span>
+                PRESERVE8                   <span style="color:#008000">// 之后代码按 8 字节对齐</span>
+                THUMB                       <span style="color:#008000">// 之后为 THUMB 指令</span></pre>
+
+<p>堆<strong>从低往高生长</strong>，与栈相反，专给 <code>malloc()</code>/<code>calloc()</code> 等动态分配用。<span style="color:#008000">💡 教材小技巧：</span>正点原子自带 mymalloc/mymalloc 内存管理，不用 C 库 malloc，所以能把 Heap_Size 设成 0 省内存（<span class="pg">PDF p.6</span>）。</p>
+
+<h2>5. 中断向量表</h2>
+
+<p>向量表是一张 <strong>32 位整数（WORD）数组</strong>，每个下标对应一种异常/中断，元素值就是该中断服务函数的入口地址（<span class="pg">PDF p.6-7</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">                AREA    RESET, DATA, READONLY
+                EXPORT  __Vectors
+                EXPORT  __Vectors_End
+                EXPORT  __Vectors_Size
+
+__Vectors       DCD     __initial_sp            <span style="color:#008000">// 0x0800 0000：栈顶地址（MSP 初值）</span>
+                DCD     Reset_Handler           <span style="color:#008000">// 0x0800 0004：复位入口</span>
+                DCD     NMI_Handler             <span style="color:#008000">// 0x0800 0008</span>
+                DCD     HardFault_Handler       <span style="color:#008000">// 0x0800 000C</span>
+                ...
+__Vectors_End
+__Vectors_Size  EQU     __Vectors_End - __Vectors</pre>
+
+<p>关键：<strong>地址 0 不是入口地址，而是 MSP 初值</strong>。内核响应异常时按 <code>编号 × 4</code> 计算偏移查表跳转。向量表被放在代码段最前面，程序跑在 FLASH 时起始地址就是 0x0800 0000。<strong>C 语言里的函数名，对芯片来说就是一个地址</strong>（<span class="pg">PDF p.7-8</span>）。</p>
+
+<h2>6. 复位程序 Reset_Handler</h2>
+
+<p>核心三行（<span class="pg">PDF p.8-9</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">Reset_Handler   PROC
+                EXPORT  Reset_Handler  [WEAK]     <span style="color:#008000">// 弱定义：用户可重写</span>
+                IMPORT  SystemInit                <span style="color:#008000">// SystemInit 来自外部文件</span>
+                IMPORT  __main                    <span style="color:#008000">// __main 来自 C 库</span>
+                LDR     R0, =SystemInit           <span style="color:#008000">// 取 SystemInit 地址</span>
+                BLX     R0                        <span style="color:#008000">// 调用：配时钟（FSMC/FMC 可选）</span>
+                LDR     R0, =__main               <span style="color:#008000">// 取 __main 地址</span>
+                BX      R0                        <span style="color:#008000">// 跳入，不返回，进入 C 的世界</span>
+                ENDP</pre>
+
+<p><strong>WEAK 弱定义</strong>：被 [WEAK] 声明的函数，若外部文件重新定义了同名函数，就用外部的；否则用弱函数且不报错（<span class="pg">PDF p.9</span>）。例：启动文件里预置的 <code>HardFault_Handler</code> 是弱函数（内容就是原地死循环），而 <code>stm32f1xx_it.c</code> 里实现了真版本——真中断来了就跳进你的处理函数，忘了实现就用弱函数原地死循环兜底。</p>
+
+<h2>7. __main 到底干了什么</h2>
+
+<p>别误会：<code>__main</code> 不是 <code>main</code> 的别名！它是<strong>链接器发现你定义了 main 后自动创建</strong>的库函数（<span class="pg">PDF p.10</span>）。它内部两大步：</p>
+
+<ul>
+<li><strong>__scatterload()</strong>：把 RW/RO 从<strong>加载域</strong>（FLASH）拷贝到<strong>执行域</strong>（RAM），并完成 ZI 运行域清零（<span class="pg">PDF p.10-12</span>）</li>
+<li><strong>__rt_entry()</strong>：初始化堆栈、完成库函数初始化，最后自动跳转到 <code>main()</code>（<span class="pg">PDF p.12-13</span>）</li>
+</ul>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">__main
+ ├─ __scatterload          <span style="color:#008000">// ① 拷贝 RW 段初值 ② ZI 段清零</span>
+ │    └─ __scatterload_copy     <span style="color:#008000">// FLASH→RAM 搬运 RW（如 g_count=5 的初值）</span>
+ │    └─ __scatterload_zeroinit <span style="color:#008000">// RAM 里把 ZI 清 0（g_buffer 等）</span>
+ └─ __rt_entry              <span style="color:#008000">// ③ 建立堆栈 ④ 库初始化</span>
+      └─ __rt_entry_main    <span style="color:#008000">// ⑤ 跳进你的 main —— 终于到 C 了！</span></pre>
+
+<p>这正是第 2 课"RW 存 FLASH 初值、上电拷 RAM"的落地实现。</p>
+
+<h2>8. 系统启动全流程</h2>
+
+<p>把前几节串成一条线（<span class="pg">PDF p.16-19</span>）。Cortex-M3/M4 内核复位后先做两件事：从 0x0800 0000 取 MSP 初值（栈顶），从 0x0800 0004 取 PC 初值（Reset_Handler 入口）。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">上电/复位
+   │
+   ▼
+取 0x0800 0000 → SP = __initial_sp    <span style="color:#008000">// 栈顶地址，供 NMI/fault 用</span>
+取 0x0800 0004 → PC = Reset_Handler
+   │
+   ▼
+Reset_Handler
+   ├─ SystemInit      <span style="color:#008000">// 配系统时钟</span>
+   └─ __main
+        ├─ __scatterload   <span style="color:#008000">// 拷 RW、清 ZI（加载域→执行域）</span>
+        └─ __rt_entry      <span style="color:#008000">// 建堆栈、初始化库</span>
+             └─ main()     <span style="color:#008000">// 你的 C 程序从这里开始</span></pre>
+
+<div class="warn">
+  <p>⚠️ 启动模式注意：Boot 引脚决定向量表映射到哪。映射到 FLASH 则从 0x0800 0000 启动；映射到 SRAM 则从 0x2000 0000 启动。另外 ARM 规定写进 PC 的地址最低位必须为 1（Thumb），否则触发 fault——这就是第 2 课"奇数地址"的由来（PDF p.18-19）。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 3.1：给真实启动文件加中文注释</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>打开当前工程根目录的 <code>startup_stm32f407xx.s</code>（GCC 版）——注意它是 GCC 汇编语法（.section/.word/.global 而非 AREA/DCD），但逻辑一一对应。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>对照本课 7 件事，逐段标注：找向量表 <code>g_pfnVectors</code>、找 <code>Reset_Handler</code>（其中 <code>ldr sp, =_estack</code>、<code>bl SystemInit</code>、CopyDataInit 拷贝 .data、FillZerobss 清零 .bss、<code>bl __libc_init_array</code>、<code>bl main</code>）。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>本工程的栈顶 <code>_estack</code> 在链接脚本里 = RAM 顶端 0x20020000；栈大小 <code>_Min_Stack_Size = 0x1000</code>（4KB）、堆 <code>_Min_Heap_Size = 0x1000</code>，都在 <code>STM32F407XX_FLASH.ld</code> 里定义——MDK 的 Stack_Size EQU 在这里换了个形式。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 3.2：改栈大小，观察变化</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>MDK 工程：把 <code>Stack_Size EQU 0x400</code> 改成 0x800 → Rebuild → 在 map 里搜 <code>__initial_sp</code>，看栈顶地址怎么变（栈顶 = 栈低 + 栈大小）。CMake 工程则改 <code>_Min_Stack_Size</code> 再重链接。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>再故意把栈改得极小（如 0x80），在 main 里定义一个大局部数组，运行观察是否进 HardFault。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>栈溢出前的典型症状——HardFault、变量莫名被改写。这正是第 1 课 .htm "2 倍法则"要防的事故。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 上电复位后，CPU 从哪个地址取出 PC 的初值？</p>
+  <p class="opt">A. 0x0800 0000，即 MSP 初值处</p>
+  <p class="opt">B. 0x0800 0004，向量表第二项</p>
+  <p class="opt">C. 0x0800 0008，第一个中断处</p>
+  <details><summary>查看答案</summary><div class="answer">B。地址 0 放 MSP 初值，0x0004 放 Reset_Handler 入口，内核复位后依次取出（PDF p.17）。</div></details>
+
+  <p class="q">Q2. 栈的生长方向是？</p>
+  <p class="opt">A. 从低地址往高地址生长</p>
+  <p class="opt">B. 从高地址往低地址生长</p>
+  <p class="opt">C. 双向同时生长</p>
+  <details><summary>查看答案</summary><div class="answer">B。栈向下生长（满栈），所以 __initial_sp 是栈顶地址；堆才从低往高生长（PDF p.5-6）。</div></details>
+
+  <p class="q">Q3. 关于 __main 函数，说法正确的是？</p>
+  <p class="opt">A. 是 main 函数编译后的名字</p>
+  <p class="opt">B. 链接器发现 main 后自动创建的库函数</p>
+  <p class="opt">C. 用户必须自己实现它</p>
+  <details><summary>查看答案</summary><div class="answer">B。__main 由编译器/链接器自动创建，负责 __scatterload + __rt_entry，最后跳 main（PDF p.10）。</div></details>
+
+  <p class="q">Q4. 启动文件把中断函数声明为 [WEAK] 的意义是？</p>
+  <p class="opt">A. 强制用户必须实现该函数</p>
+  <p class="opt">B. 有外部定义优先用外部的，没有也能编译</p>
+  <p class="opt">C. 让中断函数执行得更快</p>
+  <details><summary>查看答案</summary><div class="answer">B。弱定义：外部同名定义优先，否则用弱函数（死循环兜底），编译不报错（PDF p.9）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《STM32 启动文件浅析 V1.2》全文（PDF p.3~19）——本课全部依据</li>
+<li>📖 本工程 <code>startup_stm32f407xx.s</code> 与 <code>STM32F407XX_FLASH.ld</code>——GCC 版对照阅读</li>
+<li>📖《Cortex-M3 权威指南》第 3 章复位序列、第 4 章指令集</li>
+</ul>
+
+<div class="footer-note">
+  <p>启动流程哪一环卡住了、栈溢出调不明白，尽管来问。下一课预告：第 4 课——调试器实战，用 ST-Link 断点、看变量、追调用栈，把启动流程"现场直播"给你看。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0002-map-file-deep-dive.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0004-debugger-in-action.html">下一课：调试器实战 →</a>
+</nav>
+
+</div>
+</body>
+</html>

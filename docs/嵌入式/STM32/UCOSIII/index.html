@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>µC/OS-III 与手写操作系统内核 — 课程总览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="course-hero">
+  <h1>µC/OS-III 与手写操作系统内核（MiniOS）</h1>
+  <p class="subtitle">STM32F407 探索者 · 主线教材：正点原子《µC/OS-III 开发指南 V1.5》· 与 FreeRTOS 课程强衔接对比</p>
+</div>
+
+<div class="goal">
+  <p><strong>课程使命：</strong>学透 µC/OS-III（位图就绪表内核），并亲手实现一个可运行的最小操作系统 MiniOS。教材在 <a href="MISSION.md">MISSION.md</a>，配套资源在 <a href="RESOURCES.md">RESOURCES.md</a>。</p>
+</div>
+
+<h2>课程地图（16 课，四个阶段）</h2>
+<p>每课一个独立页面，含知识讲解 + 源码分析 + 自测 + 真机练习（练习在 µC/OS-III 分支工程上进行）。🟡 进行中 · ⬜ 未开始</p>
+
+<h3>阶段一：入门</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">01</span> 初识 µC/OS-III<span class="stage"> · 第 1 章</span>
+    <div class="desc">三件套源码结构（µC/OS-III/µC/CPU/µC/LIB）、与 FreeRTOS 总体对比、课程路线图
+      <a href="lessons/0001-intro-to-ucosiii.html">→ 上课</a></div></li>
+
+  <li><span class="num">02</span> 移植与配置<span class="stage"> · 第 2~3 章</span>
+    <div class="desc">移植流程、os_cfg.h/os_cfg_app.h/cpu_cfg.h/lib_cfg.h 配置、第一个任务（PDF p.28/60）</div></li>
+</ul>
+
+<h3>阶段二：UCOS 机制（处处对比 FreeRTOS）</h3>
+<ul class="lesson-list">
+  <li><span class="num">03</span> 任务基础<span class="stage"> · 第 5 章</span>
+    <div class="desc">任务状态、优先级（数值越小越高！）、TCB、任务栈——与 FreeRTOS TCB 对照（PDF p.81）</div></li>
+
+  <li><span class="num">04</span> 位图就绪表<span class="stage"> · 第 5/7 章</span>
+    <div class="desc">OSRdyGrp/OSRdyTbl 位图算法、查表法找最高优先级——与 FreeRTOS 链表就绪表对比（PDF p.85/109）</div></li>
+
+  <li><span class="num">05</span> 任务切换原理<span class="stage"> · 第 8 章</span>
+    <div class="desc">OSSched/OSIntExit 调度点、OSCtxSw/OSIntCtxSw、PendSV——与 vTaskSwitchContext 对比（PDF p.132）</div></li>
+
+  <li><span class="num">06</span> 中断管理与临界区<span class="stage"> · 第 4 章</span>
+    <div class="desc">CPU_CRITICAL_ENTER/EXIT、锁定调度器式临界区、中断嵌套计数（PDF p.70）</div></li>
+</ul>
+
+<h3>阶段三：⭐ 手写 MiniOS（本课程核心）</h3>
+<ul class="lesson-list">
+  <li><span class="num">07</span> MiniOS①：TCB 与位图就绪表<span class="stage"> · 实现第 1 步</span>
+    <div class="desc">设计数据结构、位图算法落地，产出可调用的内核骨架</div></li>
+
+  <li><span class="num">08</span> MiniOS②：上下文切换<span class="stage"> · 实现第 2 步</span>
+    <div class="desc">任务栈布局、PendSV 汇编逐行——造出"切任务"的魔法</div></li>
+
+  <li><span class="num">09</span> MiniOS③：调度器与临界区<span class="stage"> · 实现第 3 步</span>
+    <div class="desc">调度点设计、任务创建 API、BASEPRI 临界区——内核"心脏"</div></li>
+
+  <li><span class="num">10</span> MiniOS④：时基与任务延时<span class="stage"> · 实现第 4 步</span>
+    <div class="desc">SysTick 时基、OSTimeDly 等价物、延时任务恢复</div></li>
+
+  <li><span class="num">11</span> MiniOS⑤：同步原语<span class="stage"> · 实现第 5 步</span>
+    <div class="desc">信号量 pend/post 与任务阻塞/就绪——让任务学会"等待"</div></li>
+
+  <li><span class="num">12</span> MiniOS⑥：三内核验收对比<span class="stage"> · 实现收尾</span>
+    <div class="desc">MiniOS 跑通多任务，与 µC/OS-III、FreeRTOS 架构对照总结</div></li>
+</ul>
+
+<h3>阶段四：UCOS 应用</h3>
+<ul class="lesson-list">
+  <li><span class="num">13</span> 任务管理 API 实战<span class="stage"> · 第 6/9 章</span>
+    <div class="desc">OSTaskCreate/Del/Suspend/Resume、优先级修改、时间片调度（PDF p.91/145）</div></li>
+
+  <li><span class="num">14</span> 信号量与互斥量<span class="stage"> · 第 11/12 章</span>
+    <div class="desc">二值/计数/互斥信号量、优先级翻转与优先级继承（PDF p.196/245）</div></li>
+
+  <li><span class="num">15</span> 消息队列与事件标志<span class="stage"> · 第 13~16 章</span>
+    <div class="desc">消息队列、任务内嵌信号量/消息队列、事件标志（PDF p.283/314/334/354）</div></li>
+
+  <li><span class="num">16</span> 软件定时器与内存管理<span class="stage"> · 第 17~19 章</span>
+    <div class="desc">软件定时器、内存分区管理、时间戳，三内核总结（PDF p.394/437/445）</div></li>
+</ul>
+
+<h2>配套参考</h2>
+<ul>
+  <li>📚 <a href="RESOURCES.md">资源清单</a> — PDF、官方 API 手册、Labrosse 官方书</li>
+  <li>🔗 <a href="../FreeRTOS/index.html">FreeRTOS 课程</a> — 本课程的对比基准</li>
+</ul>
+
+<h2>学习进度</h2>
+<table>
+<tr><th>阶段</th><th>课时</th><th>状态</th></tr>
+<tr><td>入门</td><td>01 ~ 02</td><td>01 完成</td></tr>
+<tr><td>UCOS 机制</td><td>03 ~ 06</td><td>未开始</td></tr>
+<tr><td>MiniOS 手写内核</td><td>07 ~ 12</td><td>未开始</td></tr>
+<tr><td>UCOS 应用</td><td>13 ~ 16</td><td>未开始</td></tr>
+</table>
+
+<p class="footer-note">学习记录见 <a href="learning-records/">learning-records/</a> · 有问题随时问 Agent 老师</p>
+
+</div>
+</body>
+</html>

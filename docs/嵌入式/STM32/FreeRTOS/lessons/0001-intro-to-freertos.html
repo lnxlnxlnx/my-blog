@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 1 课：初识 FreeRTOS — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 1 课</nav>
+
+<h1>第 1 课：初识 FreeRTOS</h1>
+<p class="subtitle">RTOS 是什么、为什么选 FreeRTOS、它的源码长什么样</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>从"裸机思维"切换到"操作系统思维"的第一步。学完你能说清：RTOS 凭什么让多个任务"同时跑"、FreeRTOS 相比裸机和 µC/OS 的优势、以及它的源码里每个文件是干什么的。这是后续 16 课的路线图。</p>
+</div>
+
+<h2>1. 从裸机到 RTOS：思维转变</h2>
+
+<p>你现在的工程是典型的裸机程序：<code>while(1)</code> 里顺序执行各个模块，靠定时器中断和按键扫描驱动一切。裸机在单任务场景很舒服，但一旦任务变多（显示、采集、存储、通信……），主循环就变成"大杂烩"——每个模块都得让路，代码越写越乱，实时性也没保证。</p>
+
+<p>RTOS 解决这个问题的思路是：<strong>把大循环拆成多个独立任务，交给调度器管理</strong>。CPU 只有一个核，某一时刻只能跑一个任务，但调度器让任务高速切换，造成"同时运行"的错觉（正点原子《FreeRTOS 开发指南 V1.12》第 1.1.1 节 <span class="pg">PDF p.15</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">// 裸机：一个大循环，所有模块排队</span>
+<span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+    key_scan();      <span style="color:#008000">// 扫描按键</span>
+    lv_timer_handler(); <span style="color:#008000">// 刷 GUI</span>
+    adc_sample();    <span style="color:#008000">// 采数据</span>
+    save_to_sd();    <span style="color:#008000">// 存 SD 卡</span>
+}
+
+<span style="color:#008000">// RTOS：每个模块一个任务，各自&quot;独立运行&quot;</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">key_task</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>  { <span style="color:#0000FF">for</span>(;;) { key_scan();        vTaskDelay(<span style="color:#098658">10</span>); } }
+<span style="color:#267F99">void</span> <span style="color:#795E26">gui_task</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>  { <span style="color:#0000FF">for</span>(;;) { lv_timer_handler(); vTaskDelay(<span style="color:#098658">5</span>);  } }
+<span style="color:#267F99">void</span> <span style="color:#795E26">adc_task</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>  { <span style="color:#0000FF">for</span>(;;) { adc_sample();      vTaskDelay(<span style="color:#098658">1</span>);  } }
+<span style="color:#267F99">void</span> <span style="color:#795E26">sd_task</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>   { <span style="color:#0000FF">for</span>(;;) { save_to_sd();      vTaskDelay(<span style="color:#098658">100</span>);} }</pre>
+
+<p>关键区别：裸机的"同时"是代码层叠出来的假象，RTOS 的"同时"是<strong>调度器用可预测的规则分配 CPU 时间</strong>。RTOS 的调度器行为必须是可预测的——这正是嵌入式实时系统最看重的特性。</p>
+
+<div class="tip">
+  <p>💡 学 FreeRTOS 最大的坎不是 API，而是思维：任务不是"函数调用"而是"独立程序"，它们之间不能共享局部变量，只能通过队列/信号量等机制通信。从第 2 课开始，我们会反复强化这一点。</p>
+</div>
+
+<h2>2. 为什么选 FreeRTOS</h2>
+
+<p>RTOS 家族成员不少：µC/OS、FreeRTOS、RTX、RT-Thread……为什么 FreeRTOS 是当前嵌入式界的事实标准（PDF 第 1.1.2 节 <span class="pg">PDF p.16</span>）？</p>
+
+<table>
+<tr><th>理由</th><th>说明</th></tr>
+<tr><td>🆓 免费</td><td>MIT 开源许可，商业产品可免费使用，无需开源自己的应用代码</td></tr>
+<tr><td>🧩 简单</td><td>内核源码只有 8 个 .c 文件，比 µC/OS 精简得多</td></tr>
+<tr><td>🌍 使用广泛</td><td>几乎所有带 Wi-Fi/蓝牙协议栈的芯片 SDK 都内置 FreeRTOS；ST 的 Cube 生态也原生支持</td></tr>
+<tr><td>📚 资料齐全</td><td>官网提供官方书籍、API 参考手册、大量例程（虽然偏英文）</td></tr>
+<tr><td>🔧 可移植性强</td><td>支持 F1/F4/F7/H7 等几乎所有 MCU 架构</td></tr>
+</table>
+
+<h2>3. 源码初探：8 个文件撑起一个操作系统</h2>
+
+<p>FreeRTOS 内核（V10.4.6）的源码在 <code>Source/</code> 目录下，全部核心代码只有 8 个文件（PDF 第 1.3.2 节 <span class="pg">PDF p.24</span>）：</p>
+
+<table>
+<tr><th>文件</th><th>职责</th><th>对应本课程哪一课</th></tr>
+<tr><td><code>tasks.c</code></td><td>任务管理：创建/删除/挂起/恢复、调度器</td><td>第 3~7 课</td></tr>
+<tr><td><code>queue.c</code></td><td>队列（含信号量的实现基础）</td><td>第 8、9 课</td></tr>
+<tr><td><code>list.c</code></td><td>列表与列表项（内核的"血管"）</td><td>第 5 课</td></tr>
+<tr><td><code>timers.c</code></td><td>软件定时器</td><td>第 10 课</td></tr>
+<tr><td><code>event_groups.c</code></td><td>事件标志组</td><td>第 11 课</td></tr>
+<tr><td><code>stream_buffer.c</code></td><td>流式缓冲区</td><td>本课程不深讲</td></tr>
+<tr><td><code>croutine.c</code></td><td>协程（老特性，基本不用）</td><td>了解即可</td></tr>
+<tr><td><code>include/</code> + <code>portable/</code></td><td>头文件 + 架构移植层（连接硬件与内核的桥梁）</td><td>第 2、13 课</td></tr>
+</table>
+
+<div class="warn">
+  <p>⚠️ 注意区分两个概念：<strong>FreeRTOS</strong>（完整发布包，含内核 + FreeRTOS-Plus 组件）和 <strong>FreeRTOS 内核</strong>（V10.4.6，真正学的东西）。教材讲的都是内核，下文中"FreeRTOS"均指内核。</p>
+</div>
+
+<p>移植层（<code>portable/</code>）是连接"软件内核"和"硬件芯片"的桥梁——同一个 tasks.c 跑在所有芯片上，不同芯片只换 portable 下的几个文件（任务切换的汇编、SysTick 配置等）。这个"内核与硬件隔离"的设计，是 FreeRTOS 可移植性的根基，第 2 课移植时会亲手摸到它们。</p>
+
+<h2>4. 学习路线图</h2>
+
+<p>本课程 17 课按教材 20 章重组为五个阶段：</p>
+
+<ol>
+<li><strong>入门</strong>（01~02）：概念 + 移植跑通</li>
+<li><strong>任务机制·原理深入</strong>（03~07）：任务/列表/启动流程/任务切换——逐行源码分析</li>
+<li><strong>同步与通信</strong>（08~12）：队列/信号量/软件定时器/事件组/任务通知</li>
+<li><strong>系统机制</strong>（13~15）：中断与临界区/时间管理/内存管理</li>
+<li><strong>进阶与综合</strong>（16~17）：低功耗/空闲任务 + LVGL×FreeRTOS 产品多任务架构</li>
+</ol>
+
+<p>第 7 章（列表）、第 8 章（启动流程）、第 9 章（任务切换）是全书最硬的骨头，也是"原理深入"的核心，届时会逐函数读源码。</p>
+
+<h2>动手练习（约 15 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1.1：在 FreeRTOS 工程里指认源码</h3>
+  <p class="step">1️⃣ 切换到你的 FreeRTOS 分支工程，找到 FreeRTOS 内核源码目录（一般是 <code>Middlewares/Third_Party/FreeRTOS/Source/</code> 或类似路径）。</p>
+  <p class="step">2️⃣ 对照上表，确认 8 个核心文件都在；打开 <code>portable/</code>，找到你的移植层目录（应该包含 <code>port.c</code>、<code>portmacro.h</code> 和编译器相关文件，如 <code>RVDS/ARM_CM4F/</code>）。</p>
+  <p class="step">3️⃣ 在 <code>tasks.c</code> 里搜 <code>xTaskCreate</code> 的函数定义，看一眼它的形参列表——和 PDF p.19 的官方示例对照。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 1.2：读懂官方示例</h3>
+  <p class="step">1️⃣ 抄写并阅读下面这段 PDF p.18 的官方创建任务示例，说出 6 个形参各是什么。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">vTaskCode</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    configASSERT(((<span style="color:#267F99">uint32_t</span>)pvParameters) == <span style="color:#098658">1</span>);
+    <span style="color:#0000FF">for</span> (;;) {
+        <span style="color:#008000">/* 任务代码 */</span>
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">vOtherFunction</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    BaseType_t xReturned;
+    TaskHandle_t xHandle = <span style="color:#098658">NULL</span>;
+
+    xReturned = xTaskCreate(
+        vTaskCode,        <span style="color:#008000">/* 任务函数 */</span>
+        <span style="color:#A31515">&quot;NAME&quot;</span>,           <span style="color:#008000">/* 任务名 */</span>
+        STACK_SIZE,       <span style="color:#008000">/* 任务栈大小，单位：字 */</span>
+        (<span style="color:#267F99">void</span> *)<span style="color:#098658">1</span>,        <span style="color:#008000">/* 传给任务的参数 */</span>
+        tskIDLE_PRIORITY, <span style="color:#008000">/* 优先级 */</span>
+        &amp;xHandle);        <span style="color:#008000">/* 任务句柄 */</span>
+    <span style="color:#0000FF">if</span> (xReturned == pdPASS) {
+        vTaskDelete(xHandle);
+    }
+}</pre>
+
+  <p class="step">2️⃣ 思考题：任务函数的 <code>for(;;)</code> 意味着什么？为什么任务函数不能"返回"？（提示：返回了任务就结束了，RTOS 没有"主函数"概念）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. RTOS 让多个任务"同时运行"的本质是？</p>
+  <p class="opt">A. 多核并行，每核跑一个任务</p>
+  <p class="opt">B. 调度器按规则快速切换任务，制造并发假象</p>
+  <p class="opt">C. 任务之间轮流独占整机直到完成</p>
+  <details><summary>查看答案</summary><div class="answer">B。单核 CPU 同一时刻只能跑一个任务，调度器的高速切换造成"同时"的错觉（PDF p.15）。</div></details>
+
+  <p class="q">Q2. FreeRTOS 的许可证类型是？</p>
+  <p class="opt">A. GPL，衍生代码必须开源</p>
+  <p class="opt">B. MIT，商用免费且无需开源</p>
+  <p class="opt">C. 商业授权，按件收费</p>
+  <details><summary>查看答案</summary><div class="answer">B。MIT 开源许可，商用免费、无需开源应用代码（PDF p.16）。</div></details>
+
+  <p class="q">Q3. 内核源码中"连接软件与硬件"的桥梁是？</p>
+  <p class="opt">A. include 目录</p>
+  <p class="opt">B. portable 目录</p>
+  <p class="opt">C. queue.c</p>
+  <details><summary>查看答案</summary><div class="answer">B。portable 里的移植文件（port.c、portmacro.h 等）针对不同芯片架构，是内核与硬件的隔离层（PDF p.25）。</div></details>
+
+  <p class="q">Q4. 一个 RTOS 任务函数的典型结构是？</p>
+  <p class="opt">A. for(;;) 无限循环，不能返回</p>
+  <p class="opt">B. 普通函数，执行完自动销毁</p>
+  <p class="opt">C. while(0) 单次执行后挂起</p>
+  <details><summary>查看答案</summary><div class="answer">A。任务函数通常是无限循环，返回即任务结束（PDF p.18 官方示例）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 1 章（PDF p.15~27）——本课全部依据</li>
+<li>🌐 <a href="https://www.freertos.org/">FreeRTOS 官网</a>——点 Download FreeRTOS 看源码包结构，点 Getting Started 看官方入门文档</li>
+<li>📕 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a>——官方免费书，英文，配合本课看前两章</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 2 课——把 FreeRTOS 移植进你的分支工程并跑起第一个任务，亲手摸到 portable 那层"桥梁"。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a class="disabled" href="#">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0002-porting-and-first-task.html">下一课：移植与第一个任务 →</a>
+</nav>
+
+</div>
+</body>
+</html>

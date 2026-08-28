@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0019 · 模块与包</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>模块与包:组织代码</h1>
+<p class="meta">Pythonic 代码 · 课程 0019 · 预计 20 分钟</p>
+
+<p>C/C++ 里代码靠头文件 + 链接组织。Python 用<strong>模块(module)</strong>(一个 .py 文件)和<strong>包(package)</strong>(带 <code>__init__.py</code> 的目录)组织代码,用 <code>import</code> 引用。本课让你理解「import 到底做了什么」、怎么写一个清晰的包、以及常见坑。</p>
+
+<h2>知识点 1:模块 = 一个 .py 文件,import 即执行</h2>
+<p>每个 .py 文件是一个模块。用 <code>import</code> 引入时,<strong>文件会被执行一次</strong>,里面定义的函数/变量/类成为模块的属性,用 <code>模块名.名字</code> 访问:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">math</span>            <span style="color: #008000"># 引入 math 模块(标准库)</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">sqrt</span><span style="color: #000">(</span><span style="color: #098658">9</span><span style="color: #000">)</span>           <span style="color: #008000"># 3.0:用 模块.函数</span>
+
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">math</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">sqrt</span>   <span style="color: #008000"># 只引入某个名字</span>
+<span style="color: #001080">sqrt</span><span style="color: #000">(</span><span style="color: #098658">9</span><span style="color: #000">)</span>                 <span style="color: #008000"># 直接用(少了 math. 前缀)</span>
+
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">math</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">pi</span><span style="color: #000">,</span> <span style="color: #001080">e</span>  <span style="color: #008000"># 一次引多个</span>
+<span style="color: #008000"># 别名</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>      <span style="color: #008000"># 长模块名用别名(惯例)</span>
+</pre>
+<p>三种方式:<code>import m</code> / <code>from m import x</code> / <code>import m as alias</code>。用 <code>from m import *</code> 会污染命名空间,<strong>尽量避免</strong>。</p>
+
+<h2>知识点 2:import 的查找路径(sys.path)与「执行一次」</h2>
+<p><code>import m</code> 会按 <code>sys.path</code> 里的目录逐个找叫 <code>m.py</code>(或包)的文件,找到就加载;<strong>同一个模块在整个进程里只执行一次</strong>(之后的 import 是缓存命中):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">sys</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">path</span><span style="color: #000">)</span>   <span style="color: #008000"># 搜索路径列表:当前目录、标准库、site-packages 等</span>
+
+<span style="color: #008000"># 模块只执行一次:重复 import 不会重复跑顶层代码</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">math</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">math</span>       <span style="color: #008000"># 不会再执行 math 模块内容</span>
+</pre>
+<p>有序 sys.path:通常第一个是「当前脚本所在目录」(或 cwd),所以同级 .py 能被直接 import。想查某模块在哪:<code>print(module.__file__)</code>。</p>
+
+<h2>知识点 3:包 = 带 __init__.py 的目录;为什么要 __init__.py</h2>
+<p>目录要成为「包」、能 <code>import</code>,传统上要有个 <code>__init__.py</code>(空的一代也行)。包把多个模块组织成层级:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 目录结构:</span>
+<span style="color: #008000"># myapp/</span>
+<span style="color: #008000">#   __init__.py</span>
+<span style="color: #008000">#   utils.py</span>
+<span style="color: #008000">#   models/</span>
+<span style="color: #008000">#       __init__.py</span>
+<span style="color: #008000">#       user.py</span>
+<span style="color: #008000">#</span>
+<span style="color: #008000"># 引入方式:</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">myapp.utils</span>            <span style="color: #008000"># 包.模块</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">myapp.models</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">user</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">myapp.models.user</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">User</span>   <span style="color: #008000"># 包.模块.名字</span>
+</pre>
+<p><code>__init__.py</code> 在「import 这个包」的时候执行,常用来做「包的公开接口」:<code>from myapp import User</code> 之所以能用,是因为 <code>myapp/__init__.py</code> 里写了 <code>from .models.user import User</code>。</p>
+
+<h2>知识点 4:相对导入 vs 绝对导入</h2>
+<p>包内部模块互相引用:<strong>推荐绝对导入</strong> <code>from myapp.utils import clean</code>;相对导入用 <code>.</code> / <code>..</code>(当前包/上级包):</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 在 myapp/models/user.py 里想用 utils.clean</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">myapp.utils</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">clean</span>        <span style="color: #008000"># 绝对导入(推荐,清晰)</span>
+
+<span style="color: #008000"># 或相对导入</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">..utils</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">clean</span>            <span style="color: #008000"># .. = 上一级包 myapp</span>
+</pre>
+<p>绝对导入更清晰、可读、不易错;半路转相对容易引混乱。脚本(顶层入口)里避免相对导入(它们需要包上下文)。</p>
+
+<h2>知识点 5:别把「可执行代码」塞进被 import 的模块——用 __name__ 保护</h2>
+<p>你在 0012 学过 <code>if __name__ == "__main__"</code>。这在此特别重要:被 import 的模块一旦顶层有 print/测试代码,import 时就会执行。把「只有直接运行才跑」的部分放 __main__ 判断里:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># utils.py</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">clean</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">strip</span><span style="color: #000">().</span><span style="color: #001080">lower</span><span style="color: #000">()</span>
+
+<span style="color: #00F">if</span> <span style="color: #001080">__name__</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;__main__&quot;</span><span style="color: #000">:</span>
+    <span style="color: #008000"># 这段只有: python utils.py 才跑;被 import 时不跑</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">clean</span><span style="color: #000">(</span><span style="color: #A31515">&quot;  HI  &quot;</span><span style="color: #000">))</span>
+</pre>
+<p>这样别人 import utils 不会触发你的测试输出。这是「可 import 又可直接运行」的标准写清。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">import m 会怎样?</p>
+  <button class="opt" data-ok="false">只编译不执行</button>
+  <button class="opt" data-ok="true">执行模块一次</button>
+  <button class="opt" data-ok="false">复制代码进来</button>
+  <button class="opt" data-ok="false">执行多次</button>
+  <p class="reveal">import 会执行该模块文件一次;同一模块进程内只执行一次。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">目录要成为可 import 的包,需要?</p>
+  <button class="opt" data-ok="false">一个 .py 必写</button>
+  <button class="opt" data-ok="true">__init__.py</button>
+  <button class="opt" data-ok="false">setup.py</button>
+  <button class="opt" data-ok="false">MANIFEST</button>
+  <p class="reveal">目录带 __init__.py 才是包;它常在 import 包时执行、暴露公开接口。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">包内推荐用哪种导入?</p>
+  <button class="opt" data-ok="false">相对导入</button>
+  <button class="opt" data-ok="true">绝对导入</button>
+  <button class="opt" data-ok="false">* 星号导入</button>
+  <button class="opt" data-ok="false">exec 导入</button>
+  <p class="reveal">推荐绝对导入(from myapp.utils import x),清晰可读;少用相对/星号。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">让「直接运行才执行」的代码只在此场景跑,用?</p>
+  <button class="opt" data-ok="false">try/finally</button>
+  <button class="opt" data-ok="true">__name__ == "__main__"</button>
+  <button class="opt" data-ok="false">assert 判断</button>
+  <button class="opt" data-ok="false">logging 把关</button>
+  <p class="reveal">if __name__=="__main__": 保证被 import 时不执行,只有直接运行时跑。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0019_模块与包.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:建一个小包结构(含 __init__.py),从外面 import 它,练习三种导入写法</li>
+  <li><strong>练习 B</strong>:写一个模块并加 __main__ 保护;打印某标准库模块的 __file__</li>
+  <li><strong>练习 C</strong>:把 repo 里一个脚本改造成「模块 + __main__ 保护」,列出它的 import 结构</li>
+</ul>
+
+<h2>完工了</h2>
+<p>至此 Pythonic 主线共 <strong>19 课</strong>:8 惯用法 + 7 常用库 + 4 高级(生成器/协程/元编程/模块包)。你已能写出地道、会用库、懂并发的 Python。回课程地图挑最不熟的回炉。**提醒:高级三宝(协程/元编程)多数工程用不太到,「用得上的时候再回来」即可——这本身就是 Pythonic 的克制。**</p>
+<p><strong>有任何不懂的,随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0018-元编程.html">← 上一篇:元编程:写代码的代码</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">下一篇:课程地图(收尾) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

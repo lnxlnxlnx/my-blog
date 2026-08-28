@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0005 · 适配器与门面:两个结构型模式</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>适配器与门面:两个结构型模式</h1>
+<p class="meta">架构与设计模式 · 课程 0005 · 预计 20 分钟</p>
+
+<p>前四课学了行为型(策略)和创建型(工厂)。这课学<strong>结构型(Structural)</strong>里两个最高频的:<strong>适配器(Adapter)</strong>管「接口对不上」,<strong>门面(Facade)</strong>管「东西太多太难用」。</p>
+
+<h2>知识点 1:适配器——接口对不上时的翻译官</h2>
+<p>真实世界天天遇到:你的代码调用 <code>model.score(x, y)</code>,但第三方库叫 <code>model.evaluate(x, y)</code>;你的代码期望 JSON 结构 A,第三方返回结构 B。<strong>适配器就是在中间加一层,把别人的接口翻译成你要的接口。</strong></p>
+<p>典型场景——两套训练 API,你想统一成一套:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 第三方库 A:方法名是 evaluate</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">ThirdPartyModel</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">evaluate</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span>
+        <span style="color: #000">...</span>
+
+<span style="color: #008000"># 你的代码统一只认 score(x, y) —— 接口对不上!</span>
+<span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">score</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>   <span style="color: #008000"># AttributeError</span>
+
+<span style="color: #008000"># 适配器:翻译一层</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">ModelAdapter</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">third_party_model</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_inner</span> <span style="color: #000">=</span> <span style="color: #001080">third_party_model</span>       <span style="color: #008000"># 组合:包一个别人的对象</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">score</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span>                    <span style="color: #008000"># 提供你的接口</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_inner</span><span style="color: #000">.</span><span style="color: #001080">evaluate</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>     <span style="color: #008000"># 内部转成别人的接口</span>
+
+
+<span style="color: #001080">adapted</span> <span style="color: #000">=</span> <span style="color: #001080">ModelAdapter</span><span style="color: #000">(</span><span style="color: #001080">ThirdPartyModel</span><span style="color: #000">())</span>
+<span style="color: #001080">adapted</span><span style="color: #000">.</span><span style="color: #001080">score</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>      <span style="color: #008000"># 你的代码一行不改,就能用第三方了</span>
+</pre>
+<p>适配器的关键词:<strong>组合(包一层对象)+ 接口翻译</strong>。用途往往是一瞬间的(比如只为了接上某个库),用完可以删——它保护的是「你的代码的稳定性」。</p>
+
+<h2>知识点 2:门面——给复杂系统一个简单入口</h2>
+<p>你有一个子系统,内部有多种组件、有先后顺序、有配置细节。每次用都要记住这一大堆?<strong>门面(Facade)提供一个「极简入口」,把内部的复杂度藏起来。</strong></p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 没有一个门面时,使用者要记住整个流程:</span>
+<span style="color: #001080">raw</span> <span style="color: #000">=</span> <span style="color: #001080">load_raw</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.csv&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">clean</span> <span style="color: #000">=</span> <span style="color: #001080">clean_data</span><span style="color: #000">(</span><span style="color: #001080">raw</span><span style="color: #000">)</span>
+<span style="color: #001080">feat</span> <span style="color: #000">=</span> <span style="color: #001080">extract_features</span><span style="color: #000">(</span><span style="color: #001080">clean</span><span style="color: #000">)</span>
+<span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">RandomForest</span><span style="color: #000">(**</span><span style="color: #001080">best_params</span><span style="color: #000">())</span>
+<span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">feat</span><span style="color: #000">,</span> <span style="color: #001080">labels</span><span style="color: #000">)</span>
+<span style="color: #001080">report</span> <span style="color: #000">=</span> <span style="color: #001080">evaluate</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">feat</span><span style="color: #000">,</span> <span style="color: #001080">labels</span><span style="color: #000">)</span>
+<span style="color: #001080">save_model</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;model.pkl&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">save_report</span><span style="color: #000">(</span><span style="color: #001080">report</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;report.json&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #008000"># 门面:`train_pipeline()` 把所有步骤吃进肚子里</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train_pipeline</span><span style="color: #000">(</span><span style="color: #001080">data_path</span><span style="color: #000">,</span> <span style="color: #001080">out_dir</span><span style="color: #000">):</span>
+    <span style="color: #001080">raw</span> <span style="color: #000">=</span> <span style="color: #001080">load_raw</span><span style="color: #000">(</span><span style="color: #001080">data_path</span><span style="color: #000">)</span>
+    <span style="color: #001080">clean</span> <span style="color: #000">=</span> <span style="color: #001080">clean_data</span><span style="color: #000">(</span><span style="color: #001080">raw</span><span style="color: #000">)</span>
+    <span style="color: #001080">feat</span> <span style="color: #000">=</span> <span style="color: #001080">extract_features</span><span style="color: #000">(</span><span style="color: #001080">clean</span><span style="color: #000">)</span>
+    <span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">RandomForest</span><span style="color: #000">(**</span><span style="color: #001080">best_params</span><span style="color: #000">())</span>
+    <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">feat</span><span style="color: #000">,</span> <span style="color: #001080">labels_from</span><span style="color: #000">(</span><span style="color: #001080">raw</span><span style="color: #000">))</span>
+    <span style="color: #001080">report</span> <span style="color: #000">=</span> <span style="color: #001080">evaluate</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">feat</span><span style="color: #000">,</span> <span style="color: #001080">labels_from</span><span style="color: #000">(</span><span style="color: #001080">raw</span><span style="color: #000">))</span>
+    <span style="color: #001080">save_model</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #A31515">f&quot;{</span><span style="color: #001080">out_dir</span><span style="color: #A31515">}/model.pkl&quot;</span><span style="color: #000">)</span>
+    <span style="color: #001080">save_report</span><span style="color: #000">(</span><span style="color: #001080">report</span><span style="color: #000">,</span> <span style="color: #A31515">f&quot;{</span><span style="color: #001080">out_dir</span><span style="color: #A31515">}/report.json&quot;</span><span style="color: #000">)</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">report</span>
+
+
+<span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">report</span> <span style="color: #000">=</span> <span style="color: #001080">train_pipeline</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.csv&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;./out&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 使用方只记一行</span>
+</pre>
+<p>你可能已经意识到:第一课的 <code>BaseTrainer.run(data)</code> 就是一个门面——把 preprocess/build/fit/evaluate 一串悄悄封装,调用方只需要 <code>run()</code>。门面让「外部看起来简单、内部想多复杂都行」。</p>
+
+<h2>知识点 3:适配器 vs 门面,一句话分清</h2>
+<div class="grid">
+  <div class="card"><h3>适配器 Adapter</h3><p>把<strong>别人的接口</strong>翻译成<strong>你的接口</strong>。方向:接口不匹配才用。</p></div>
+  <div class="card"><h3>门面 Facade</h3><p>给<strong>你自己的复杂系统</strong>开一个简单入口。方向:内部太复杂才用。</p></div>
+</div>
+<p>共同点:都靠「包一层」;不同点:<strong>适配器是翻译,门面是简化</strong>。适配器让「能接上」,门面让「好上手」。</p>
+
+<h2>知识点 4:AI 代码里它们长什么样</h2>
+<p>AI 生成的代码里,这两种模式出镜率极高,认出来就不慌了:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 1) AI 经常给「几个库的不统一」套适配器:</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UnifiedEmbedder</span><span style="color: #000">:</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;统一 OpenAI / HuggingFace / 本地模型 三种 embedder 接口。&quot;&quot;&quot;</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">backend</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_backend</span> <span style="color: #000">=</span> <span style="color: #001080">backend</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">embed</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">text</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #0070C1">hasattr</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_backend</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;encode&quot;</span><span style="color: #000">):</span>
+            <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_backend</span><span style="color: #000">.</span><span style="color: #001080">encode</span><span style="color: #000">(</span><span style="color: #001080">text</span><span style="color: #000">)</span>        <span style="color: #008000"># HF 风格</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_backend</span><span style="color: #000">.</span><span style="color: #001080">create_embedding</span><span style="color: #000">(</span><span style="color: #001080">text</span><span style="color: #000">)</span>  <span style="color: #008000"># OpenAI 风格</span>
+
+
+<span style="color: #008000"># 2) AI 经常把「管道」封装成门面:</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">summarize_document</span><span style="color: #000">(</span><span style="color: #001080">path</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">=</span><span style="color: #A31515">&quot;gpt&quot;</span><span style="color: #000">):</span>
+    <span style="color: #001080">text</span> <span style="color: #000">=</span> <span style="color: #001080">extract_text</span><span style="color: #000">(</span><span style="color: #001080">path</span><span style="color: #000">)</span>          <span style="color: #008000"># 子步骤</span>
+    <span style="color: #001080">chunks</span> <span style="color: #000">=</span> <span style="color: #001080">split</span><span style="color: #000">(</span><span style="color: #001080">text</span><span style="color: #000">)</span>
+    <span style="color: #001080">emb</span> <span style="color: #000">=</span> <span style="color: #001080">UnifiedEmbedder</span><span style="color: #000">(</span><span style="color: #001080">make_model</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">)).</span><span style="color: #001080">embed</span><span style="color: #000">(</span><span style="color: #001080">chunks</span><span style="color: #000">)</span>  <span style="color: #008000"># 另一子系统</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">rerank</span><span style="color: #000">(</span><span style="color: #001080">emb</span><span style="color: #000">)</span>
+</pre>
+<p>现在你不仅读得懂,还能说出名字:「哦,这里包了一层适配器,把两个接口统一了」「这里是个门面,把整条管道藏起来了」——这就是参与讨论的词汇量。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">适配器主要解决?</p>
+  <button class="opt" data-ok="true">让接口相互匹配</button>
+  <button class="opt" data-ok="false">集中对象的创建</button>
+  <button class="opt" data-ok="false">缓存常用的结果</button>
+  <button class="opt" data-ok="false">加速方法的调用</button>
+  <p class="reveal">适配器在中间加一层,把别人的接口翻译成你要的接口——让「接口对不上」的两个系统接上。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">门面模式提供的入口?</p>
+  <button class="opt" data-ok="false">一组复杂接口</button>
+  <button class="opt" data-ok="false">一堆具体的实现</button>
+  <button class="opt" data-ok="false">一段默认的代码</button>
+  <button class="opt" data-ok="true">一个简单的入口</button>
+  <p class="reveal">门面把复杂子系统的内部顺序与配置藏起来,只暴露一个极简入口(比如 train_pipeline)。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">两者共同的目标是?</p>
+  <button class="opt" data-ok="false">提高运行的速度</button>
+  <button class="opt" data-ok="true">降低使用复杂度</button>
+  <button class="opt" data-ok="false">减少内存的占用</button>
+  <button class="opt" data-ok="false">增强类型的安全</button>
+  <p class="reveal">都靠「包一层」让调用方更省心:适配器省去改接口、门面省去记流程。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0005_适配器与门面.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:给一个「方法名对不上」的第三方模型写适配器,让你的旧代码直接复用</li>
+  <li><strong>练习 B</strong>:给一段啰嗦的预处理管道写一个门面函数</li>
+  <li><strong>练习 C</strong>:判断题:5 个场景该用适配器还是门面还是都不用(答案内联)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 适配器</strong>(<a href="https://refactoringguru.cn/design-patterns/adapter">中文版</a>)和<strong>门面</strong>(<a href="https://refactoringguru.cn/design-patterns/facade">中文版</a>):各读「问题-解决方案-结构」三段,重点看两篇的「真实世界类比」——插头转换器 / 前台接待。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 的门面函数,你觉得它和「门面」这个严肃的名字配得上吗?下一课进入<strong>观察者模式(Observer)</strong>——训练循环里的回调、前端的事件、后端的消息通知,都是它。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-工厂模式-把创建和用分开.html">← 上一篇:工厂模式:把创建和用分开</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-观察者模式-状态变了通知大家.html">下一篇:观察者模式:状态变了通知大家 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

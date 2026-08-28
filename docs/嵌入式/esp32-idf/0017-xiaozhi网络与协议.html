@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0017 · xiaozhi 网络与协议</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>xiaozhi 网络与协议</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0017 · 预计 25 分钟</p>
+
+<p>这一课把设备端和服务器连起来看:<strong>开机 → OTA 握手 → WebSocket 长连接 → 语音消息往来</strong>。读完你就能对着 <code>protocols/websocket_protocol.cc</code> 讲"设备是怎么和服务器说话的"。</p>
+
+<h2>知识点 1:连接启动顺序</h2>
+<pre lang="text" class="highlight"><span style="color: #001080">Wi-Fi 连上 → 拿到 IP(IP_EVENT_STA_GOT_IP)</span>
+<span style="color: #000">→ HTTP POST /xiaozhi/ota/  ← 服务器返回 WebSocket 地址 + 配置</span>
+<span style="color: #000">→ 连接 ws://服务器:8000/xiaozhi/v1/ ← 长连接</span>
+<span style="color: #000">→ 发 hello 消息,协商音频参数</span>
+</pre>
+<p>这就是咱们服务器日志里 <code>OTA接口运行正常,向设备发送的websocket地址是...</code> 的由来——那个接口就是 <code>ota_handler.py</code> 在答。</p>
+
+<h2>知识点 2:WebSocket 消息格式(JSON)</h2>
+<pre lang="json" class="highlight"><span style="color: #000">{</span> <span style="color: #A31515">&quot;type&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;hello&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;audio_params&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;opus_24000_1_60&quot;</span> <span style="color: #000">}</span>
+<span style="color: #000">{</span> <span style="color: #A31515">&quot;type&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;listen&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;state&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;detect&quot;</span> <span style="color: #000">}</span>
+<span style="color: #000">音频 = 二进制 Opus 帧(不经过 JSON)</span>
+</pre>
+<p>控制走 JSON,音频走<strong>裸二进制帧</strong>——这是 xiaozhi 协议的核心分界,服务器端 <code>websocket_server.py</code> 也是这么拆的。</p>
+
+<h2>知识点 3:断线重连</h2>
+<p><code>websocket_protocol.cc</code> 里注册了连接断开事件,断线后<strong>指数退避重连</strong>。看代码时留意 <code>reconnect</code> 相关的字段和状态机切换。</p>
+
+<h2>动手</h2>
+<p>打开 <code>main/protocols/websocket_protocol.cc</code>:<br>
+① 找 <code>esp_websocket_client</code> 的 URL 来源(应该来自 OTA 响应);<br>
+② 找 <code>on_data</code> 回调,看它怎么区分"JSON 消息"和"音频帧";<br>
+③ 顺藤摸瓜:音频帧交到哪个模块(应该就是 <code>audio_service_</code>)。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">音频数据在 WebSocket 里怎么传?</p>
+  <button class="opt" data-ok="true">二进制帧</button>
+  <button class="opt" data-ok="false">JSON嵌套</button>
+  <button class="opt" data-ok="false">base64</button>
+  <p class="reveal">裸二进制 Opus 帧,控制消息才是 JSON。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">设备从哪拿到 WebSocket 地址?</p>
+  <button class="opt" data-ok="true">OTA响应</button>
+  <button class="opt" data-ok="false">编译写死</button>
+  <button class="opt" data-ok="false">按键配置</button>
+  <p class="reveal">开机 POST /xiaozhi/ota/ 的响应里下发。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>xiaozhi 官方《WebSocket 通信协议》</strong>(<a href="https://github.com/78/xiaozhi-esp32/blob/main/docs/websocket.md">docs/websocket.md</a>):整篇读一遍,和这课互证。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>最后一课:实战收尾——把课上学到的用在"改自己的板子"上。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0016-xiaozhi音频流水线.html">← 上一篇:音频流水线</a>
+  <a href="index.html">课程地图</a>
+  <a href="0018-实战改板与加功能.html">下一篇:实战收尾 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

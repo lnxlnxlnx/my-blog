@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0005 · 字典惯用法</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>字典惯用法</h1>
+<p class="meta">Pythonic 代码 · 课程 0005 · 预计 20 分钟</p>
+
+<p>C 程序员管「键值对」叫 struct 字段或查找表;Python 里 <code>dict</code> 是日常最常用的数据结构,而且有一整套「怎么取、怎么加、怎么数、缺了怎么办」的地道写法。本课把它讲透。</p>
+
+<h2>知识点 1:取不到键时用 .get,别自己 if 判</h2>
+<p>C 思维(先查有没有,再取):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">}</span>
+<span style="color: #00F">if</span> <span style="color: #A31515">&quot;c&quot;</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">d</span><span style="color: #000">:</span>
+    <span style="color: #001080">v</span> <span style="color: #000">=</span> <span style="color: #001080">d</span><span style="color: #000">[</span><span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">]</span>
+<span style="color: #00F">else</span><span style="color: #000">:</span>
+    <span style="color: #001080">v</span> <span style="color: #000">=</span> <span style="color: #000">-</span><span style="color: #098658">1</span>
+</pre>
+<p>Pythonic——<code>dict.get(key, default)</code> 一行:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">}</span>
+<span style="color: #001080">v</span> <span style="color: #000">=</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">1</span><span style="color: #000">)</span>     <span style="color: #008000"># -1:取不到就返回默认值</span>
+<span style="color: #001080">v</span> <span style="color: #000">=</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">)</span>         <span style="color: #008000"># None:不指定默认值则返回 None</span>
+</pre>
+<p>直接 <code>d["c"]</code> 取不到会抛 KeyError;想「安全取,给个兜底」就用 <code>get</code>。</p>
+
+<h2>知识点 2:计数 / 分组,别手动看键在不在</h2>
+<p>C 思维(数每个元素出现几次,得先判断键存不存在):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">counts</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+<span style="color: #00F">for</span> <span style="color: #001080">w</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">words</span><span style="color: #000">:</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">w</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">counts</span><span style="color: #000">:</span>
+        <span style="color: #001080">counts</span><span style="color: #000">[</span><span style="color: #001080">w</span><span style="color: #000">]</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span>
+    <span style="color: #00F">else</span><span style="color: #000">:</span>
+        <span style="color: #001080">counts</span><span style="color: #000">[</span><span style="color: #001080">w</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #098658">1</span>
+</pre>
+<p>Pythonic 更省——<code>collections.Counter</code> 专门干这个,还能一键 top、一键求和:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">collections</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">Counter</span>
+<span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">counts</span> <span style="color: #000">=</span> <span style="color: #001080">Counter</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">)</span>          <span style="color: #008000"># Counter({&#39;a&#39;:3,&#39;b&#39;:2,&#39;c&#39;:1})</span>
+<span style="color: #001080">counts</span><span style="color: #000">[</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">]</span>                      <span style="color: #008000"># 3</span>
+<span style="color: #001080">counts</span><span style="color: #000">.</span><span style="color: #001080">most_common</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>            <span style="color: #008000"># [(&#39;a&#39;, 3)]</span>
+</pre>
+<p>不想引入 Counter,就用 <code>dict.setdefault</code> 或 <code>defaultdict</code> 省掉 if:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+<span style="color: #00F">for</span> <span style="color: #001080">w</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">words</span><span style="color: #000">:</span>
+    <span style="color: #001080">d</span><span style="color: #000">[</span><span style="color: #001080">w</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #001080">w</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">)</span> <span style="color: #000">+</span> <span style="color: #098658">1</span>       <span style="color: #008000"># get 兜底,再 +1</span>
+
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">collections</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">defaultdict</span>
+<span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #001080">defaultdict</span><span style="color: #000">(</span><span style="color: #0070C1">int</span><span style="color: #000">)</span>             <span style="color: #008000"># 键不存在自动给 int() 即 0</span>
+<span style="color: #00F">for</span> <span style="color: #001080">w</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">words</span><span style="color: #000">:</span>
+    <span style="color: #001080">d</span><span style="color: #000">[</span><span style="color: #001080">w</span><span style="color: #000">]</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span>
+</pre>
+<p>三个方案:Counter(计数首选) / dict.get(临时) / defaultdict(自动初始化)。</p>
+
+<h2>知识点 3:分组用 setdefault 或 defaultdict(list)</h2>
+<p>要把元素按某特征「分组进列表」,C 思维又得先查列表在不在:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">people</span> <span style="color: #000">=</span> <span style="color: #000">[(</span><span style="color: #A31515">&quot;math&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #A31515">&quot;art&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #A31515">&quot;math&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Cara&quot;</span><span style="color: #000">)]</span>
+<span style="color: #001080">groups</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+<span style="color: #00F">for</span> <span style="color: #001080">subj</span><span style="color: #000">,</span> <span style="color: #001080">name</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">people</span><span style="color: #000">:</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">subj</span> <span style="color: #AF00DB">not</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">groups</span><span style="color: #000">:</span>
+        <span style="color: #001080">groups</span><span style="color: #000">[</span><span style="color: #001080">subj</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>
+    <span style="color: #001080">groups</span><span style="color: #000">[</span><span style="color: #001080">subj</span><span style="color: #000">].</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">)</span>
+</pre>
+<p>Pythonic——<code>defaultdict(list)</code> 或 <code>setdefault</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">collections</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">defaultdict</span>
+<span style="color: #001080">groups</span> <span style="color: #000">=</span> <span style="color: #001080">defaultdict</span><span style="color: #000">(</span><span style="color: #0070C1">list</span><span style="color: #000">)</span>
+<span style="color: #00F">for</span> <span style="color: #001080">subj</span><span style="color: #000">,</span> <span style="color: #001080">name</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">people</span><span style="color: #000">:</span>
+    <span style="color: #001080">groups</span><span style="color: #000">[</span><span style="color: #001080">subj</span><span style="color: #000">].</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">)</span>     <span style="color: #008000"># 键不存在自动建空列表</span>
+<span style="color: #008000"># groups == {&#39;math&#39;:[&#39;Ann&#39;,&#39;Cara&#39;], &#39;art&#39;:[&#39;Bob&#39;]}</span>
+</pre>
+<p>一条 append 搞定,不再手写「先建列表再 append」的模板。</p>
+
+<h2>知识点 4:遍历字典——.items() 拿「键+值」</h2>
+<p>C 程序员想遍历键值对,常先拿 keys 再查值:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">}</span>
+<span style="color: #00F">for</span> <span style="color: #001080">k</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">keys</span><span style="color: #000">():</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">k</span><span style="color: #000">,</span> <span style="color: #001080">d</span><span style="color: #000">[</span><span style="color: #001080">k</span><span style="color: #000">])</span>
+</pre>
+<p>Pythonic——<code>for k, v in d.items()</code> 一次同时给:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">}</span>
+<span style="color: #00F">for</span> <span style="color: #001080">k</span><span style="color: #000">,</span> <span style="color: #001080">v</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">items</span><span style="color: #000">():</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">k</span><span style="color: #000">,</span> <span style="color: #001080">v</span><span style="color: #000">)</span>          <span style="color: #008000"># a 1 / b 2</span>
+</pre>
+<p>只要键:直接 <code>for k in d</code>(别写 <code>d.keys()</code>);只要值:<code>d.values()</code>。</p>
+
+<h2>知识点 5:enumerate 下标 + items() 值,还能进一步解包</h2>
+<p>把「下标 + 键 + 值」一起拿:<code>for i, (k, v) in enumerate(d.items())</code>。这是「<code>enumerate</code> 包 <code>zip</code> 包解包」组合拳的自然延伸——Python 处处鼓励「一次拿全,别再用下标够」。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">取不到键想给兜底,用?</p>
+  <button class="opt" data-ok="false">d["c"]</button>
+  <button class="opt" data-ok="true">d.get("c", -1)</button>
+  <button class="opt" data-ok="false">d.pop("c")</button>
+  <button class="opt" data-ok="false">d.setdefault 一次</button>
+  <p class="reveal">get(key, default) 取不到就返回默认值,不抛 KeyError。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">统计每个元素出现次数,首选?</p>
+  <button class="opt" data-ok="false">手写 if 判断</button>
+  <button class="opt" data-ok="true">collections.Counter</button>
+  <button class="opt" data-ok="false">set 去重</button>
+  <button class="opt" data-ok="false">sort + 遍历</button>
+  <p class="reveal">Counter 专为计数设计,还带 most_common 等便捷方法。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">遍历拿到键又拿值,用?</p>
+  <button class="opt" data-ok="false">for k in d</button>
+  <button class="opt" data-ok="true">d.items()</button>
+  <button class="opt" data-ok="false">d.keys()</button>
+  <button class="opt" data-ok="false">d.values()</button>
+  <p class="reveal">items() 一次给键和值;只有键用 for k in d,只有值用 values()。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">按分数分组进列表,最省代码?</p>
+  <button class="opt" data-ok="false">先 if 建列表</button>
+  <button class="opt" data-ok="true">defaultdict(list)</button>
+  <button class="opt" data-ok="false">普通 dict + append</button>
+  <button class="opt" data-ok="false">Counter</button>
+  <p class="reveal">defaultdict(list) 让键不存在时自动建空列表,直接 append。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0005_字典惯用法.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把「手写 if 键在不在」的计数/取键代码翻成 get/Counter 写法,再对答案</li>
+  <li><strong>练习 B</strong>:用 Counter 数一段文本单词频率、取 top3;用 defaultdict(list) 把学生按班级分组</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段手写的「查表 / 分组 / 计数」代码改写成健用法</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/collections.html">collections 模块</a>」</strong>的 <code>defaultdict</code> 与 <code>Counter</code> 小节:两个类的全部方法,20 分钟可刷完。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:Counter 和 defaultdict 哪招最让你眼前一亮?下一课进入<strong>dataclass 与类</strong>——把「C++ 式的一堆 getter/setter 样板」换成 Python 的简洁类。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-字符串与f-string.html">← 上一篇:字符串与 f-string</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-dataclass与类.html">下一篇:dataclass 与类 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

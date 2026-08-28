@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0001 · 六边形架构总览与依赖方向</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>六边形架构总览与依赖方向</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0001 · 预计 20 分钟</p>
+
+<p>你要学的 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 把好几种架构揉在一起:<em>Domain-Driven Design(DDD)</em>、<em>Hexagonal(端口-适配器)</em>、<em>Clean / Onion</em>、<em>SOLID</em>。听着吓人,但它们共享<strong>同一个骨架</strong>。这一课先搭起骨架,之后 0002~0010 逐个填空。</p>
+
+<h2>知识点 1:五个词其实是一个意思——依赖指向内</h2>
+<p>别被术语吓到。这些架构都在说同一件事:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 一层叠一层,核心在最里层:</span>
+<span style="color: #008000">#   基础设施 → 接口适配器 → 应用层 → 领域层(最核心)</span>
+<span style="color: #008000">#   (数据库/外部API)   (控制器)   (用例)     (业务规则)</span>
+</pre>
+<p>规则只有一条:<strong>依赖只能从外层指向内层;内层永不依赖外层</strong>。领域层(最核心)不知道也不关心你用的是 MySQL 还是 Postgres、是 HTTP 还是 CLI——这些「外部细节」都塞到最外层。</p>
+
+<h2>知识点 2:为什么——测试和换实现都容易</h2>
+<p>因为领域层不依赖外部,你就能:① 不连数据库就能测业务(用假数据/替换实现);② 换数据库/加新接口时不碰业务代码。这就是「六边形」/「洋葱」/「整洁」共同的卖点(<a href="https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html">Clean Architecture</a>、<a href="https://en.wikipedia.org/wiki/Hexagonal_architecture_(software)">Hexagonal</a>、<a href="https://herbertograca.com/2017/09/21/onion-architecture/">Onion</a>)。</p>
+
+<h2>知识点 3:数据流长这样(从左到右)</h2>
+<p>项目 README 给的数据流,翻译成顺序:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 1 请求/命令 → 控制器(接口适配层)</span>
+<span style="color: #008000"># 2 控制器把请求解析成 Command/Query,交给应用服务</span>
+<span style="color: #008000"># 3 应用服务：调领域对象(实体/聚合/领域服务)执行业务逻辑;</span>
+<span style="color: #008000">#   需要外部数据/发送事件时,通过「端口」(接口)去取</span>
+<span style="color: #008000"># 4 基础设施层：用具体实现(ORM/数据库/外部API/消息队列)完成端口要求,取完/存完转回领域格式</span>
+<span style="color: #008000"># 5 应用服务返回结果 → 控制器 → 返回给用户</span>
+</pre>
+<p>记忆:<strong>入口在控制器,逻辑在应用服务,规则在领域层,细节在基础设施</strong>。你之前的架构课(分层架构 0009)讲的就是这道方向。</p>
+
+<h2>知识点 4:项目里的分层怎么放文件</h2>
+<p>项目 src/modules 按<strong>模块</strong>(module,也叫 bounded context 的有边界领域)组织,每模块内部再分领域/应用/接口/基础设施。用 Python 看形状:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># src/modules/user/                  ← user 业务模块</span>
+<span style="color: #008000">#   ├── domain/                      ← 领域层(最核心)</span>
+<span style="color: #008000">#   │   ├── user.entity.py           ← 实体</span>
+<span style="color: #008000">#   │   ├── value-objects/           ← 值对象</span>
+<span style="color: #008000">#   │   └── events/                  ← 领域事件</span>
+<span style="color: #008000">#   ├── application/                 ← 应用层</span>
+<span style="color: #008000">#   │   ├── commands/                ← 命令(用例)</span>
+<span style="color: #008000">#   │   ├── queries/                 ← 查询(读)</span>
+<span style="color: #008000">#   │   └── ports/                   ← 端口(接口)</span>
+<span style="color: #008000">#   ├── interface/                   ← 接口适配层</span>
+<span style="color: #008000">#   │   └── controllers/  dto/       ← 控制器 / 数据传输对象</span>
+<span style="color: #008000">#   └── infrastructure/              ← 基础设施层</span>
+<span style="color: #008000">#       ├── database/                ← 仓储实现、持久化模型</span>
+<span style="color: #008000">#       └── adapters/                ← 适配器</span>
+</pre>
+<p>这个目录形状你会在无数真实项目里见到。现在只需记住<strong>每层放什么</strong>:领域放规则、应用放用例、接口放控制器、基础设施放数据库/外部。</p>
+
+<h2>知识点 5:什么时候别用这套(很重要)</h2>
+<p>项目 README 明确警告:这套完整架构<strong>不适合单纯 CRUD、业务逻辑不多的小项目</strong>——前期多出大量样板和抽象,反而过度复杂。它适合业务复杂、要长期演进、多团队的系统。你学它,是为了<strong>读懂大项目</strong>;自己写小工具别硬套(<a href="https://mortoray.com/2014/08/01/the-false-abstraction-antipattern/">过度抽象反模式</a>)。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">依赖只能从哪指向哪?</p>
+  <button class="opt" data-ok="false">内层指向外层</button>
+  <button class="opt" data-ok="true">外层指向内层</button>
+  <button class="opt" data-ok="false">同层互相依赖</button>
+  <button class="opt" data-ok="false">单向无所谓</button>
+  <p class="reveal">依赖只从外层指向内层;内层永不依赖外层。这是六边形/洋葱/整洁共同的核心。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">「业务规则」放哪一层?</p>
+  <button class="opt" data-ok="false">基础设施</button>
+  <button class="opt" data-ok="true">领域层</button>
+  <button class="opt" data-ok="false">控制器</button>
+  <button class="opt" data-ok="false">数据库</button>
+  <p class="reveal">业务规则放最核心的领域层,不依赖框架/数据库/外部。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">「数据库选 MySQL 还是 Postgres」是哪种细节?</p>
+  <button class="opt" data-ok="false">领域规则</button>
+  <button class="opt" data-ok="true">基础设施细节</button>
+  <button class="opt" data-ok="false">应用用例</button>
+  <button class="opt" data-ok="false">端口逻辑</button>
+  <p class="reveal">数据库/框架/外部API都是基础设施细节,塞最外层,领域层不关心。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">这套完整架构最适合哪种项目?</p>
+  <button class="opt" data-ok="false">简单 CRUD 小工具</button>
+  <button class="opt" data-ok="true">业务复杂的大系统</button>
+  <button class="opt" data-ok="false">一次性脚本</button>
+  <button class="opt" data-ok="false">都没有</button>
+  <p class="reveal">适合业务复杂、长期演进的大系统;简单 CRUD 硬套会过度设计。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0001_六边形总览.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:默写「依赖方向 + 数据流五步」,不看答案写下来;再画一遍分层图</li>
+  <li><strong>练习 B</strong>:给下面 8 个东西归类到 领域/应用/接口/基础设施 四层(判一判)</li>
+  <li><strong>练习 C</strong>:对照架构课 0009 的分层,找出这与「分层架构」的共同点写成一段话</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>先读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的「Architecture / Diagram / Data flow」三小节</strong>:只看这几段把骨架搭起来,别急着看代码。再对照 <a href="https://8thlight.com/blog/damon-kelley/2021/05/18/a-color-coded-guide-to-ports-and-adapters.html">端口与适配器图解</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:依赖方向这张图你画出来了吗?下一课讲<strong>模块与垂直切片</strong>——项目怎么按「业务领域」而不是「技术类别」分代码。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-模块与垂直切片.html">下一篇:模块与垂直切片 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

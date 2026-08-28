@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0006 · 分组聚合 groupby</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>分组聚合 groupby</h1>
+<p class="meta">Pandas 专题 · 课程 0006 · 预计 30 分钟 · 补书第10章</p>
+
+<p>数据里最有价值的操作之一:<strong>groupby</strong> = 分组(SQL 的 GROUP BY)。aggregation(汇总)、transform(变换)、filter(过滤)三大用法。这章仓库缺,我给你补全。官方 <a href="https://pandas.pydata.org/docs/user_guide/groupby.html">groupby tutorial</a>。</p>
+
+<h2>知识点 1:groupby 三层结构——split-apply-combine</h2>
+<p>思路:按某列<strong>split</strong>(分成小组)→ 对每组的列**apply**(聚合函数)→ 把结果**combine**(拼回表)。一行:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span>
+<span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">({</span>
+    <span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;tech&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;fin&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;tech&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;fin&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;hr&quot;</span><span style="color: #000">],</span>
+    <span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">100</span><span style="color: #000">,</span> <span style="color: #098658">90</span><span style="color: #000">,</span> <span style="color: #098658">120</span><span style="color: #000">,</span> <span style="color: #098658">110</span><span style="color: #000">,</span> <span style="color: #098658">80</span><span style="color: #000">],</span>
+<span style="color: #000">})</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">mean</span><span style="color: #000">()</span>
+<span style="color: #008000"># dept</span>
+<span style="color: #008000"># fin    100.0</span>
+<span style="color: #008000"># hr      80.0</span>
+<span style="color: #008000"># tech   110.0</span>
+</pre>
+<p>读法:<code>df.groupby("dept")</code> 分组 → <code>["salary"]</code> 选列 → <code>.mean()</code> 每组的均值 = <code>分组 → 聚合 → 拼回</code>。</p>
+
+<h2>知识点 2:aggregate——一次多个统计(agg)</h2>
+<p>想同时要 count/mean/std/min/max,用 <code>.agg</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">agg</span><span style="color: #000">([</span><span style="color: #A31515">&quot;count&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;mean&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;std&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;min&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;max&quot;</span><span style="color: #000">])</span>
+<span style="color: #008000">#          count  mean        std  min  max</span>
+<span style="color: #008000"># dept</span>
+<span style="color: #008000"># fin         2   100.0  14.142136   90  110</span>
+<span style="color: #008000"># hr          1    80.0        NaN   80   80</span>
+<span style="color: #008000"># tech        2   110.0  14.142136  100  120</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">describe</span><span style="color: #000">()</span>   <span style="color: #008000"># 或 describe 全给</span>
+</pre>
+<p><code>.agg</code> 传函数名/列表/字典;一次看全比多次调用省事。</p>
+
+<h2>知识点 3:多列分组 + 多列聚合</h2>
+<pre lang="python" class="highlight"><span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;bonus&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">20</span><span style="color: #000">,</span> <span style="color: #098658">30</span><span style="color: #000">,</span> <span style="color: #098658">40</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">]</span>
+<span style="color: #001080">g</span> <span style="color: #000">=</span> <span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">g</span><span style="color: #000">.</span><span style="color: #001080">sum</span><span style="color: #000">()</span>                       <span style="color: #008000"># 所有数值列都按组求和</span>
+<span style="color: #001080">g</span><span style="color: #000">[[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;bonus&quot;</span><span style="color: #000">]].</span><span style="color: #001080">mean</span><span style="color: #000">()</span>  <span style="color: #008000"># 只对这两列</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">([</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">])[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">mean</span><span style="color: #000">()</span>   <span style="color: #008000"># 两列分组 → MultiIndex</span>
+<span style="color: #008000"># 每列不同聚合:</span>
+<span style="color: #001080">g</span><span style="color: #000">.</span><span style="color: #001080">agg</span><span style="color: #000">({</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;mean&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;std&quot;</span><span style="color: #000">],</span> <span style="color: #A31515">&quot;bonus&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;sum&quot;</span><span style="color: #000">})</span>
+</pre>
+<p>groupby(["a","b"]) 得到 MultiIndex 分组结果;agg(dict) 可给每列不同算法。</p>
+
+<h2>知识点 4:transform 与 filter——按组变换/过滤</h2>
+<p>transform:每个元素减去<strong>本组</strong>的均值(保持原形状,用于"去组内均值");filter:只留符合条件的组:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">transform</span><span style="color: #000">(</span><span style="color: #00F">lambda</span> <span style="color: #001080">x</span><span style="color: #000">:</span> <span style="color: #001080">x</span> <span style="color: #000">-</span> <span style="color: #001080">x</span><span style="color: #000">.</span><span style="color: #001080">mean</span><span style="color: #000">())</span>  <span style="color: #008000"># 去组均值</span>
+<span style="color: #008000"># 0  -10.0   1 -10.0 ...</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;salary&quot;</span><span style="color: #000">].</span><span style="color: #001080">transform</span><span style="color: #000">(</span><span style="color: #A31515">&quot;mean&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 每人填本组均值</span>
+
+<span style="color: #008000"># filter:只保留组内样本数≥2 的组</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;dept&quot;</span><span style="color: #000">).</span><span style="color: #001080">filter</span><span style="color: #000">(</span><span style="color: #00F">lambda</span> <span style="color: #001080">g</span><span style="color: #000">:</span> <span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">g</span><span style="color: #000">)</span> <span style="color: #000">&gt;=</span> <span style="color: #098658">2</span><span style="color: #000">)</span>
+</pre>
+<p>区别:agg 把一组压成一个值;transform 保持行数(每行对应自己的组值);filter 选组。三者理解后 groupby 就全通了。</p>
+
+<h2>知识点 5:应用到真实数据(tips)</h2>
+<p>把上面的技巧用在真实数据上:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">url</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;https://raw.githubusercontent.com/hangsz/pandas-tutorial/master/tips.csv&quot;</span>
+<span style="color: #001080">tips</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_csv</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">)</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;smoker&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;total_bill&quot;</span><span style="color: #000">].</span><span style="color: #001080">mean</span><span style="color: #000">()</span>      <span style="color: #008000"># 抽烟 vs 不抽烟小费均值</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">([</span><span style="color: #A31515">&quot;sex&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;day&quot;</span><span style="color: #000">])[</span><span style="color: #A31515">&quot;tip&quot;</span><span style="color: #000">].</span><span style="color: #001080">agg</span><span style="color: #000">([</span><span style="color: #A31515">&quot;count&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;mean&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;day&quot;</span><span style="color: #000">).</span><span style="color: #001080">size</span><span style="color: #000">()</span>                        <span style="color: #008000"># 每组行数(等价 value_counts)</span>
+<span style="color: #001080">piv</span> <span style="color: #000">=</span> <span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">pivot_table</span><span style="color: #000">(</span><span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #A31515">&quot;day&quot;</span><span style="color: #000">,</span> <span style="color: #001080">columns</span><span style="color: #000">=</span><span style="color: #A31515">&quot;smoker&quot;</span><span style="color: #000">,</span> <span style="color: #001080">values</span><span style="color: #000">=</span><span style="color: #A31515">&quot;tip&quot;</span><span style="color: #000">,</span> <span style="color: #001080">aggfunc</span><span style="color: #000">=</span><span style="color: #A31515">&quot;mean&quot;</span><span style="color: #000">)</span>
+</pre>
+<p><code>groupby + pivot_table</code> 是数据分析最常用组合:pivot_table 本质就是"分组后透视"。真实项目里 80% 的分析都在 groupby 上。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">groupby 三步是?</p>
+  <button class="opt" data-ok="false">merge-apply-drop</button>
+  <button class="opt" data-ok="true">split-apply-combine</button>
+  <button class="opt" data-ok="false">sort-cut-filter</button>
+  <button class="opt" data-ok="false">read-reshape-write</button>
+  <p class="reveal">分组→对不同组应用函数→拼合并。这是 groupby 的心智模型。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">一组想同时要 mean 和 std?</p>
+  <button class="opt" data-ok="false">过一遍 for</button>
+  <button class="opt" data-ok="true">.agg(["mean","std"])</button>
+  <button class="opt" data-ok="false">.transform</button>
+  <button class="opt" data-ok="false">.filter</button>
+  <p class="reveal">agg 一次多个聚合;transform 是保持行数变换;filter 是选组。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">每行减去"本组"均值,用?</p>
+  <button class="opt" data-ok="false">.mean()</button>
+  <button class="opt" data-ok="true">.transform</button>
+  <button class="opt" data-ok="false">.agg</button>
+  <button class="opt" data-ok="false">.filter</button>
+  <p class="reveal">transform 保持原形状按组变换;agg 压成组级一个值。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">只保留样本数≥2 的组?</p>
+  <button class="opt" data-ok="false">.agg</button>
+  <button class="opt" data-ok="true">.filter(lambda g: len(g)>=2)</button>
+  <button class="opt" data-ok="false">.transform</button>
+  <button class="opt" data-ok="false">.pivot</button>
+  <p class="reveal">filter 对整组判断后选组,是 groupby 三招里负责"过滤"的。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0006_分组聚合groupby.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:tips 按 smoker/day 做 mean、agg 多统计、size()</li>
+  <li><strong>练习 B</strong>:transform 去组均值;filter 选小组;多列分组 MultiIndex</li>
+  <li><strong>练习 C(扩展)</strong>:groupby + pivot_table 组合出一张"按天×抽烟/不抽烟 的平均小费"表</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>书(Wes)《Python for Data Analysis》第 10 章(本仓库缺,官方 <a href="https://pandas.pydata.org/docs/user_guide/groupby.html">GroupBy</a> 教程可看);做 tips 时注意 <a href="https://pandas.pydata.org/docs/user_guide/groupby.html#applying-functions-to-groups">agg/transform/filter 三区分</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:agg/transform/filter 分清了没?下一课讲<strong>时间序列与类别数据</strong>(书 11/12 章 + hangsz 12/13)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-合并与重塑.html">← 上一篇:合并与重塑</a>
+  <a href="index.html">课程地图</a>
+  <a href="0007-时间序列与类别数据.html">下一篇:时间序列与类别数据 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

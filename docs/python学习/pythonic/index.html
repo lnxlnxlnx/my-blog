@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pythonic 代码 · 课程地图</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>Pythonic 代码 · 课程地图</h1>
+<p class="meta">19 课 · 写给有 C/C++ 背景的你 · 把 C 思维翻成 Python 惯用法 · 惯用法 8 + 常用库 7 + 高级 4</p>
+
+<p>心法一句:<strong>这是口语,不是翻译</strong>——别把 C 代码「逐行翻译」成 Python,而是用 Python 自己的语序重说一遍。<a href="../architecture/0001-读懂复杂代码的三个尺度与四步读法.html">别忘了你会读代码</a>。</p>
+
+<p>进阶分线:<a href="../ddd/index.html"><strong>DDD 与六边形架构(10 课)</strong></a>——读得懂 GitHub 大型 DDD/六边形项目。</p>
+
+<h2>系列课程</h2>
+<div class="grid">
+  <div class="card"><h3><a href="0001-迭代与推导式.html">0001 迭代与推导式</a></h3><p>告别 range(len()) · for/enumerate/zip · 推导式</p></div>
+  <div class="card"><h3><a href="0002-内置函数与一等公民.html">0002 内置函数与一等公民</a></h3><p>sum/max/min · any/all · sorted key · 函数当参数</p></div>
+  <div class="card"><h3><a href="0003-真值与空判断.html">0003 真值与空判断</a></h3><p>if x · is None vs == · 别手动判空</p></div>
+  <div class="card"><h3><a href="0004-字符串与f-string.html">0004 字符串与 f-string</a></h3><p>f-string · join 拼串 · split/strip</p></div>
+  <div class="card"><h3><a href="0005-字典惯用法.html">0005 字典惯用法</a></h3><p>get 兜底 · Counter · defaultdict · items()</p></div>
+  <div class="card"><h3><a href="0006-dataclass与类.html">0006 dataclass 与类</a></h3><p>少写 C++ 样板 · @property · 类型提示</p></div>
+  <div class="card"><h3><a href="0007-常用标准库.html">0007 常用标准库</a></h3><p>pathlib · itertools · collections</p></div>
+  <div class="card"><h3><a href="0008-上下文管理器与装饰器.html">0008 上下文管理器与装饰器</a></h3><p>with 自动释放 · @timed/@lru_cache</p></div>
+</div>
+
+<p>补:常用库(基本没用过的,内容更充实)</p>
+<div class="grid">
+  <div class="card"><h3><a href="0009-时间与日期.html">0009 时间与日期</a></h3><p>datetime · time · timedelta · strftime</p></div>
+  <div class="card"><h3><a href="0010-数学与随机.html">0010 数学与随机</a></h3><p>math · random · shuffle/sample · seed</p></div>
+  <div class="card"><h3><a href="0011-文件与目录.html">0011 文件与目录</a></h3><p>pathlib/os · shutil · json · csv</p></div>
+  <div class="card"><h3><a href="0012-系统与命令行.html">0012 系统与命令行</a></h3><p>sys.argv/exit · os.environ · argparse</p></div>
+  <div class="card"><h3><a href="0013-网络编程.html">0013 网络编程</a></h3><p>requests · GET/POST/JSON · Session · socket</p></div>
+  <div class="card"><h3><a href="0014-多线程与并发.html">0014 多线程与并发</a></h3><p>ThreadPool/ProcessPool · threading · Lock</p></div>
+  <div class="card"><h3><a href="0015-测试与日志.html">0015 测试与日志</a></h3><p>pytest · fixture/parametrize · logging</p></div>
+</div>
+
+<p>高级用法(进阶,用得上再深入):</p>
+<div class="grid">
+  <div class="card"><h3><a href="0016-生成器与迭代协议.html">0016 生成器与迭代协议</a></h3><p>yield 惰性序列 · iter/next · 省内存</p></div>
+  <div class="card"><h3><a href="0017-协程与异步.html">0017 协程与异步</a></h3><p>asyncio · async/await · gather · aiohttp</p></div>
+  <div class="card"><h3><a href="0018-元编程.html">0018 元编程</a></h3><p>__getattr__/__setattr__ · 类装饰器 · 元类</p></div>
+  <div class="card"><h3><a href="0019-模块与包.html">0019 模块与包</a></h3><p>import 机制 · __init__.py · 绝对导入</p></div>
+</div>
+
+<h2>练习文件(practice/pythonic/)</h2>
+<ul>
+  <li>0001 <a href="../../practice/pythonic/0001_迭代与推导式.ipynb">迭代与推导式.ipynb</a></li>
+  <li>0002 <a href="../../practice/pythonic/0002_内置函数与一等公民.ipynb">内置函数与一等公民.ipynb</a></li>
+  <li>0003 <a href="../../practice/pythonic/0003_真值与空判断.ipynb">真值与空判断.ipynb</a></li>
+  <li>0004 <a href="../../practice/pythonic/0004_字符串与f-string.ipynb">字符串与 f-string.ipynb</a></li>
+  <li>0005 <a href="../../practice/pythonic/0005_字典惯用法.ipynb">字典惯用法.ipynb</a></li>
+  <li>0006 <a href="../../practice/pythonic/0006_dataclass与类.ipynb">dataclass 与类.ipynb</a></li>
+  <li>0007 <a href="../../practice/pythonic/0007_常用标准库.ipynb">常用标准库.ipynb</a></li>
+  <li>0008 <a href="../../practice/pythonic/0008_上下文管理器与装饰器.ipynb">上下文管理器与装饰器.ipynb</a></li>
+  <li>0009 <a href="../../practice/pythonic/0009_时间与日期.ipynb">时间与日期.ipynb</a></li>
+  <li>0010 <a href="../../practice/pythonic/0010_数学与随机.ipynb">数学与随机.ipynb</a></li>
+  <li>0011 <a href="../../practice/pythonic/0011_文件与目录.ipynb">文件与目录.ipynb</a></li>
+  <li>0012 <a href="../../practice/pythonic/0012_系统与命令行.ipynb">系统与命令行.ipynb</a></li>
+  <li>0013 <a href="../../practice/pythonic/0013_网络编程.ipynb">网络编程.ipynb</a></li>
+  <li>0014 <a href="../../practice/pythonic/0014_多线程与并发.ipynb">多线程与并发.ipynb</a></li>
+  <li>0015 <a href="../../practice/pythonic/0015_测试与日志.ipynb">测试与日志.ipynb</a></li>
+  <li>0016 <a href="../../practice/pythonic/0016_生成器与迭代协议.ipynb">生成器与迭代协议.ipynb</a></li>
+  <li>0017 <a href="../../practice/pythonic/0017_协程与异步.ipynb">协程与异步.ipynb</a></li>
+  <li>0018 <a href="../../practice/pythonic/0018_元编程.ipynb">元编程.ipynb</a></li>
+  <li>0019 <a href="../../practice/pythonic/0019_模块与包.ipynb">模块与包.ipynb</a></li>
+</ul>
+
+<p><strong>有任何不懂的,随时找我——我是你的老师。</strong></p>
+
+</main>
+</body>
+</html>

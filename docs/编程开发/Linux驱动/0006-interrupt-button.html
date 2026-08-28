@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L06 · GPIO 中断与按键 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L06 · GPIO 中断与按键：别傻等，让内核来叫你</h1>
+<p class="meta"><span class="tag">阶段 1</span> · 动手约 40 分钟</p>
+<p class="lead">上一课点灯靠应用"主动写"。但按键是<b>板子先发生</b>的事——应用总不能死循环轮询"按下没？"。这课让硬件一有动作就打断 CPU、叫你起来干活。这就是<b>中断</b>，板子上九个软件模块的核心机制。</p>
+
+<h2>轮询 vs 中断</h2>
+<table>
+<tr><th></th><th>轮询 Poll</th><th>中断 IRQ</th></tr>
+<tr><td>谁主动</td><td>CPU 反复问</td><td>硬件主动说</td></tr>
+<tr><td>等等</td><td>浪费 CPU</td><td>空闲时休眠</td></tr>
+<tr><td>适用</td><td>极高频/IO 简单</td><td>按键/外部事件</td></tr>
+</table>
+<p>你之前 C 应用里 <code>read</code> 手柄/触摸常是轮询；驱动侧按键用中断，更省电也更"正统"。</p>
+
+<h2>中断的两段式：上半部 + 下半部</h2>
+<ol>
+<li><b>request_irq</b> 注册中断处理函数：<code>request_irq(irq_num, irq_handler, flags, name, data)</code>，flags 里指定触发方式（如 <code>IRQF_TRIGGER_LOW</code> 低电平触发）。</li>
+<li><b>上半部 irq_handler</b>：在 <code>irq</code> 上下文里跑，<b>必须快</b>——只能清标志、记状态、唤醒等待队列。绝不能做耗时的 IO。</li>
+<li><b>下半部</b>（如 <code>tasklet</code>/<code>workqueue</code>）：把真正耗时的活（往屋里送数据）推到这里做。你是新手，先掌握"上半部快速记状态 + 唤醒"即可。</li>
+</ol>
+<p>服务中断后，应用还想要"等待按键"的语义，用<b>等待队列 + 唤醒</b>机制：应用在 read 里阻塞睡眠，中断来了被唤起，有数据才醒。</p>
+
+<h2>GPIO 中断的硬件链路（IMX6ULL）</h2>
+<p>按键 KEY0 = GPIO1_IO18，按下为低。要它产生中断：</p>
+<ol>
+<li>让 GPIO1_IO18 的引脚能产生中断：IOMUX 设成 GPIO，GPIO1_ICR1/2 配置触发沿（这里是下降沿），GPIO1_IMR 放开掩码。</li>
+<li><code>request_irq</code> 申请中断号。IMX6ULL 的 GPIO 中断号可以通过 <code>gpio_to_irq(GPIO1, 18)</code> 或从设备树拿（后面 L09 讲）。中断来后看 <code>> /proc/interrupts</code> 确认触发。</li>
+<li>上半部里读取 GPIO1_ISR 判断是不是这个引脚、清标志。</li>
+</ol>
+<p>真机中断还有细节（触发沿选择 ICR、中断掩码 IMR 等，见速查表寄存器表），但这些先把"中断发生 → 处理函数被调 → 应用被唤醒"整条链路跑通最重要。</p>
+
+<div class="exercise">
+<div class="t">练习 L06：按键中断 → 应用打印 "KEY0 pressed"</div>
+<ol>
+<li>写 <code>mykey.c</code>：<code>request_irq</code> 注册中断处理，上半部打印 <code>printk("KEY0 irq!\n")</code> 并计数。</li>
+<li>用 <code>cat /proc/interrupts</code> 显示那个中断号的次数在变化（链路跑通的最直接证据：按一次，计数 +1）。</li>
+<li>再用等待队列改造：应用 <code>read()</code> 阻塞等待，中断来时 <code>wake_up_interruptible</code>，应用收到通知打印。</li>
+<li>进阶：把触发沿从下降沿换成上升沿，观察按键行为变化，理解触发沿。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>为什么中断处理函数要"短"？</summary><p class="a">它运行在中断上下文，长函数长时间占用会拖慢整个系统/丢失其他中断。原则：进得去、干完快、立刻走，耗时的丢给下半部。</p></details>
+<details><summary>怎么确认中断真的发生了？</summary><p class="a"><code>cat /proc/interrupts</code> 里该中断号计数增长。这是调试中断第一手证据，比 printk 还客观。</p></details>
+<details><summary>应用想在 read 里等到按键再返回，驱动用什么机制？</summary><p class="a">等待队列：应用阻塞睡眠，中断到来唤醒它。这叫"阻塞式 IO"，L08/52 章还会深化（poll 等）。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① 轮询 vs 中断的取舍；② request_irq + /proc/interrupts 调中断；③ 下半部思路。<b>这是系统软件"事件驱动"的核心手感。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 51 章「Linux中断」，第 52 章「阻塞与非阻塞 IO」（等待队列）</li>
+<li>第 17 章 裸机 GPIO 中断（寄存器层的 GIC/GPIO 控制器，如果你想看硬件链路源头）</li>
+<li>本工作区 <a href="../reference/imx6ull-cheatsheet.html">速查表</a>（GPIO 中断寄存器偏移）</li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。中断新手常见的坑：handle 里 printk 太长、忘了清标志导致中断风暴——看到板子像卡死一样狂打印，先 Ctrl+C 再回来找我。</p>
+</body>
+</html>

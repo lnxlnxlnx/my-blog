@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0014 · xiaozhi 启动流程</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>xiaozhi 启动流程</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0014 · 预计 20 分钟</p>
+
+<p>上一课画了全局地图,这课从 <code>main.cc</code> 第一行走到 <code>app.Run()</code>——看 xiaozhi 怎么把"配置、硬件、网络、音频"串成一台能说话的设备。</p>
+
+<h2>知识点 1:入口只有四步</h2>
+<pre lang="cpp" class="highlight"><span style="color: #795E26">extern</span> <span style="color: #A31515">&quot;C&quot;</span> <span style="color: #00F">void</span> <span style="color: #795E26">app_main</span>(<span style="color: #00F">void</span>)
+{
+    <span style="color: #795E26">nvs_flash_init</span>();                        <span style="color: #008000">// 1. 配置存储(和 00_basic 一样)</span>
+    <span style="color: #00F">auto</span>&amp; app = Application::GetInstance();   <span style="color: #008000">// 2. 单例</span>
+    app.Initialize();                          <span style="color: #008000">// 3. 初始化一切</span>
+    app.Run();                                 <span style="color: #008000">// 4. 事件循环,永不返回</span>
+}
+</pre>
+<p>全部秘密在 <code>Application::Initialize()</code> 和 <code>Run()</code> 里——去 <code>application.cc</code> 找这两个函数。</p>
+
+<h2>知识点 2:Initialize 干的三类事</h2>
+<pre lang="cpp" class="highlight"><span style="color: #008000">// application.cc 里 Initialize 的大致分工(自己核对)</span>
+<span style="color: #000">board → 引脚/屏幕/喇叭初始化         </span>  <span style="color: #008000">// boards/ 层</span>
+<span style="color: #000">protocols → websocket/mqtt 客户端    </span>  <span style="color: #008000">// 网络层</span>
+<span style="color: #000">audio → 音频服务 + AFE               </span>  <span style="color: #008000">// 音频层</span>
+<span style="color: #000">settings → 读 NVS 配置               </span>  <span style="color: #008000">// 配置层</span>
+</pre>
+<p>读代码技巧:<code>Initialize()</code> 里 <strong>按调用顺序编号</strong>——每个子系统的初始化函数各占一段,先看名字就能猜职责。</p>
+
+<h2>知识点 3:Run() 是"状态机 + 事件"的引擎</h2>
+<p><code>Run()</code> 不写死流程,而是:<strong>注册事件回调(按键、唤醒、网络)+ 起任务 + 进入循环</strong>。设备的行为(待机/唤醒/对话/OTA)由 <code>device_state_machine.cc</code> 的状态机驱动——不同状态下,同样的事件行为不同。</p>
+
+<h2>动手</h2>
+<p>打开 <code>application.cc</code>,回答三个问题(只搜不细读):<br>
+① <code>Initialize()</code> 调用了哪些 <code>xxx::Init</code> 类函数?<br>
+② <code>Run()</code> 里注册了哪几类事件回调?<br>
+③ 找到 <code>device_state_machine.cc</code> 里状态机的状态枚举,列出来。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">app.Run() 返回后程序会怎样?</p>
+  <button class="opt" data-ok="true">不会返回</button>
+  <button class="opt" data-ok="false">退出重启</button>
+  <button class="opt" data-ok="false">进入睡眠</button>
+  <p class="reveal">Run() 跑事件循环,永不返回。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">设备行为切换靠什么驱动?</p>
+  <button class="opt" data-ok="true">状态机</button>
+  <button class="opt" data-ok="false">硬编码if</button>
+  <button class="opt" data-ok="false">外部复位</button>
+  <p class="reveal">device_state_machine.cc 的状态机。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>xiaozhi 仓库 README_zh.md</strong>:先看"架构"章节,和这课对答案。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:板级抽象 boards/——一块开发板是怎么被"定义"出来的,你的面包板组合板在哪。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0013-读懂大工程与xiaozhi总览.html">← 上一篇:总览</a>
+  <a href="index.html">课程地图</a>
+  <a href="0015-xiaozhi板级抽象.html">下一篇:板级抽象 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

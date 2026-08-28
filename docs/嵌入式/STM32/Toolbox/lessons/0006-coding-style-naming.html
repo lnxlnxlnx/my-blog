@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 6 课：命名与函数 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 6 课</nav>
+
+<h1>第 6 课：命名与函数</h1>
+<p class="subtitle">见名知义：正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 3、4 章（PDF p.16~19）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>命名是代码的"说明书"。学完你能按 unix 风格（小写下划线）给文件、变量、函数、宏起名，理解 <code>g_</code>/<code>p_</code> 前缀和"模块名_动词"的函数结构，并掌握函数设计的七条军规（单一职责、参数检查、错误处理、static 等）。练习直接给你自己的 <code>gui_menu.c</code> 做"命名体检"。本课约 45~60 分钟。</p>
+</div>
+
+<h2>1. 命名总则：清晰是第一位的</h2>
+
+<p>正点原子采用大部分软件工程师通用的 <strong>unix 风格</strong>命名（Linux 内核同款）：<strong>单词小写，用下划线连接</strong>，例如 <code>read_adc1_value()</code>（<span class="pg">PDF p.16</span>）。几条注意事项：</p>
+
+<ul>
+<li><strong>命名一定要清晰</strong>：用完整的单词或公认缩写，让人一读就懂。<code>int book_number;</code> 可以，<code>int bkn;</code> 不行</li>
+<li><strong>不要随意缩写，更不要用汉语拼音！</strong>（教材原话打了三个感叹号）</li>
+<li><strong>互斥语义用互斥词组</strong>：add/remove、begin/end、create/destroy、get/release、lock/unlock、open/close、show/hide、send/receive…看到 get 就该想到有 release</li>
+<li>移植第三方驱动代码时，<strong>保持原风格</strong>，别强行改成自己的</li>
+<li><strong>禁止单字节命名变量</strong>，唯一例外：i、j、k 作为局部循环变量</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：猜谜游戏 */</span>
+<span style="color:#267F99">int</span> n;                <span style="color:#008000">/* n 是什么？*/</span>
+<span style="color:#267F99">int</span> wjgs;             <span style="color:#008000">/* 拼音缩写，人神共愤 */</span>
+<span style="color:#267F99">int</span> a = <span style="color:#098658">1</span>, b = <span style="color:#098658">2</span>;     <span style="color:#008000">/* a/b 意义不明 */</span>
+
+<span style="color:#008000">/* 正例：见名知义 */</span>
+<span style="color:#267F99">int</span> book_number;              <span style="color:#008000">/* 图书数量 */</span>
+<span style="color:#267F99">int</span> number_of_book;           <span style="color:#008000">/* 一样合格 */</span>
+<span style="color:#267F99">int</span> max_level;                <span style="color:#008000">/* 最大关卡 */</span>
+<span style="color:#267F99">int</span> i;                        <span style="color:#008000">/* 循环变量，唯一被允许的单字节 */</span></pre>
+
+<h2>2. 文件命名与变量命名</h2>
+
+<p>文件统一<strong>小写命名</strong>（<span class="pg">PDF p.16</span>）：你的 <code>lvgl_2048.c</code>、<code>gui_menu.c</code>、<code>lvgl_snake.c</code> 都合格。</p>
+
+<p>变量命名（<span class="pg">PDF p.16</span>）：</p>
+
+<ul>
+<li>单词小写 + 下划线连接；<strong>不要用匈牙利命名法</strong>（bFlag、nCount 那种）</li>
+<li><strong>尽量避免全局变量</strong>；实在要全局，用 <code>g_</code> 前缀（如你的 <code>gui_menu.c</code> 里 <code>AppState g_app</code>，✅ 教科书级示范）；指针变量可用 <code>p_</code> 前缀（教材例：<code>p_gpiox</code>）</li>
+<li>文件内私有的全局变量用 <code>static</code> 修饰（你代码里的 <code>static uint16_t snake_length;</code> ✅）</li>
+<li><strong>数据类型统一用 stdint 固定宽度类型</strong>：u8/u16/u32 弃用，改用 <code>uint8_t/uint16_t/uint32_t</code> 及有符号 <code>int8_t/…/int64_t</code>——你的 2048 和 snake 代码早已全部用 <code>uint8_t</code> 等，✅ 直接过关</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：匈牙利 + 拼音混合风 */</span>
+u8 bFlag;            <span style="color:#008000">/* 类型前缀, 教材明确不用 */</span>
+<span style="color:#267F99">uint16_t</span> xz;         <span style="color:#008000">/* 像素?? 开关?? */</span>
+<span style="color:#267F99">char</span> *chpStr;        <span style="color:#008000">/* 匈牙利指针, 谢绝 */</span>
+
+<span style="color:#008000">/* 正例：unix 风格 + 前缀表意 */</span>
+<span style="color:#267F99">uint8_t</span> flag;              <span style="color:#008000">/* 普通局部变量 */</span>
+<span style="color:#267F99">int16_t</span> g_cur_temp;        <span style="color:#008000">/* 全局变量, g_ 开头 */</span>
+<span style="color:#267F99">char</span> *p_name_buf;          <span style="color:#008000">/* 指针变量, p_ 开头 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> rng_state; <span style="color:#008000">/* 文件私有, static */</span></pre>
+
+<h2>3. 函数命名与宏命名</h2>
+
+<p>函数命名和变量一样（<span class="pg">PDF p.17</span>）：小写 + 下划线。<strong>嵌入式最实用的结构是"模块名_动词"</strong>，模块归属一目了然，还能靠编辑器的自动补全把同一模块的函数聚在一起：</p>
+
+<ul>
+<li><code>lcd_clear()</code>、<code>lcd_show_string()</code> —— LCD 模块</li>
+<li><code>lvgl_snake_init()</code>、<code>lvgl_snake_set_dir()</code> —— 你工程里现成的 ✅ 典范</li>
+<li>内部私有函数直接动词化（<code>menu_create</code>、<code>update_labels</code>），只要语义清晰也可以</li>
+</ul>
+
+<p>宏命名（<span class="pg">PDF p.17</span>）：<strong>常量宏全大写 + 下划线</strong>，如 <code>#define PI_ROUNDED 3.14</code>。你的 <code>GAME_2048_EE_ADDR_BASE</code>、<code>LVGL_2048_GRID_SIZE</code> ✅。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：从你自己的 gui_menu.c 里挑的 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">GuiMenu_Init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>       <span style="color:#008000">/* PascalCase, 与同文件其他函数不一致 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">GuiMenu_Navigate</span><span style="color:#001080">(<span style="color:#267F99">int8_t</span>)</span> <span style="color:#008000">/* 大写风格, 教材不认可 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">menu_create</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>        <span style="color:#008000">/* 小写, 但同文件两套风格并存 */</span>
+
+<span style="color:#008000">/* 正例：统一成模块名_动词 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">gui_menu_init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">gui_menu_navigate</span><span style="color:#001080">(<span style="color:#267F99">int8_t</span> dir)</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">gui_menu_create</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span></pre>
+
+<div class="warn">
+  <p>⚠️ 反例的代码就是真的——你的 <code>gui_menu.c</code> 里 <code>GuiMenu_Init</code>（PascalCase）和 <code>menu_create</code>（小写）同时存在。不是哪个错，是<strong>不一致</strong>。规范的意义不在于某一种风格更高贵，而在于一个文件里只能有一种风格。第 4 节原则 3 说"公司内部代码风格必须统一"，对你自己 3000 行的工程同样适用。</p>
+</div>
+
+<h2>4. 函数设计：简短与单一职责</h2>
+
+<p>第四章开篇就是硬指标（<span class="pg">PDF p.18</span>）：<strong>函数要简短、漂亮，并且只能完成一件事</strong>；本地变量最好不超过 5~10 个，否则就要重新构思、拆分成更小的函数。配套规则：</p>
+
+<ul>
+<li><strong>一个函数只做一个功能</strong>：和函数无关或关联很弱的代码不要塞进来，职责不清的函数最难改</li>
+<li><strong>重复代码提炼成函数</strong>："明明说一遍就能记住的事，非要说好几遍"——重复代码一定要消灭</li>
+<li><strong>不同函数之间用空行隔开</strong></li>
+<li><strong>嵌套不能过深，新增代码不超过 4 层</strong>（if/for/while 互相包含的深度），嵌套太深烧脑</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：一个函数干三件事, 本地变量 12 个 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">game_new_game</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 第一件事: 读 EEPROM 最高分 */</span>
+    <span style="color:#267F99">uint8_t</span> buf[<span style="color:#098658">5</span>] = {<span style="color:#098658">0</span>};
+    at24cxx_init();
+    at24cxx_read(<span style="color:#098658">90</span>, buf, <span style="color:#098658">5</span>);
+    <span style="color:#267F99">uint32_t</span> best = buf[<span style="color:#098658">1</span>] | (buf[<span style="color:#098658">2</span>] &lt;&lt; <span style="color:#098658">8</span>);
+    <span style="color:#008000">/* 第二件事: 生成两个随机块 */</span>
+    <span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">2</span>; i++)
+    {
+        <span style="color:#267F99">uint32_t</span> rnd = rng_state * <span style="color:#098658">1103515245u</span> + <span style="color:#098658">12345u</span>;
+        rng_state = rnd;
+        board[rnd % <span style="color:#098658">16</span> / <span style="color:#098658">4</span>][rnd % <span style="color:#098658">4</span>] = <span style="color:#098658">2</span>;
+    }
+    <span style="color:#008000">/* 第三件事: 刷 UI */</span>
+    ...
+}
+
+<span style="color:#008000">/* 正例：拆成四个函数, 各司其职 —— 你的 lvgl_2048.c 实际就是这样拆的 ✅ */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">load_best_score</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;      <span style="color:#008000">/* EEPROM */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">add_random_tile</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;      <span style="color:#008000">/* 随机块 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">update_labels</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;        <span style="color:#008000">/* UI */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_2048_new_game</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>           <span style="color:#008000">/* 只做编排 */</span>
+{
+    <span style="color:#795E26">memset</span>(board, <span style="color:#098658">0</span>, <span style="color:#0000FF">sizeof</span>(board));
+    score = <span style="color:#098658">0</span>;
+    game_over = <span style="color:#098658">false</span>;
+    game_won = <span style="color:#098658">false</span>;
+    add_random_tile();
+    add_random_tile();
+    update_labels();
+}</pre>
+
+<h2>5. 函数设计：参数、错误与 static</h2>
+
+<p>剩下几条同样在 <span class="pg">PDF p.18~19</span>：</p>
+
+<ul>
+<li><strong>对参数做合法性检查</strong>：指针参数不检查，传入野指针直接崩溃；范围参数不检查，可能算到溢出。STM32 官方库函数就普遍做参数检查</li>
+<li><strong>对错误返回做全面处理</strong>：函数用返回值报告错误，调用方必须处理，不能无视</li>
+<li><strong>函数集中退出</strong>：当一个函数从多处退出且都需要做清理时，用 <code>goto</code> 集中到出口标签（Linux 源码大量这么用）；不需要清理就直接 <code>return</code></li>
+<li><strong>文件内私有的函数一律 static</strong>：只在同文件被调用的函数必须加 <code>static</code>，避免和其他库的同名函数混淆（你代码里的 <code>load_best_score</code>/<code>menu_create</code> 等都是 static ✅）</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 正例: 参数检查 + 错误处理 + 集中退出 */</span>
+<span style="color:#267F99">int</span> <span style="color:#795E26">sd_read_sector</span><span style="color:#001080">(<span style="color:#267F99">uint8_t</span> *buf, <span style="color:#267F99">uint32_t</span> sector, <span style="color:#267F99">uint32_t</span> count)</span>
+{
+    <span style="color:#267F99">int</span> res = <span style="color:#098658">0</span>;
+    <span style="color:#267F99">char</span> *temp_buf = <span style="color:#098658">NULL</span>;
+
+    <span style="color:#0000FF">if</span> (buf == <span style="color:#098658">NULL</span> || count == <span style="color:#098658">0</span>)         <span style="color:#008000">/* 参数合法性检查 */</span>
+    {
+        <span style="color:#0000FF">return</span> -EINVAL;
+    }
+
+    temp_buf = <span style="color:#795E26">malloc</span>(SECTOR_SIZE * count);
+    <span style="color:#0000FF">if</span> (temp_buf == <span style="color:#098658">NULL</span>)
+    {
+        <span style="color:#0000FF">return</span> -ENOMEM;
+    }
+
+    <span style="color:#0000FF">if</span> (res = sd_read_disk(temp_buf, sector, count))  <span style="color:#008000">/* 错误返回要处理 */</span>
+    {
+        <span style="color:#0000FF">goto</span> out;                          <span style="color:#008000">/* 集中退出 */</span>
+    }
+    <span style="color:#795E26">memcpy</span>(buf, temp_buf, SECTOR_SIZE * count);
+
+out:
+    <span style="color:#795E26">free</span>(temp_buf);
+    <span style="color:#0000FF">return</span> res;
+}</pre>
+
+<h2>6. 工程实例：给你的代码做"命名体检"</h2>
+
+<p>用本课规则把你的三个 LVGL 应用文件过一遍，结果是喜忧参半：</p>
+
+<table>
+<tr><th>位置</th><th>现状</th><th>诊断</th></tr>
+<tr><td><code>gui_menu.c</code> 的 <code>g_app</code></td><td>全局变量带 <code>g_</code> 前缀</td><td>✅ 符合教材 3.3</td></tr>
+<tr><td><code>gui_menu.c</code> 的 <code>GuiMenu_Init/Enter/Navigate</code></td><td>PascalCase</td><td>⚠️ 违反 unix 风格，且与同文件 <code>menu_create</code> 不一致</td></tr>
+<tr><td><code>lvgl_2048.c</code> 的 <code>lvgl_2048_init/move</code></td><td>模块名_动词</td><td>✅ 教材 3.4 典范</td></tr>
+<tr><td><code>lvgl_2048.c</code> 的 <code>load_best_score</code> 等</td><td>小写清晰，但缺模块前缀</td><td>⚠️ static 私有可接受；若要对外则应为 <code>lvgl_2048_load_best_score</code></td></tr>
+<tr><td><code>lvgl_snake.c</code> / <code>lvgl_2048.c</code> 的 <code>rng_next/rng_seed</code></td><td>两个文件各抄了一份</td><td>⚠️ 违反第 4 章"重复代码提炼成函数"</td></tr>
+<tr><td>宏 <code>GAME_2048_EE_ADDR_BASE</code> 等</td><td>全大写 + 下划线</td><td>✅ 符合教材 3.5</td></tr>
+</table>
+
+<div class="tip">
+  <p>💡 改名是小事，改引用才是大事。重命名对外函数时，先全工程 <code>Find in Files</code>（MDK 快捷键 Ctrl+Shift+F）搜出所有调用点，<strong>头文件声明、调用处、定义处三处同步改</strong>，改完立即全量编译验证。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 6.1：给 gui_menu.c 做命名体检并重命名</h3>
+  <p class="step">1️⃣ 列出 <code>gui_menu.c</code> 里所有函数和全局变量的名字，按"unix 小写 / 模块前缀 / 语义清晰"三列打勾。</p>
+  <p class="step">2️⃣ 把 <code>GuiMenu_Init / GuiMenu_Navigate / GuiMenu_Enter</code> 统一重命名为 <code>gui_menu_init</code> 等（模块前缀 <code>gui_menu_</code>）。</p>
+  <p class="step">3️⃣ 用 Find in Files 找出头文件 <code>gui_menu.h</code> 及 main 里所有调用点，三处同步改。</p>
+  <p class="step">验收标准：全工程搜不到 <code>GuiMenu_</code> 前缀；编译零警告零错误；重新烧录后菜单、翻页、进入游戏功能全部正常。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 6.2（重构练习）：把重复的三连循环拆成函数</h3>
+  <p class="step">1️⃣ 打开 <code>lvgl_2048.c</code> 的 <code>lvgl_2048_move()</code>（约 50 行）：左右移动和上下移动各有"读行 → slide_and_merge_line → 写回"三连，<strong>复制粘贴了两遍</strong>。</p>
+  <p class="step">2️⃣ 提炼两个小函数：<code>static void board_read_line(uint8_t row_or_col, bool is_row, uint16_t *line, lvgl_2048_dir_t dir)</code> 和 <code>static void board_write_line(...)</code>，让 <code>lvgl_2048_move()</code> 四个方向共用一套逻辑。</p>
+  <p class="step">3️⃣ 改完跑一轮 2048：上下左右滑动、合并、加分、新方块、Game Over 全部正常。</p>
+  <p class="step">验收标准：<code>lvgl_2048_move()</code> 体长明显下降；代码里不再出现方向循环的重复块；游戏行为与改动前完全一致。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 正点原子采用的命名风格是？</p>
+  <p class="opt">A. unix 风格：小写 + 下划线</p>
+  <p class="opt">B. PascalCase：单词首字母大写</p>
+  <p class="opt">C. 匈牙利命名法：类型前缀</p>
+  <details><summary>查看答案</summary><div class="answer">A。unix 风格（Linux 内核同款），匈牙利和 PascalCase 都不是（PDF p.16）。</div></details>
+
+  <p class="q">Q2. 全局变量的推荐前缀是？</p>
+  <p class="opt">A. s_ 开头</p>
+  <p class="opt">B. g_ 开头</p>
+  <p class="opt">C. 不用前缀</p>
+  <details><summary>查看答案</summary><div class="answer">B。全局变量用 g_ 前缀提高可读性，指针可用 p_（PDF p.16）。</div></details>
+
+  <p class="q">Q3. 以下哪个函数名符合教材规范？</p>
+  <p class="opt">A. SetSnakeDirection()</p>
+  <p class="opt">B. setdir_snake_lvgl()</p>
+  <p class="opt">C. lvgl_snake_set_dir()</p>
+  <details><summary>查看答案</summary><div class="answer">C。"模块名_动词"，小写 + 下划线（PDF p.17）。</div></details>
+
+  <p class="q">Q4. 只在文件内部调用的函数，应该？</p>
+  <p class="opt">A. 加 static 限定作用域</p>
+  <p class="opt">B. 声明在头文件里</p>
+  <p class="opt">C. 加上 extern 关键字</p>
+  <details><summary>查看答案</summary><div class="answer">A。static 确保只在声明它的文件可见，避免与其他库同名函数冲突（PDF p.19）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 3、4 章（PDF p.16~19）——本课全部依据</li>
+<li>🔍 对照阅读：Linux 内核的 <code>Documentation/process/coding-style.rst</code>——教材说它的风格与 Linux 高度一致</li>
+<li>🧹 检查你自己的工程：<code>Find in Files</code> 搜 <code>[A-Z][a-z]+_</code> 模式，抓出所有 PascalCase 命名</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 7 课——变量、宏与常量 + 重构实战。你会亲手把 <code>lvgl_snake.c</code> 按规范重构一遍，包括那个缺括号的 <code>LVGL_SNAKE_MAX_LENGTH</code>。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0005-coding-style-format.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0007-coding-style-vars-macros.html">下一课：变量宏常量与重构 →</a>
+</nav>
+
+</div>
+</body>
+</html>

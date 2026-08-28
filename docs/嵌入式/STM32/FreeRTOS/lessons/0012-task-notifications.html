@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 12 课：任务通知 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 12 课</nav>
+
+<h1>第 12 课：任务通知</h1>
+<p class="subtitle">直接钻进任务里的"信使"：最快的轻量通信方式</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>前几课的队列、信号量、事件组都是"通讯对象"——要创建、要经过它们中转。任务通知则直接把数据塞进目标任务的 TCB，快且省。学完你能说清：通知值四种操作方式的差别、<code>ulTaskNotifyTake</code> 与 <code>xTaskNotifyWait</code> 怎么用，并能用通知模拟二值信号量和邮箱（正点原子《FreeRTOS 开发指南 V1.12》第 17 章 <span class="pg">PDF p.353~393</span>）。</p>
+</div>
+
+<h2>1. 直接通讯：不走"中转站"</h2>
+
+<p>队列、信号量、事件组都属于<strong>通讯对象</strong>：发送方把数据交给对象，接收方从对象取走——绕了一圈。而任务通知是<strong>直接通讯</strong>：每个任务的 TCB（任务控制块，第 5 课讲过）里都内置了任务通知数组和通知状态数组，发送方直接把通知写进目标任务的 TCB（PDF 17.1 节 <span class="pg">PDF p.353</span>）。</p>
+
+<ul>
+<li><strong>任务通知数组</strong>：每个元素是一个 32 位无符号通知值。值为 0 表示没有通知，非 0 表示有通知，通知值本身就是内容。</li>
+<li><strong>任务通知状态数组</strong>：标记对应通知的状态，共三种：<strong>未等待通知</strong>（复位态）、<strong>等待通知</strong>（接收方正在阻塞等待）、<strong>等待接收通知</strong>（通知已发出、接收方还没取走）。</li>
+</ul>
+
+<p>发送方（任务或中断）写通知值时，接收方任务如果正在阻塞等待，会立刻被解除阻塞——整个流程不需要创建任何对象，这就是"直接"二字的含义。</p>
+
+<h2>2. 优势与缺点：快 45%，但有四个"不能"</h2>
+
+<p><strong>优势</strong>（PDF 17.1.2 节 <span class="pg">PDF p.354</span>）：</p>
+<ul>
+<li>🚀 <strong>快</strong>：比队列、信号量、事件组快得多，官方数据约 <strong>快 45%</strong>。因为它没有"创建对象→操作队列→取数据"的间接过程，也不需要互斥保护通讯对象本身。</li>
+<li>🧠 <strong>省 RAM</strong>：通讯对象用之前得先创建（队列要分配存储区），而任务通知只是 TCB 里固定的几个字节，零额外开销。</li>
+</ul>
+
+<p><strong>缺点</strong>——四个"不能"（PDF 17.1.3 节 <span class="pg">PDF p.354</span>）：</p>
+
+<table>
+<tr><th>场景</th><th>通讯对象（队列/信号量/事件组）</th><th>任务通知</th></tr>
+<tr><td>发送到中断</td><td>可以（任务→中断）</td><td>❌ 不能，通知依赖 TCB，中断没有 TCB</td></tr>
+<tr><td>多个接收者</td><td>可以（广播）</td><td>❌ 只能指定一个任务接收</td></tr>
+<tr><td>缓冲多个数据</td><td>可以（队列有深度）</td><td>❌ 通知值只有一个，后发覆盖先发（仅 eIncrement 可计数）</td></tr>
+<tr><td>发送方阻塞等待</td><td>可以（队列满时等空位）</td><td>❌ 发通知不会阻塞</td></tr>
+</table>
+
+<div class="warn">
+  <p>⚠️ 任务通知"快"的前提是**用对场景**。需要广播、需要缓冲、需要任务→中断时，老老实实用队列/信号量/事件组；一对一的"唤醒+捎带小数据"才是任务通知的主场。教材原文也强调：实际中"多个任务接收同一对象"很少见，所以任务通知的适用面比想象中宽（PDF 17.1.3 节 <span class="pg">PDF p.354</span>）。</p>
+</div>
+
+<h2>3. 发送 API：四种操作方式</h2>
+
+<p>发送通知的三大函数（V10.4.6 内核里它们都是宏，最终都调用 <code>xTaskGenericNotify()</code>，PDF 17.2.1 节 <span class="pg">PDF p.355</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 通用发送函数原型 */</span>
+BaseType_t <span style="color:#795E26">xTaskGenericNotify</span><span style="color:#001080">(TaskHandle_t xTaskToNotify,   <span style="color:#008000">/* 发给谁 */</span>
+                              UBaseType_t  uxIndexToNotify, <span style="color:#008000">/* 通知数组下标（默认 0） */</span>
+                              <span style="color:#267F99">uint32_t</span>     ulValue,         <span style="color:#008000">/* 通知值 */</span>
+                              eNotifyAction eAction,        <span style="color:#008000">/* 操作方式 */</span>
+                              <span style="color:#267F99">uint32_t</span> *   pulPreviousNotificationValue)</span>; <span style="color:#008000">/* 旧值，可传 NULL */</span>
+
+<span style="color:#008000">/* 常用宏封装 */</span>
+xTaskNotify(xTask, ulValue, eAction);                    <span style="color:#008000">/* 通用发送，不取旧值 */</span>
+xTaskNotifyAndQuery(xTask, ulValue, eAction, &amp;old);      <span style="color:#008000">/* 通用发送，顺带取旧值 */</span>
+xTaskNotifyGive(xTask);                                  <span style="color:#008000">/* 等价于 eIncrement：通知值加 1 */</span>
+
+<span style="color:#008000">/* 中断版（多一个 pxHigherPriorityTaskWoken 参数） */</span>
+xTaskNotifyFromISR(xTask, ulValue, eAction, &amp;xHigherPriorityTaskWoken);
+vTaskNotifyGiveFromISR(xTask, &amp;xHigherPriorityTaskWoken);</pre>
+
+<p>关键在 <code>eAction</code>（<code>eNotifyAction</code> 枚举，PDF 17.2.1 节 <span class="pg">PDF p.357</span>）：</p>
+
+<table>
+<tr><th>eAction 取值</th><th>行为</th><th>像什么</th></tr>
+<tr><td><code>eSetBits</code></td><td>通知值按位或上 ulValue</td><td>事件标志组</td></tr>
+<tr><td><code>eIncrement</code></td><td>通知值加 1</td><td>计数型信号量</td></tr>
+<tr><td><code>eSetValueWithOverwrite</code></td><td>无条件覆写通知值为 ulValue</td><td>队列（xQueueOverwrite）</td></tr>
+<tr><td><code>eSetValueWithoutOverwrite</code></td><td>只有没有待处理通知时才覆写，否则返回 pdFAIL</td><td>长度 1 的队列</td></tr>
+<tr><td><code>eNoAction</code></td><td>不动通知值，仅唤醒任务</td><td>二值信号量（只唤醒）</td></tr>
+</table>
+
+<p>四种操作方式（用户常归纳为 eSetValue/eIncrement/eSetBits/eNoAction 四类）加上"覆写/不覆写"两个变体，几乎覆盖了所有轻量通信场景。</p>
+
+<h2>4. 接收 API：Take 与 Wait</h2>
+
+<p>接收通知有两个函数（PDF 17.2.2 节 <span class="pg">PDF p.368</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 1. ulTaskNotifyTake：把通知值当&quot;计数器&quot;用 */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">ulTaskNotifyTake</span><span style="color:#001080">(BaseType_t xClearCountOnExit,  <span style="color:#008000">/* pdTRUE=成功后清零, pdFALSE=成功后减 1 */</span>
+                          TickType_t xTicksToWait)</span>;      <span style="color:#008000">/* 阻塞时间 */</span>
+<span style="color:#008000">/* 返回 0：失败/超时；返回非 0：通知值 */</span>
+
+<span style="color:#008000">/* 2. xTaskNotifyWait：把通知值当&quot;位图/数据&quot;用 */</span>
+BaseType_t <span style="color:#795E26">xTaskNotifyWait</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> ulBitsToClearOnEntry, <span style="color:#008000">/* 等待前清零哪些位 */</span>
+                           <span style="color:#267F99">uint32_t</span> ulBitsToClearOnExit,  <span style="color:#008000">/* 成功后清零哪些位 */</span>
+                           <span style="color:#267F99">uint32_t</span> *pulNotificationValue, <span style="color:#008000">/* 传出通知值 */</span>
+                           TickType_t xTicksToWait)</span>;
+<span style="color:#008000">/* 返回 pdTRUE：等到通知；pdFALSE：超时 */</span></pre>
+
+<ul>
+<li><code>ulTaskNotifyTake(pdTRUE, …)</code> 成功接收后清零通知值 → 值只有 0/非 0 两种 → 模拟<strong>二值信号量</strong>。</li>
+<li><code>ulTaskNotifyTake(pdFALSE, …)</code> 成功接收后通知值减 1 → 值可以累积 → 模拟<strong>计数型信号量</strong>。</li>
+<li><code>xTaskNotifyWait(0x00, 0xFFFFFFFF, &amp;val, …)</code> 把整个通知值取走并清零 → 模拟<strong>消息邮箱</strong>（一次性传一个 32 位值）。</li>
+<li><code>xTaskNotifyWait(0x00, 0x00, &amp;val, …)</code> + 发送端用 <code>eSetBits</code> → 模拟<strong>事件标志组</strong>（教材 17.6 实验：KEY0 置 bit0、KEY1 置 bit1，task2 收到后按位判断，凑齐再刷新 LCD，PDF 17.6.2 节 <span class="pg">PDF p.390</span>）。</li>
+</ul>
+
+<h2>5. 教材实验：模拟二值信号量与邮箱</h2>
+
+<p>先看模拟二值信号量（教材 17.3 实验，PDF 17.3.2 节 <span class="pg">PDF p.376</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* task1：按键发送通知（等价于&quot;给出信号量&quot;） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint8_t</span> key = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">if</span> (key == KEY0_PRES)
+        {
+            <span style="color:#008000">/* 通知值加 1，等价于 xSemaphoreGive */</span>
+            xTaskNotifyGive(Task2Task_Handler);
+        }
+        vTaskDelay(<span style="color:#098658">10</span>);
+    }
+}
+
+<span style="color:#008000">/* task2：阻塞接收通知（等价于&quot;获取信号量&quot;） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint32_t</span> notify_val = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#008000">/* 成功接收后清零通知值，模拟二值信号量 */</span>
+        notify_val = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        <span style="color:#0000FF">if</span> (notify_val != <span style="color:#098658">0</span>)
+        {
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;收到通知，LCD 刷新\r\n&quot;</span>);
+        }
+    }
+}</pre>
+
+<p>再看模拟消息邮箱（教材 17.5 实验，PDF 17.5.2 节 <span class="pg">PDF p.385</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* task1：按键，把键值作为通知值&quot;装进邮箱&quot; */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint8_t</span> key = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">if</span> ((Task2Task_Handler != <span style="color:#098658">NULL</span>) &amp;&amp; (key != <span style="color:#098658">0</span>))
+        {
+            <span style="color:#008000">/* 无条件覆写通知值：像往邮箱里塞了一封信 */</span>
+            xTaskNotify(Task2Task_Handler, key, eSetValueWithOverwrite);
+        }
+        vTaskDelay(<span style="color:#098658">10</span>);
+    }
+}
+
+<span style="color:#008000">/* task2：等通知，取出通知值（相当于读邮箱） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint32_t</span> notify_val = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#008000">/* 等待前不清位，成功接收后把 32 位全部清零 */</span>
+        xTaskNotifyWait(<span style="color:#098658">0x00000000</span>, <span style="color:#098658">0xFFFFFFFF</span>, &amp;notify_val, portMAX_DELAY);
+
+        <span style="color:#0000FF">switch</span> (notify_val)
+        {
+            <span style="color:#0000FF">case</span> KEY0_PRES: <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;收到 KEY0\r\n&quot;</span>); <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">case</span> KEY1_PRES: <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;收到 KEY1\r\n&quot;</span>); <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">default</span>:        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;未知键值 %d\r\n&quot;</span>, notify_val); <span style="color:#0000FF">break</span>;
+        }
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 一个容易忽略的点：模拟二值信号量时，<code>xTaskNotifyGive()</code> 在任务上下文调用；在中断里要换成 <code>vTaskNotifyGiveFromISR()</code>，并检查 <code>pxHigherPriorityTaskWoken</code> 决定是否 <code>portYIELD_FROM_ISR()</code>——这是第 13 课中断管理的预热。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 12.1：中断通知模拟二值信号量</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里，用 1Hz 定时器中断 + <code>vTaskNotifyGiveFromISR()</code> 模拟"每秒给出一次信号量"。</p>
+  <p class="step">2️⃣ 任务里用 <code>ulTaskNotifyTake(pdTRUE, portMAX_DELAY)</code> 接收并打印，观察是否严格 1Hz 输出。</p>
+  <p class="step">3️⃣ 把 <code>pdTRUE</code> 改成 <code>pdFALSE</code>（计数模式）再观察：任务偶尔慢半拍时，通知值会累积，输出会"追平"——这正是计数型信号量的行为。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 12.2：用通知值做"邮箱"传一个值</h3>
+  <p class="step">1️⃣ 仿照教材 17.5 实验：task1 扫描按键，把键值用 <code>xTaskNotify(…, eSetValueWithOverwrite)</code> 发给 task2；task2 用 <code>xTaskNotifyWait</code> 取出并解析。</p>
+  <p class="step">2️⃣ 对比 <code>eSetValueWithOverwrite</code> 与 <code>eSetValueWithoutOverwrite</code>：快速连按两次按键，观察"后一次是否覆盖前一次"的差异。</p>
+  <p class="step">3️⃣ 验收标准：串口能正确输出每次按键的键值，且你能说出两种覆写方式的语义差别。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 任务通知相比队列/信号量最大的两个优势是？</p>
+  <p class="opt">A. 更快且更省 RAM</p>
+  <p class="opt">B. 支持广播且支持缓冲</p>
+  <p class="opt">C. 支持中断发送且不限接收者</p>
+  <details><summary>查看答案</summary><div class="answer">A。直接写入目标任务 TCB，无对象创建与中转开销，官方称约快 45%（PDF 17.1.2 节，p.354）。B、C 恰恰是任务通知的缺点。</div></details>
+
+  <p class="q">Q2. xTaskNotify 的 eIncrement 操作等价于哪种通讯对象？</p>
+  <p class="opt">A. 二值信号量</p>
+  <p class="opt">B. 计数型信号量</p>
+  <p class="opt">C. 消息队列</p>
+  <details><summary>查看答案</summary><div class="answer">B。eIncrement 把通知值加 1，配合 ulTaskNotifyTake(pdFALSE) 减 1，正是计数型信号量的行为（PDF 17.2.1 节，p.357）。</div></details>
+
+  <p class="q">Q3. 下列哪种场景不适合用任务通知？</p>
+  <p class="opt">A. 中断唤醒一个高优先级任务</p>
+  <p class="opt">B. 一个事件通知多个任务</p>
+  <p class="opt">C. 任务间传递一个 32 位数值</p>
+  <details><summary>查看答案</summary><div class="answer">B。任务通知只能发给指定任务，不能广播；广播请用事件标志组（PDF 17.1.3 节，p.354）。</div></details>
+
+  <p class="q">Q4. ulTaskNotifyTake(pdTRUE, portMAX_DELAY) 成功接收通知后，通知值会？</p>
+  <p class="opt">A. 清零</p>
+  <p class="opt">B. 减 1</p>
+  <p class="opt">C. 保持不变</p>
+  <details><summary>查看答案</summary><div class="answer">A。xClearCountOnExit=pdTRUE 时清零，值只剩 0/非 0 两种状态，从而模拟二值信号量（PDF 17.2.2 节，p.368）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 17 章（PDF p.353~393）——四个模拟实验（二值/计数信号量、邮箱、事件组）全部依据</li>
+<li>🌐 <a href="https://freertos.org/Documentation/02-Kernel/04-API-references/05-Direct-to-task-notifications/00-RTOS-task-notifications">FreeRTOS API 参考：Task Notifications API</a>——通知函数完整原型</li>
+<li>📚 <a href="https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/03-Direct-to-task-notifications/05-As-mailbox">FreeRTOS 官方文档：Task Notifications as Mailboxes</a>——通知当邮箱用的专门讲解</li>
+</ul>
+
+<div class="footer-note">
+  <p>有问题随时问我。下一课预告：第 13 课——中断管理与临界区，原理硬核课：PendSV 为什么要最低优先级？FreeRTOS 的临界区到底关了哪些中断？该揭开 Cortex-M 内核的面纱了。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0011-event-groups.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0013-interrupts-and-critical-sections.html">下一课：中断管理与临界区 →</a>
+</nav>
+
+</div>
+</body>
+</html>

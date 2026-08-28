@@ -1,10 +1,14 @@
----
+﻿---
 title: Boosting 提升方法：串行纠错
 published: 2026-08-16
 description: 机器学习课程第 10 课：AdaBoost 与 GBDT 的串行纠错思想，含指数损失推导、手写实现、残差拟合演示与测验练习。
 tags: [机器学习, Boosting, AdaBoost, GBDT, 集成学习]
 category: 机器学习
 draft: false
+prevTitle: "K-Means 聚类"
+prevSlug: "机器学习/0011-k均值聚类"
+nextTitle: "集成学习：Bagging 与随机森林"
+nextSlug: "机器学习/0009-集成学习"
 ---
 
 # Boosting 提升方法：串行纠错
@@ -326,3 +330,4 @@ GBDT 拟合残差的演示里，前 3 棵树叠加后曲线已经贴近 sin—�
 ## 五、小结
 
 Boosting 与 Bagging 是集成学习的一体两面：一个靠并行平均降方差，一个靠串行纠错降偏差。AdaBoost 用指数损失推导出清晰的加权规则，GBDT 则把纠错简化为拟合残差。但降偏差的代价是过拟合风险——这正是「偏差-方差」权衡在集成学习里的又一次体现，也解释了为什么 GBDT 必须配浅树、小学习率和正则化。下一课将离开有监督，进入无监督聚类。
+| [← 上一课](/my-blog/posts/机器学习/0011-k均值聚类/) | [课程目录](/my-blog/posts/机器学习/0001-机器学习全景与学习路线图/) | [下一课 →](/my-blog/posts/机器学习/0009-集成学习/) |

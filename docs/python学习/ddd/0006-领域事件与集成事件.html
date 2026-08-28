@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0006 · 领域事件与集成事件</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>领域事件与集成事件</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0006 · 预计 25 分钟</p>
+
+<p>当「一个聚合做了件事,别的部分想响应」时,若不把逻辑写死在执行方,就用<strong>事件</strong>解耦。<strong>领域事件</strong>是进程内的消息(用户被创建了→自动建钱包);<strong>集成事件</strong>是跨进程的消息(通知外部微服务)。本课讲清两者与「事件驱动」思路,你会联想到架构课学过的观察者模式。</p>
+
+<h2>知识点 1:领域事件 =「发生了某件事」的进程内消息</h2>
+<p>聚合在执行操作时发布一个<strong>领域事件(domain event)</strong>,其他部分订阅并响应,彼此不直接依赖。项目里的例子:用户创建后,给用户建一个钱包。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">dataclasses</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">dataclass</span><span style="color: #000">,</span> <span style="color: #001080">field</span>
+
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UserCreated</span><span style="color: #000">:</span>                      <span style="color: #008000"># 领域事件:只是&quot;发生了什么&quot;的数据</span>
+    <span style="color: #001080">user_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">events</span><span style="color: #000">:</span> <span style="color: #0070C1">list</span> <span style="color: #000">=</span> <span style="color: #001080">field</span><span style="color: #000">(</span><span style="color: #001080">default_factory</span><span style="color: #000">=</span><span style="color: #0070C1">list</span><span style="color: #000">)</span>   <span style="color: #008000"># 简单的事件列表</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">emit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">event</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">events</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">event</span><span style="color: #000">)</span>
+</pre>
+<p>事件是<strong>数据对象</strong>(过去发生的事),不含逻辑。策略:不用把"买完要建订单"写在 buy() 里,而是 <code>buy() 发布 BuyCompleted</code>,让外部订阅者建订单。这实现了解耦(<a href="https://badia-kharroubi.gitbooks.io/microservices-architecture/content/patterns/tactical-patterns/domain-event-pattern.html">domain event pattern</a>)。</p>
+
+<h2>知识点 2:事件处理——一个事件多个订阅者</h2>
+<p>发布出去后,谁订阅谁处理,可有很多 handler:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">EventBus</span><span style="color: #000">:</span>                         <span style="color: #008000"># 进程内事件分发器(像观察者)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">subscribe</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">event_type</span><span style="color: #000">,</span> <span style="color: #001080">handler</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span><span style="color: #000">.</span><span style="color: #001080">setdefault</span><span style="color: #000">(</span><span style="color: #001080">event_type</span><span style="color: #000">,</span> <span style="color: #000">[]).</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">handler</span><span style="color: #000">)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">publish</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">event</span><span style="color: #000">):</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">h</span> <span style="color: #AF00DB">in</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #0070C1">type</span><span style="color: #000">(</span><span style="color: #001080">event</span><span style="color: #000">),</span> <span style="color: #000">[]):</span>
+            <span style="color: #001080">h</span><span style="color: #000">(</span><span style="color: #001080">event</span><span style="color: #000">)</span>
+
+<span style="color: #001080">bus</span> <span style="color: #000">=</span> <span style="color: #001080">EventBus</span><span style="color: #000">()</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_wallet</span><span style="color: #000">(</span><span style="color: #001080">e</span><span style="color: #000">):</span> <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;给 {</span><span style="color: #001080">e</span><span style="color: #000">.</span><span style="color: #001080">user_id</span><span style="color: #A31515">} 建钱包&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">bus</span><span style="color: #000">.</span><span style="color: #001080">subscribe</span><span style="color: #000">(</span><span style="color: #001080">UserCreated</span><span style="color: #000">,</span> <span style="color: #001080">create_wallet</span><span style="color: #000">)</span>
+
+<span style="color: #001080">bus</span><span style="color: #000">.</span><span style="color: #001080">publish</span><span style="color: #000">(</span><span style="color: #001080">UserCreated</span><span style="color: #000">(</span><span style="color: #001080">user_id</span><span style="color: #000">=</span><span style="color: #A31515">&quot;u1&quot;</span><span style="color: #000">,</span> <span style="color: #001080">email</span><span style="color: #000">=</span><span style="color: #A31515">&quot;a@x.com&quot;</span><span style="color: #000">))</span>  <span style="color: #008000"># 给 u1 建钱包</span>
+</pre>
+<p>因为 handler 是「订阅」来的,发布方不知道也不关心谁在听——这正是你架构课学的<strong>观察者模式</strong>在 DDD 里的落地。</p>
+
+<h2>知识点 3:领域事件 vs 集成事件</h2>
+<p>项目给的关键区分:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 领域事件 domain event:进程内(同一应用/模块),内存分发</span>
+<span style="color: #008000">#   用途:同一领域内,一个聚合的事触发另一个聚合的动作</span>
+<span style="color: #008000">#   例:UserCreated → 给该用户建 Wallet</span>
+
+<span style="color: #008000"># 集成事件 integration event:跨进程(微服务/外部系统),经消息队列</span>
+<span style="color: #008000">#   用途:通知外部服务或微服务之间</span>
+<span style="color: #008000">#   例:用户注册完成 → 发邮件服务 / 通知另一个微服务</span>
+</pre>
+<p>规则:领域事件<strong>只在进程内</strong>;要触达外部,再在领域事件 handler 里<strong>发集成事件</strong>。而且集成事件通常在该领域的所有变更落库<strong>之后</strong>才发(<a href="https://devblogs.microsoft.com/cesardelatorre/domain-events-vs-integration-events-in-domain-driven-design-and-microservices-architectures/">Domains vs Integration events</a>)。</p>
+
+<h2>知识点 4:什么时候用事件、什么时候别只用事件</h2>
+<p>项目特意提醒:复杂多步骤工作流<strong>别只靠事件</strong>——一个事件触发另一个,链条很长很难追踪维护。此时用「一个服务/编排器」把整个流程写在一处更好(牺牲一点解耦换可维护性)。</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 适合事件:一个聚合的动作,需要&quot;附带&quot;若干彼此独立的其他动作</span>
+<span style="color: #008000">#   UserCreated → 建钱包(独立,不关心顺序)</span>
+
+<span style="color: #008000"># 不适合:串行的强依赖多步骤流程,每一步都等上一步</span>
+<span style="color: #008000">#   用 orchestrator/service 顺着写,别用事件打散</span>
+</pre>
+<p>选工具看场景:解耦用事件,可追踪用编排器,二者要权衡。</p>
+
+<h2>知识点 5:与事务结合 + 别滥用</h2>
+<p>多个聚合被同一事件触发的改动,通常应包在<strong>一个事务</strong>里(全有或全无),项目用全局事务包裹整个流程(如 Unit of Work)。但别滥用大事务(高并发瓶颈),可接受时用最终一致性。核心:事件是「发布-订阅」解耦,不是银弹。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">领域事件在哪个范围分发?</p>
+  <button class="opt" data-ok="false">跨进程</button>
+  <button class="opt" data-ok="true">进程内</button>
+  <button class="opt" data-ok="false">跨服务器</button>
+  <button class="opt" data-ok="false">跨数据库</button>
+  <p class="reveal">领域事件是进程内消息,同一应用内分发;跨进程靠集成事件。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">通知外部微服务该用什么?</p>
+  <button class="opt" data-ok="false">领域事件</button>
+  <button class="opt" data-ok="true">集成事件</button>
+  <button class="opt" data-ok="false">值对象</button>
+  <button class="opt" data-ok="false">实体方法</button>
+  <p class="reveal">跨进程/外部系统用集成事件,通常经消息队列,在变更落库后发。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">事件 handler 机制是哪种模式?</p>
+  <button class="opt" data-ok="false">工厂</button>
+  <button class="opt" data-ok="true">观察者</button>
+  <button class="opt" data-ok="false">策略</button>
+  <button class="opt" data-ok="false">单例</button>
+  <p class="reveal">发布-订阅、一个事件多个监听 = 观察者模式在 DDD 里的落地。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">复杂串行多步骤流程,项目建议?</p>
+  <button class="opt" data-ok="false">全靠事件链</button>
+  <button class="opt" data-ok="true">一个编排器</button>
+  <button class="opt" data-ok="false">深递归</button>
+  <button class="opt" data-ok="false">不写</button>
+  <p class="reveal">强依赖串行流程用 orchestration 写在一处,别用事件打散导致难追踪。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0006_领域事件与集成事件.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:实现一个极简 EventBus;模拟「用户创建→自动建钱包」</li>
+  <li><strong>练习 B</strong>:给 Order 加一个 OrderPlaced 事件,订阅者扣库存/发通知(domain 内)</li>
+  <li><strong>练习 C</strong>:判断题:下面场景该用领域事件、集成事件、还是编排器</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Domain Events</strong> 与 <strong>Integration Events</strong> 两小节(含"别只用事件"的提醒);再看它链接的 <a href="https://devblogs.microsoft.com/cesardelatorre/domain-events-vs-integration-events-in-domain-driven-design-and-microservices-architectures/">两事件区别一文</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:事件这招的解耦你 get 到了吗?下一课进入<strong>应用层:应用服务 / 命令 / 查询(CQS)</strong>——怎么把一个外部请求变成领域动作。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-领域服务.html">← 上一篇:领域服务 Domain Service</a>
+  <a href="index.html">课程地图</a>
+  <a href="0007-应用层命令与查询.html">下一篇:应用层:应用服务 / 命令 / 查询(CQS) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

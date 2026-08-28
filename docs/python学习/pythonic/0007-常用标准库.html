@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0007 · 常用标准库</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>常用标准库</h1>
+<p class="meta">Pythonic 代码 · 课程 0007 · 预计 25 分钟</p>
+
+<p>C 里你得自己写很多东西:链表、迭代器技巧、路径拼接、双向队列。Python 的<strong>标准库</strong>("batteries included")把这些都做好了。<code>itertools</code> 管迭代的花活,<code>pathlib</code> 管文件路径,<code>collections</code> 管特殊容器。本课挑三个最该记住的。</p>
+
+<h2>知识点 1:pathlib——别再用 os.path 拼路径</h2>
+<p>C 程序员(或老 Python)习惯用字符串拼路径、分平台处理分隔符:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">os</span>
+<span style="color: #001080">base</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;/home/user/data&quot;</span>
+<span style="color: #001080">full</span> <span style="color: #000">=</span> <span style="color: #001080">os</span><span style="color: #000">.</span><span style="color: #001080">path</span><span style="color: #000">.</span><span style="color: #001080">join</span><span style="color: #000">(</span><span style="color: #001080">base</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;train&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># C 思维:字符串拼 + join</span>
+<span style="color: #001080">exists</span> <span style="color: #000">=</span> <span style="color: #001080">os</span><span style="color: #000">.</span><span style="color: #001080">path</span><span style="color: #000">.</span><span style="color: #001080">exists</span><span style="color: #000">(</span><span style="color: #001080">full</span><span style="color: #000">)</span>
+<span style="color: #001080">ext</span> <span style="color: #000">=</span> <span style="color: #001080">os</span><span style="color: #000">.</span><span style="color: #001080">path</span><span style="color: #000">.</span><span style="color: #001080">splitext</span><span style="color: #000">(</span><span style="color: #001080">full</span><span style="color: #000">)[</span><span style="color: #098658">1</span><span style="color: #000">]</span>
+</pre>
+<p>Pythonic——<code>pathlib.Path</code> 把路径当对象,<code>/</code> 直接拼接,跨平台不用管:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">pathlib</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">Path</span>
+<span style="color: #001080">base</span> <span style="color: #000">=</span> <span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;/home/user/data&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">full</span> <span style="color: #000">=</span> <span style="color: #001080">base</span> <span style="color: #000">/</span> <span style="color: #A31515">&quot;train&quot;</span> <span style="color: #000">/</span> <span style="color: #A31515">&quot;x.csv&quot;</span>     <span style="color: #008000"># 用 / 分行,自动处理分隔符</span>
+<span style="color: #001080">full</span><span style="color: #000">.</span><span style="color: #001080">exists</span><span style="color: #000">()</span>                       <span style="color: #008000"># 判断存在</span>
+<span style="color: #001080">full</span><span style="color: #000">.</span><span style="color: #001080">suffix</span>                         <span style="color: #008000"># &#39;.csv&#39;</span>
+<span style="color: #001080">full</span><span style="color: #000">.</span><span style="color: #001080">parent</span>                         <span style="color: #008000"># PosixPath(&#39;/home/user/data/train&#39;)</span>
+<span style="color: #001080">full</span><span style="color: #000">.</span><span style="color: #001080">name</span>                           <span style="color: #008000"># &#39;x.csv&#39;</span>
+</pre>
+<p>要点:读写文件也能 <code>Path.read_text() / Path.write_text()</code>,不用再 open+f.close(下一课讲 with)。路径操作优先用 pathlib。</p>
+
+<h2>知识点 2:itertools——循环花活一网打尽</h2>
+<p>很多「手写循环技巧」itertools 已经给好了,常用四个:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">itertools</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">chain</span><span style="color: #000">,</span> <span style="color: #001080">product</span><span style="color: #000">,</span> <span style="color: #001080">groupby</span><span style="color: #000">,</span> <span style="color: #001080">islice</span>
+
+<span style="color: #008000"># 把多个序列连起来遍历(比嵌套循环扁平)</span>
+<span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">chain</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">],</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]):</span>        <span style="color: #008000"># 1 2 3 4</span>
+    <span style="color: #00F">pass</span>
+
+<span style="color: #008000"># 笛卡尔积(两层嵌套循环的扁平替代)</span>
+<span style="color: #00F">for</span> <span style="color: #001080">a</span><span style="color: #000">,</span> <span style="color: #001080">b</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">product</span><span style="color: #000">(</span><span style="color: #A31515">&quot;AB&quot;</span><span style="color: #000">,</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">]):</span>     <span style="color: #008000"># A1 A2 B1 B2</span>
+    <span style="color: #00F">pass</span>
+
+<span style="color: #008000"># 切片迭代器(对大迭代器切不用先转 list)</span>
+<span style="color: #001080">first3</span> <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">islice</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">100</span><span style="color: #000">),</span> <span style="color: #098658">3</span><span style="color: #000">))</span>   <span style="color: #008000"># [0, 1, 2]</span>
+</pre>
+<p>还有 <code>repeat / takewhile / permutations / combinations</code> 等。规则:想要「几种排列组合 / 扁平化嵌套 / 循环拼接」,先到 itertools 找现成的,别手写索引。</p>
+
+<h2>知识点 3:groupby——按键分组,替代「先排序再找断点」</h2>
+<p>C 程序员想给数据分组,常先排序再找边界。itertools.<code>groupby</code> 按「相邻相同键」分组(注意:要先排序才把相同键聚一起):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">itertools</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">groupby</span>
+
+<span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;aa&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;aa&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;bb&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;aa&quot;</span><span style="color: #000">]</span>            <span style="color: #008000"># 需先排序</span>
+<span style="color: #001080">words_sorted</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">)</span>
+<span style="color: #00F">for</span> <span style="color: #001080">key</span><span style="color: #000">,</span> <span style="color: #001080">group</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #001080">words_sorted</span><span style="color: #000">):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">key</span><span style="color: #000">,</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">group</span><span style="color: #000">))</span>                 <span style="color: #008000"># aa [aa,aa] / bb [bb]</span>
+</pre>
+<p>分组计数、分组汇总这类活,groupby + 推导式一条链即可;比手写断点检测舒服。</p>
+
+<h2>知识点 4:collections——deque / namedtuple</h2>
+<p><code>deque</code> 是从两端都能高效增删的队列(C 里你会自己写链表循环);<code>namedtuple</code> 是「带名字的轻量记录」(介于 tuple 和 dataclass 之间):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">collections</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">deque</span><span style="color: #000">,</span> <span style="color: #001080">namedtuple</span>
+
+<span style="color: #001080">dq</span> <span style="color: #000">=</span> <span style="color: #001080">deque</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">])</span>
+<span style="color: #001080">dq</span><span style="color: #000">.</span><span style="color: #001080">appendleft</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">)</span>             <span style="color: #008000"># O(1),列表 insert(0) 是 O(n)</span>
+<span style="color: #001080">dq</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">dq</span><span style="color: #000">)</span>                    <span style="color: #008000"># deque([0,1,2,3,4])</span>
+
+<span style="color: #001080">Point</span> <span style="color: #000">=</span> <span style="color: #001080">namedtuple</span><span style="color: #000">(</span><span style="color: #A31515">&quot;Point&quot;</span><span style="color: #000">,</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">])</span>   <span style="color: #008000"># 有名字的 tuple</span>
+<span style="color: #001080">p</span> <span style="color: #000">=</span> <span style="color: #001080">Point</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">y</span><span style="color: #000">)</span>              <span style="color: #008000"># 3 4;也能 p[0]</span>
+</pre>
+<p>什么时候用什么:</p>
+<ul>
+  <li><code>deque</code>:频繁在两端插入/删除、做队列/栈 → 别用 list</li>
+  <li><code>namedtuple</code>:既想当 tuple 又想字段有名 → 但多数情况 <code>@dataclass</code> 更够用</li>
+  <li><code>defaultdict / Counter</code>:上一课(0005)讲过的计数与分组</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">跨平台拼路径,首选?</p>
+  <button class="opt" data-ok="false">os.path.join</button>
+  <button class="opt" data-ok="true">pathlib.Path /</button>
+  <button class="opt" data-ok="false">字符串 + "/"</button>
+  <button class="opt" data-ok="false">os.sep 手工拼</button>
+  <p class="reveal">pathlib 用 / 拼路径、自动处理分隔符,还带 suffix/parent 等方法。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">想要 A×B 笛卡尔积,用?</p>
+  <button class="opt" data-ok="false">嵌套循环</button>
+  <button class="opt" data-ok="true">itertools.product</button>
+  <button class="opt" data-ok="false">zip</button>
+  <button class="opt" data-ok="false">chain</button>
+  <p class="reveal">product 生成笛卡尔积,替代双层嵌套循环。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">两端都要频繁增删,用什么?</p>
+  <button class="opt" data-ok="false">list 首部插 insert(0)</button>
+  <button class="opt" data-ok="true">deque</button>
+  <button class="opt" data-ok="false">tuple</button>
+  <button class="opt" data-ok="false">set</button>
+  <p class="reveal">deque 两端增删都是 O(1),list 首部插入是 O(n)。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">groupby 分组前,通常需要先?</p>
+  <button class="opt" data-ok="false">去重</button>
+  <button class="opt" data-ok="true">排序</button>
+  <button class="opt" data-ok="false">转 set</button>
+  <button class="opt" data-ok="false">反转</button>
+  <p class="reveal">groupby 只聚「相邻相同键」,所以要先排序把相同键放一起。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0007_常用标准库.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把 os.path 拼路径的代码改成 pathlib</li>
+  <li><strong>练习 B</strong>:用 product 生成两层循环、用 groupby 分组汇总、用 deque 做队列</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段手写路径拼接 / 嵌套循环裁剪 =&gt; pathlib / itertools 改写</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/itertools.html#itertools-recipes">itertools Recipes</a>」</strong>:官方给出的十几个现成组合招式,抄下来记着,能少写很多循环。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:哪个 itertools 函数最让你意外?下一课讲<strong>上下文管理器(with)与装饰器</strong>——把「打开-用完-关闭」和「包一层能力」两件 C 里手忙脚乱的事变干净。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0006-dataclass与类.html">← 上一篇:dataclass 与类</a>
+  <a href="index.html">课程地图</a>
+  <a href="0008-上下文管理器与装饰器.html">下一篇:上下文管理器(with)与装饰器 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

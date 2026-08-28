@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0002 · 组件与构建系统</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>组件与构建系统</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0002 · 预计 15 分钟</p>
+
+<p>上一课你跑了 <code>idf.py build</code>。这一课回答:<strong>这几条命令背后,CMake 是怎么把整个工程拼起来的?</strong>读懂构建系统,是读懂 xiaozhi 这种几十个组件的工程的钥匙。</p>
+
+<h2>知识点 1:三个 CMakeLists 各管一段</h2>
+<p>IDF 的构建是三层嵌套的 CMake,你的 00_basic 里正好各有一个:</p>
+<pre lang="cmake" class="highlight"><span style="color: #008000"># ① 顶层:声明这是什么项目</span>
+<span style="color: #795E26">cmake_minimum_required</span>(VERSION 3.16)
+<span style="color: #795E26">include</span>($ENV{IDF_PATH}/tools/cmake/project.cmake)  <span style="color: #008000"># 拉进 IDF 全家桶</span>
+<span style="color: #795E26">project</span>(00_basic)
+</pre>
+<pre lang="cmake" class="highlight"><span style="color: #008000"># ② main/ 组件:声明源文件 + 头文件目录</span>
+<span style="color: #795E26">idf_component_register</span>(SRCS <span style="color: #A31515">&quot;main.c&quot;</span>
+                    INCLUDE_DIRS <span style="color: #A31515">&quot;.&quot;</span>)
+</pre>
+<p><strong>组件(component)</strong> 是 IDF 的复用单位:<code>idf_component_register</code> 声明"我这个组件有哪些源文件、暴露哪些头文件"。别的组件想用它,就在自己的 CMakeLists 里 <code>REQUIRES xxx</code>。</p>
+
+<h2>知识点 2:组件从哪来</h2>
+<table>
+<tr><th>位置</th><th>来源</th><th>进不进 git</th></tr>
+<tr><td><code>main/</code></td><td>你自己写的</td><td>✅</td></tr>
+<tr><td><code>components/</code></td><td>你手动放的(vendored)</td><td>✅</td></tr>
+<tr><td><code>managed_components/</code></td><td><code>idf.py</code> 按 <code>idf_component.yml</code> 自动下载</td><td>❌(已 gitignore)</td></tr>
+<tr><td>IDF 内置</td><td>随工具链自带(driver、freertos…)</td><td>—</td></tr>
+</table>
+<blockquote>
+<p>这就是为什么上次 git 整理把 <code>managed_components/</code> 移出版本控制——它是"包管理器"的产物,<code>idf.py build</code> 会自动重新拉。</p>
+</blockquote>
+
+<h2>知识点 3:sdkconfig 是怎么被消费的</h2>
+<p>菜单里选的东西最终变成 <code>sdkconfig</code> 里的 <code>CONFIG_XXX=y</code>,而代码里用 <code>#ifdef CONFIG_XXX</code> 决定编译哪份代码。组件 CMakeLists 里再用 <code>idf_component_register(... REQUIRES esp_driver_gpio)</code> 引入依赖。</p>
+<pre lang="c" class="highlight"><span style="color: #008000">// 这就是为什么改配置要重新编译</span>
+<span style="color: #795E26">#ifdef</span> <span style="color: #0070C1">CONFIG_ESP_SYSTEM_PANIC_PRINT_BACKTRACE</span>
+    <span style="color: #795E26">esp_backtrace_print</span>();
+<span style="color: #795E26">#endif</span>
+</pre>
+
+<h2>动手</h2>
+<p>在 <code>basic_routines/00_basic</code> 里执行 <code>idf.py menuconfig</code>,随便改一个开关(比如日志级别),保存后 <code>git diff sdkconfig</code>——你会看到<strong>一行文本的差别</strong>,这就是"配置可追踪"。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">组件声明源文件和头文件的宏是?</p>
+  <button class="opt" data-ok="true">idf_component_register</button>
+  <button class="opt" data-ok="false">project()</button>
+  <button class="opt" data-ok="false">add_library</button>
+  <p class="reveal">idf_component_register,在组件自己的 CMakeLists.txt 里。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">managed_components/ 里的组件来自?</p>
+  <button class="opt" data-ok="true">自动下载</button>
+  <button class="opt" data-ok="false">手动拷贝</button>
+  <button class="opt" data-ok="false">自己编写</button>
+  <p class="reveal">按 idf_component.yml 由 idf.py 自动下载,不进 git。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《构建系统文档》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/build-system.html">Build System</a>):重点看"Component CMakeLists Files"和"Component Requirements"两节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课进入运行时:FreeRTOS 任务与事件循环——为什么 xiaozhi 的 <code>app_main</code> 不写 <code>while(1)</code> 也能一直跑。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0001-从STM32到ESP32开发模型.html">← 上一篇:开发模型</a>
+  <a href="index.html">课程地图</a>
+  <a href="0003-FreeRTOS任务与事件循环.html">下一篇:FreeRTOS →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

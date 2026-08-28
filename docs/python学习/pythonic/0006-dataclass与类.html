@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0006 · dataclass 与类</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>dataclass 与类</h1>
+<p class="meta">Pythonic 代码 · 课程 0006 · 预计 20 分钟</p>
+
+<p>C++ 里定义一个「只是个数据袋子」的结构,你得写构造函数 + getter + setter + 一堆样板。Python 里你想表达「这是个带几个字段的东西」,<strong><code>@dataclass</code></strong> 三行搞定,还能顺便免费得到 <code>==</code>、打印、排序能力。本课还讲清 Python 的 <code>property</code> 为什么不需要 getter/setter。</p>
+
+<h2>知识点 1:普通类 vs dataclass——少写样板</h2>
+<p>C++ 思维(手写 __init__ 逐字段赋值):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Point</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">x</span> <span style="color: #000">=</span> <span style="color: #001080">x</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">y</span> <span style="color: #000">=</span> <span style="color: #001080">y</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__repr__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #A31515">f&quot;Point({</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">x</span><span style="color: #A31515">}, {</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">y</span><span style="color: #A31515">})&quot;</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__eq__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">other</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">x</span> <span style="color: #000">==</span> <span style="color: #001080">other</span><span style="color: #000">.</span><span style="color: #001080">x</span> <span style="color: #AF00DB">and</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">y</span> <span style="color: #000">==</span> <span style="color: #001080">other</span><span style="color: #000">.</span><span style="color: #001080">y</span>
+</pre>
+<p>Pythonic——<code>@dataclass</code> 声明字段类型即可,自动生成 __init__/__repr__/__eq__:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">dataclasses</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">dataclass</span>
+
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Point</span><span style="color: #000">:</span>
+    <span style="color: #001080">x</span><span style="color: #000">:</span> <span style="color: #0070C1">float</span>
+    <span style="color: #001080">y</span><span style="color: #000">:</span> <span style="color: #0070C1">float</span>
+
+<span style="color: #001080">p1</span> <span style="color: #000">=</span> <span style="color: #001080">Point</span><span style="color: #000">(</span><span style="color: #098658">1.0</span><span style="color: #000">,</span> <span style="color: #098658">2.0</span><span style="color: #000">)</span>
+<span style="color: #001080">p2</span> <span style="color: #000">=</span> <span style="color: #001080">Point</span><span style="color: #000">(</span><span style="color: #098658">1.0</span><span style="color: #000">,</span> <span style="color: #098658">2.0</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">p1</span><span style="color: #000">)</span>            <span style="color: #008000"># Point(x=1.0, y=2.0)  ← 自动 __repr__</span>
+<span style="color: #001080">p1</span> <span style="color: #000">==</span> <span style="color: #001080">p2</span>             <span style="color: #008000"># True  ← 自动 __eq__(逐字段比)</span>
+</pre>
+<p>要点:凡是「主要就是装几个字段」的类,用 <code>@dataclass</code>。<strong>字段等于直接拼 setter/构造函数的样板</strong>。</p>
+
+<h2>知识点 2:字段可以有默认值和类型提示</h2>
+<p>C 思维要给默认值得在构造里写一堆;dataclass 直接在字段上声明:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">dataclasses</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">dataclass</span><span style="color: #000">,</span> <span style="color: #001080">field</span>
+
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">User</span><span style="color: #000">:</span>
+    <span style="color: #001080">name</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">age</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>               <span style="color: #008000"># 默认值</span>
+    <span style="color: #001080">tags</span><span style="color: #000">:</span> <span style="color: #0070C1">list</span> <span style="color: #000">=</span> <span style="color: #001080">field</span><span style="color: #000">(</span><span style="color: #001080">default_factory</span><span style="color: #000">=</span><span style="color: #0070C1">list</span><span style="color: #000">)</span>  <span style="color: #008000"># 可变默认值要用 factory</span>
+</pre>
+<p>注意:<code>tags: list = []</code> 会踩「共享可变默认值」的坑(所有实例共用一个 list),所以要用 <code>field(default_factory=list)</code>。<code>age: int = 0</code> 这种不可变默认值直接等号即可。</p>
+
+<h2>知识点 3:Type hints(类型提示)是给人和工具看的,不是强类型</h2>
+<p>C 程序员可能疑惑:<code>x: float</code> 会不会像 C 一样强制类型?<strong>不会。</strong>Python 类型提示默认不强制,运行时传什么都能过;它是给 IDE 补全、类型检查器(如 mypy)、读代码的同事看的「意图声明」。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">add</span><span style="color: #000">(</span><span style="color: #001080">a</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">,</span> <span style="color: #001080">b</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">)</span> <span style="color: #000">-&gt;</span> <span style="color: #0070C1">int</span><span style="color: #000">:</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">a</span> <span style="color: #000">+</span> <span style="color: #001080">b</span>
+
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">add</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">))</span>    <span style="color: #008000"># 运行时照常执行:&#39;xy&#39; —— 提示不强制</span>
+</pre>
+<p>别把类型提示当成编译器约束。<code>@dataclass</code> 字段用类型提示只是为了「声明有哪些字段 + 默认值」,顺便让 IDE 补全。</p>
+
+<h2>知识点 4:什么时候根本不需要 getter/setter——用属性(property)</h2>
+<p>C++ 习惯「私有成员 + getX()/setX()」。Python 里字段通常直接公开访问(<code>obj.x</code>),只有当你需要「取值时做点计算/校验」才用 <code>@property</code>。而且从「普通字段」升级到 property<strong>不用改调用方</strong>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Circle</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">radius</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">radius</span> <span style="color: #000">=</span> <span style="color: #001080">radius</span>
+
+    <span style="color: #AF00DB">@property</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">area</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>                <span style="color: #008000"># 用起来像个字段,不用加括号</span>
+        <span style="color: #00F">return</span> <span style="color: #098658">3.14159</span> <span style="color: #000">*</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">radius</span> <span style="color: #000">**</span> <span style="color: #098658">2</span>
+
+<span style="color: #001080">c</span> <span style="color: #000">=</span> <span style="color: #001080">Circle</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">c</span><span style="color: #000">.</span><span style="color: #001080">area</span><span style="color: #000">)</span>                      <span style="color: #008000"># 12.56636,不是 c.area()</span>
+</pre>
+<p>调用方 <code>c.radius</code> 和 <code>c.area</code> 长得一样,都是「字段样」;<code>area</code> 其实是方法,每次现算。这就是「属性让你以后想加逻辑时不必改接口」。</p>
+
+<h2>知识点 5:dataclass 还能排序、加 setter</h2>
+<p>加 <code>order=True</code> 自动生成比较("&lt;", "&lt;="...);配合 <code>frozen=True</code> 变成只读(像 const):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">dataclasses</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">dataclass</span>
+
+<span style="color: #AF00DB">@dataclass</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Student</span><span style="color: #000">:</span>
+    <span style="color: #001080">grade</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span>
+    <span style="color: #001080">name</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">([</span><span style="color: #001080">Student</span><span style="color: #000">(</span><span style="color: #098658">80</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">),</span> <span style="color: #001080">Student</span><span style="color: #000">(</span><span style="color: #098658">90</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">)])</span>  <span style="color: #008000"># 按 grade 排</span>
+</pre>
+<p>需要只读:<code>@dataclass(frozen=True)</code>,之后给字段赋值会报错——相当于 C 的 const 对象思路。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">定义「装几个字段」的类,首选?</p>
+  <button class="opt" data-ok="false">手写全套 __init__</button>
+  <button class="opt" data-ok="true">@dataclass</button>
+  <button class="opt" data-ok="false">普通 dict</button>
+  <button class="opt" data-ok="false">property</button>
+  <p class="reveal">@dataclass 自动生成 __init__/__repr__/__eq__,省样板。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">可变默认值 tags: list 该怎么写?</p>
+  <button class="opt" data-ok="false">tags: list = []</button>
+  <button class="opt" data-ok="true">field(default_factory=list)</button>
+  <button class="opt" data-ok="false">tags: list = None</button>
+  <button class="opt" data-ok="false">不用默认值</button>
+  <p class="reveal">可变默认值要用 default_factory,避免所有实例共享同一个 list。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">x: float 类型提示运行时会强制吗?</p>
+  <button class="opt" data-ok="false">会强制</button>
+  <button class="opt" data-ok="true">不强制</button>
+  <button class="opt" data-ok="false">只有 debug 模式强制</button>
+  <button class="opt" data-ok="false">只对类字段强制</button>
+  <p class="reveal">类型提示默认不强制,是给 IDE/检查器/人看的意图声明。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">想把「可选计算逻辑」加给字段,又不改调用方?</p>
+  <button class="opt" data-ok="false">加 getter 方法</button>
+  <button class="opt" data-ok="true">@property</button>
+  <button class="opt" data-ok="false">改回 dict</button>
+  <button class="opt" data-ok="false">加倍 __init__ 参数</button>
+  <p class="reveal">@property 让它「用起来像字段、其实是方法」,后续加逻辑不必改调用代码。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0006_dataclass与类.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把手写 __init__ 的 Point 类改成 dataclass,再对答案</li>
+  <li><strong>练习 B</strong>:定义 User dataclass(带默认值 + 可变字段)、定义带 @property 面积计算的类</li>
+  <li><strong>练习 C</strong>:训练 repo 里某个手写构造/getter 的类 -> 改造成 dataclass / property</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/dataclasses.html">dataclasses 模块</a>」</strong>和「<a href="https://docs.python.org/zh-cn/3/library/functions.html#property">property 内置函数</a>」:dataclass 的完整参数与 property 的 getter/setter 用法,各 15 分钟。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:dataclass 有没有让你觉得「少写了几十行」?下一课讲<strong>常用标准库</strong>——itertools / pathlib / collections,那些 C 里得手写的东西。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-字典惯用法.html">← 上一篇:字典惯用法</a>
+  <a href="index.html">课程地图</a>
+  <a href="0007-常用标准库.html">下一篇:常用标准库 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

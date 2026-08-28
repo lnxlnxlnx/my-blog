@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 8 课：像素与调色板 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 8 课</nav>
+
+<h1>第 8 课：像素与调色板</h1>
+<p class="subtitle">屏幕上的每个点是怎么来的（《BMP 图片文件详解》第 1 部分：位图与调色板概念）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>搞懂"位图"到底是个什么东西——屏幕是像素矩阵，颜色是 RGB 三个分量按 0~255 量化出来的。然后掌握调色板这个经典省内存技巧：为什么 16 色图只要 20KB 而真彩色要 120KB。最后落到你的板子上：为什么 LVGL 用 16 位 RGB565 而不是 24 位。这是后面读懂 BMP 文件格式的地基。</p>
+</div>
+
+<h2>1. 位映象设备：屏幕就是像素矩阵</h2>
+
+<p>普通显示器由密密麻麻的点构成，每个点叫<strong>像素（Pixel）</strong>。显示时电子枪从左到右扫一行，给每个像素上色，再从上到下扫完一屏（《BMP 图片文件详解》第 1 节 <span class="pg">章节 1</span>）。防止闪烁要每秒重复几十次，比如分辨率 640×480、刷新率 70Hz，就是每行扫 640 个像素、共 480 行、每秒重复 70 遍。</p>
+
+<p>这种显示器叫<strong>位映象设备</strong>——"位映象"指一个二维像素矩阵。而<strong>位图（Bitmap）</strong>，就是采用位映象方法显示和存储的图像：用数字记录每个像素的颜色，屏幕上就能复现出来。你的 320×240 LCD 本质就是一块 320×240 的像素矩阵，每个像素一个 16 位 RGB565 值。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">+------------------ 一行 320 个像素 ------------------+
+| (0,0) (1,0) (2,0)  ...  (319,0)   <span style="color:#008000">← 扫描线，从左到右</span>
+| (0,1) (1,1) (2,1)  ...  (319,1)   <span style="color:#008000">← 第二行</span>
+|   .      .     .        .
+|   .      .     .        .
+| (0,239)(1,239) ... (319,239)     <span style="color:#008000">← 共 240 行，从上到下</span>
++--------------------------------------- 位映象设备 = 二维像素矩阵</pre>
+
+<p>把"每个像素存什么"想清楚，后面所有图像格式（BMP、WAV 其实同理）都只是"怎么把这堆数字装进文件"的问题。</p>
+
+<h2>2. RGB 三原色与量化：0~255 分级</h2>
+
+<p>自然界所有颜色都可由红、绿、蓝（R、G、B）组合而成。每种成分按含量分 0~255 共 256 个等级：0 级 = 不含该成分，255 级 = 100% 该成分（<span class="pg">章节 1</span>）。这种分级就叫<strong>量化</strong>。三通道一组合：256×256×256 ≈ 1600 万种颜色，人眼已经够用了。</p>
+
+<p>教材给出的常见颜色 RGB 值（<span class="pg">章节 1</span>）：</p>
+
+<table>
+<tr><th>颜色</th><th>R</th><th>G</th><th>B</th><th>一句话记忆</th></tr>
+<tr><td><strong>红</strong></td><td>255</td><td>0</td><td>0</td><td>只有红色成分</td></tr>
+<tr><td><strong>蓝</strong></td><td>0</td><td>0</td><td>255</td><td>只有蓝色成分</td></tr>
+<tr><td><strong>绿</strong></td><td>0</td><td>255</td><td>0</td><td>只有绿色成分</td></tr>
+<tr><td><strong>黄</strong></td><td>255</td><td>255</td><td>0</td><td>红+绿</td></tr>
+<tr><td><strong>紫</strong></td><td>255</td><td>0</td><td>255</td><td>红+蓝</td></tr>
+<tr><td><strong>青</strong></td><td>0</td><td>255</td><td>255</td><td>绿+蓝</td></tr>
+<tr><td><strong>白</strong></td><td>255</td><td>255</td><td>255</td><td>三色拉满</td></tr>
+<tr><td><strong>黑</strong></td><td>0</td><td>0</td><td>0</td><td>全为零</td></tr>
+<tr><td><strong>灰</strong></td><td>128</td><td>128</td><td>128</td><td>三等分</td></tr>
+</table>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>黄色 = 红+绿</strong>，想想黑板上的黄色粉笔——光的三原色和颜料三原色（青、品红、黄）是反着来的，别混。屏幕是发光的，所以是加色法。</p>
+</div>
+
+<h2>3. 调色板：用索引省内存</h2>
+
+<p>一幅长宽各 200 像素、只有 16 种颜色的图，如果每个像素都用 R、G、B 三个字节存：200×200×3 ≈ <strong>120KB</strong>（<span class="pg">章节 1</span>）。可这图总共只有 16 种颜色，绝大多数字节都在重复！</p>
+
+<p>聪明的做法：先建一张表，每行记录一种颜色的 R、G、B 值；像素里只存"颜色在表的第几行"——即<strong>索引值</strong>。这张表就是<strong>调色板（Palette）</strong>，也叫<strong>颜色查找表 LUT（LookUpTable）</strong>（<span class="pg">章节 1</span>）。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 调色板（颜色查找表）：16 行 × 3 字节 = 48 字节</span>
+索引  R    G    B
+  0  255    0    0      <span style="color:#008000">→ 红</span>
+  1    0  255    0      <span style="color:#008000">→ 绿</span>
+  ...
+ 15  ...  ...  ...
+
+<span style="color:#008000"># 像素数据：每个像素只存 4 位索引（0~15）</span>
+像素(0,0) = 0   <span style="color:#008000">// 查表得 红</span>
+像素(0,1) = 3   <span style="color:#008000">// 查表得 第 3 行的颜色</span></pre>
+
+<p>算笔账（<span class="pg">章节 1</span>）：16 种状态只需 4 位，一个像素半个字节。200×200×0.5 ≈ <strong>20KB</strong>，加上调色板表 3×16 = 48 字节。总共约 20KB，是原来的 <strong>1/6</strong>——省多了。</p>
+
+<p>反过来想：<strong>真彩色（TrueColor）</strong>图（256³ 种颜色）就不用调色板——索引也要 24 位才能区分 1600 万行，和直接存 RGB 一样大，还白搭一个 256×256×256×3 字节的巨型调色板，毫无便宜可占（<span class="pg">章节 1</span>）。所以真彩色直接每像素 3 字节存 RGB，又叫 <strong>24 位色图</strong>。</p>
+
+<h2>4. 你的屏幕：RGB565 与调色板的关系</h2>
+
+<p>你板子上的 LCD 是 320×240，每像素 16 位（<code>LV_COLOR_DEPTH 16</code>，RGB565：R 占 5 位、G 占 6 位、B 占 5 位）。用"每像素位数 × 像素数"算一屏显存：</p>
+
+<table>
+<tr><th>色深</th><th>每像素位数</th><th>320×240 一屏</th><th>说明</th></tr>
+<tr><td>1 位（黑白）</td><td>1 bit</td><td>320×240÷8 = <strong>9.6KB</strong></td><td>1 字节存 8 像素</td></tr>
+<tr><td>4 位（16 色）</td><td>4 bit</td><td>320×240÷2 = <strong>37.5KB</strong></td><td>1 字节存 2 像素（索引）</td></tr>
+<tr><td>8 位（256 色）</td><td>8 bit</td><td>320×240 = <strong>75KB</strong></td><td>1 字节 1 像素（索引）</td></tr>
+<tr><td><strong>16 位 RGB565</strong></td><td>16 bit</td><td>320×240×2 = <strong>150KB</strong></td><td>LVGL 当前配置</td></tr>
+<tr><td>24 位真彩</td><td>24 bit</td><td>320×240×3 = <strong>225KB</strong></td><td>每像素 3 字节</td></tr>
+</table>
+
+<p>两个关键结论：</p>
+<ul>
+<li><strong>为什么 565 省内存</strong>：人眼对绿色最敏感，565 给绿色多留 1 位，视觉损失极小，但比 24 位省 1/3 内存（每像素 2 字节 vs 3 字节）。嵌入式内存金贵，这是行业标准选择。</li>
+<li><strong>565 和调色板不是一回事</strong>：16 色调色板图每像素存的是"表索引"（4 位）；RGB565 每像素存的是<strong>直接的颜色值</strong>（无表）。前者叫索引色，后者叫直接色。真彩色图（含 24 位）不需要调色板，因为每个像素颜色都不同、查表没意义。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 初学者常混淆：<strong>16 位（RGB565）≠ 16 色</strong>！16 位是 2^16 = 65536 种颜色（"16 位色"），16 色是 2^4 = 16 种。一个是直接色、一个是索引色，机制完全不同——做 BMP 解析时看到 biBitCount=16 和 biBitCount=4 别搞混。</p>
+</div>
+
+<h2>5. 代码示例</h2>
+
+<p>示例 1：用 C 把"每像素位数"变成"显存/文件占用"。这里的行对齐公式来自 BMP 规范（下一课细讲），现在先感受"色深 → 字节数"的换算。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 色深与内存占用换算（第 8 课：位图概念） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&lt;stdint.h&gt;</span></span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> SCREEN_W   320     <span style="color:#008000">/* 屏幕宽度（像素） */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> SCREEN_H   240     <span style="color:#008000">/* 屏幕高度（像素） */</span></span>
+
+<span style="color:#008000">/* BMP 要求每行字节数是 4 的整倍数：先算出裸行字节数，再向上取整到 4 */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">bmp_line_bytes</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> width, <span style="color:#267F99">uint32_t</span> bpp)</span>
+{
+    <span style="color:#267F99">uint32_t</span> raw = (width * bpp + <span style="color:#098658">7</span>) / <span style="color:#098658">8</span>;   <span style="color:#008000">/* 裸行字节数 */</span>
+    <span style="color:#0000FF">return</span> (raw + <span style="color:#098658">3</span>) &amp; ~<span style="color:#098658">3u</span>;                 <span style="color:#008000">/* 向上取整到 4 的倍数 */</span>
+}
+
+<span style="color:#008000">/* 一屏显存（不按 BMP 对齐，直接算） */</span>
+<span style="color:#267F99">uint32_t</span> <span style="color:#795E26">frame_bytes</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> w, <span style="color:#267F99">uint32_t</span> h, <span style="color:#267F99">uint32_t</span> bpp)</span>
+{
+    <span style="color:#0000FF">return</span> w * h * bpp / <span style="color:#098658">8</span>;
+}
+
+<span style="color:#008000">/* 测试：打印各种色深下一屏 320×240 的占用 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">demo_color_depth</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99">const</span> <span style="color:#267F99">uint32_t</span> w = SCREEN_W, h = SCREEN_H;
+
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;1 位(黑白)  : %u KB\n&quot;</span>, frame_bytes(w, h, <span style="color:#098658">1</span>) / <span style="color:#098658">1024</span>);   <span style="color:#008000">/* 9 KB */</span>
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;4 位(16色)  : %u KB\n&quot;</span>, frame_bytes(w, h, <span style="color:#098658">4</span>) / <span style="color:#098658">1024</span>);   <span style="color:#008000">/* 37 KB */</span>
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;8 位(256色) : %u KB\n&quot;</span>, frame_bytes(w, h, <span style="color:#098658">8</span>) / <span style="color:#098658">1024</span>);   <span style="color:#008000">/* 75 KB */</span>
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;16 位(565)  : %u KB\n&quot;</span>, frame_bytes(w, h, <span style="color:#098658">16</span>) / <span style="color:#098658">1024</span>);  <span style="color:#008000">/* 150 KB */</span>
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;24 位(真彩) : %u KB\n&quot;</span>, frame_bytes(w, h, <span style="color:#098658">24</span>) / <span style="color:#098658">1024</span>);  <span style="color:#008000">/* 225 KB */</span>
+}</pre>
+
+<p>示例 2：24 位 RGB888 → 16 位 RGB565 转换。后面 0010 课解析 24 位 BMP 到 LCD 显示，核心就是这句。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 24 位 RGB(每分量 8 位) → 16 位 RGB565 */</span>
+<span style="color:#008000">/* 原理：把 8 位分量的高位&quot;浓缩&quot;成 5/6/5 位，丢弃低位细节 */</span>
+<span style="color:#267F99">uint16_t</span> <span style="color:#795E26">rgb888_to_565</span><span style="color:#001080">(<span style="color:#267F99">uint8_t</span> r, <span style="color:#267F99">uint8_t</span> g, <span style="color:#267F99">uint8_t</span> b)</span>
+{
+    <span style="color:#0000FF">return</span> ((<span style="color:#267F99">uint16_t</span>)(r &amp; <span style="color:#098658">0xF8</span>) &lt;&lt; <span style="color:#098658">8</span>) |   <span style="color:#008000">/* R: 取高5位, 放到 bit15~11 */</span>
+           ((<span style="color:#267F99">uint16_t</span>)(g &amp; <span style="color:#098658">0xFC</span>) &lt;&lt; <span style="color:#098658">3</span>) |   <span style="color:#008000">/* G: 取高6位, 放到 bit10~5  */</span>
+           (b &gt;&gt; <span style="color:#098658">3</span>);                        <span style="color:#008000">/* B: 取高5位, 放到 bit4~0   */</span>
+}
+
+<span style="color:#008000">/* 验证：红色 255,0,0 → 0xF800（lcd.h 里 RED 宏就是这个值） */</span>
+<span style="color:#267F99">uint16_t</span> red = rgb888_to_565(<span style="color:#098658">255</span>, <span style="color:#098658">0</span>, <span style="color:#098658">0</span>);    <span style="color:#008000">/* = 0xF800 ✓ */</span></pre>
+
+<div class="tip">
+  <p>💡 交叉验证：打开 <code>BSP/LCD/lcd.h</code>，看 <code>RED 0xF800</code>、<code>GREEN 0x07E0</code>、<code>BLUE 0x001F</code> 这些宏——正是上面公式的产物。你现在就能看懂驱动里颜色宏的来源了。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 8.1：算你的一屏</h3>
+  <p class="step">1️⃣ 把示例 1 的 <code>demo_color_depth()</code> 放进工程跑一遍（或心算），核对表中 4 个数。</p>
+  <p class="step">2️⃣ 追加两行：算 320×240 一屏在 16 位色深下，LVGL 的 <code>lv_disp_drv</code> 双缓冲（各 40 行）需要多少 RAM？（答案：40×320×2×2 = 50KB，你板子能扛得住吗？）</p>
+  <p class="step">3️⃣ 思考：把 200×200 的 16 色图用调色板方案存，最终占用约多少？验证"约 1/6"这个结论。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 8.2：手写 RGB 色值</h3>
+  <p class="step">1️⃣ 不查资料，写出 10 种颜色的 24 位 RGB（R,G,B 各 0~255），写完后对照第 2 节表格自查。</p>
+  <p class="step">2️⃣ 用 <code>rgb888_to_565()</code> 手算：粉红 (255, 192, 203)、橙色 (255, 165, 0) 的 RGB565 值是多少？（提示：纯粉红 255,0,255 → 0xF81F）</p>
+  <p class="step">3️⃣ 反过来：读 <code>lcd.h</code> 的 <code>GRAYBLUE 0x5458</code>，拆解出它对应的 24 位 R、G、B 大约是多少？</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 位映象设备指的是？</p>
+  <p class="opt">A. 扫描时逐像素着色的设备</p>
+  <p class="opt">B. 采用二维像素矩阵显示和存储图像的设备</p>
+  <p class="opt">C. 只支持黑白两色的显示设备</p>
+  <details><summary>查看答案</summary><div class="answer">B。"位映象"指二维像素矩阵，位图就是用位映象方法显示和存储的图像（章节 1）。</div></details>
+
+  <p class="q">Q2. RGB 三通道各 8 位量化后，共能表示多少种颜色？</p>
+  <p class="opt">A. 256 种</p>
+  <p class="opt">B. 65536 种</p>
+  <p class="opt">C. 约 1600 万种</p>
+  <details><summary>查看答案</summary><div class="answer">C。256×256×256 ≈ 1600 万（章节 1），对人眼已经足够。</div></details>
+
+  <p class="q">Q3. 200×200 的 16 色图，用调色板方案存储约需多少字节？</p>
+  <p class="opt">A. 约 120KB，每像素 3 字节直接存 RGB</p>
+  <p class="opt">B. 约 20KB，每像素 4 位存索引 + 48 字节调色板</p>
+  <p class="opt">C. 约 20KB，每像素 4 位存 RGB 值</p>
+  <details><summary>查看答案</summary><div class="answer">B。16 色 = 4 位索引，200×200×0.5 ≈ 20KB，加 3×16=48 字节调色板表，约为直接存储的 1/6（章节 1）。</div></details>
+
+  <p class="q">Q4. 为什么 24 位真彩色图不用调色板？</p>
+  <p class="opt">A. 因为真彩色图的颜色数太少用不着</p>
+  <p class="opt">B. 因为调色板技术只支持 16 种颜色</p>
+  <p class="opt">C. 索引也要 24 位，和直接存 RGB 一样大，还得白搭一张巨型调色板</p>
+  <details><summary>查看答案</summary><div class="answer">C。2^24 种颜色需要 24 位索引，与直接存 RGB 字节数相同，无收益反增开销（章节 1）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 《BMP 图片文件详解》第 1 部分——本课全部依据（位图与调色板概念、RGB 量化、120KB vs 20KB 的账）</li>
+<li>🔧 你工程里 <code>BSP/LCD/lcd.h</code> 的颜色宏区——对照本课 RGB565 公式，巩固印象</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 9 课——把 24 位真彩、16 色索引这些概念落到文件里，解剖 BMP 的四大组成部分（文件头/信息头/调色板/像素数据），逐字节读懂一个真实的 BMP。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0007-coding-style-vars-macros.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0009-bmp-format.html">下一课：BMP 文件结构 →</a>
+</nav>
+
+</div>
+</body>
+</html>

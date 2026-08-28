@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0002 · 模块与垂直切片</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>模块与垂直切片</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0002 · 预计 20 分钟</p>
+
+<p>上一课说了「每层放什么」。但还有个更重要的问题:<strong>按什么把代码切开?</strong>项目用<strong>模块(module)</strong>组织——每个模块代表业务里的一个有界语境(bounded context),模块内部再按「一个用例一个文件夹」切(垂直切片 Vertical Slicing)。本课讲清模块化思维与如何避免耦合。</p>
+
+<h2>知识点 1:按业务领域分模块,而非按技术分</h2>
+<p>反面写法(按技术类别堆一起,改一个功能要跨 N 个目录):</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 坏:all in one / 按技术层分</span>
+<span style="color: #008000">#   /controllers/user.py  /controllers/wallet.py</span>
+<span style="color: #008000">#   /services/user.py     /services/wallet.py</span>
+<span style="color: #008000">#   /models/user.py       /models/wallet.py</span>
+</pre>
+<p>项目的做法:按业务概念分模块,每模块自带它的层次:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 好:按业务领域分模块</span>
+<span style="color: #008000">#   /modules/user/    (domain / application / interface / infrastructure)</span>
+<span style="color: #008000">#   /modules/wallet/</span>
+<span style="color: #008000">#   /modules/order/</span>
+</pre>
+<p>好处是「一起变更的代码就近放着」;模块间少有依赖。这是 <a href="https://en.wikipedia.org/wiki/Cohesion_(computer_science)">高内聚</a>、<a href="https://en.wikipedia.org/wiki/Coupling_(computer_programming)">低耦合</a>的具体体现。</p>
+
+<h2>知识点 2:垂直切片——一个用例一个文件夹</h2>
+<p>模块内部,每个<strong>业务用例(use case)</strong>一个文件夹,把「这个用例需要的命令/服务/控制器」放一起,叫垂直切片:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># modules/user/</span>
+<span style="color: #008000">#   commands/</span>
+<span style="color: #008000">#     create-user/        ← 一个用例一文件夹</span>
+<span style="color: #008000">#       create-user.command.py</span>
+<span style="color: #008000">#       create-user.service.py</span>
+<span style="color: #008000">#       create-user.controller.py</span>
+<span style="color: #008000">#     update-user/</span>
+<span style="color: #008000">#   queries/</span>
+<span style="color: #008000">#     find-users/</span>
+</pre>
+<p>对照:项目里的 <code>src/modules/user/commands</code> 就是「user 模块的命令目录」,每个用例一个切面。读懂大项目时,先顺着一个用例的目录一路看下去,比横着扫一堆 service 文件清楚得多。</p>
+
+<h2>知识点 3:模块之间怎么少耦合(项目给的招)</h2>
+<p>直接 <code>import SomeClass from other_module</code> 会造成紧耦合。项目建议三招:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 1 抽公共:把共享逻辑放到独立文件,两边都依赖它,而不是互相依赖</span>
+<span style="color: #008000">#   shared/  (两模块都 import shared,不 import 彼此)</span>
+<span style="color: #008000"># 2 通过门面/中介者接触:模块只暴露公开门面 facade,隐藏内部私有</span>
+<span style="color: #008000">#   user_public.py  (module 公开接口)</span>
+<span style="color: #008000"># 3 用消息通信:命令总线命令、订阅对方发的事件(后面 0006 讲)</span>
+<span style="color: #008000">#   (commands bus / domain events)</span>
+</pre>
+<p>记忆:<strong>能靠「共同依赖」就别直接依赖</strong>;模块之间通信尽量走公开接口或消息。</p>
+
+<h2>知识点 4:为什么要这样——方便拆微服务 + 好重写</h2>
+<p>如果每个模块的边界(bounded context)切得对,将来可以把某个模块单独拆成微服务,不用动领域逻辑(Greg Young 的 <a href="https://youtu.be/Ed94CfxgsCA">The art of destroying software</a> 也讲:模块要小到能几天重写)。这就是「一个模块一个小应用」。</p>
+
+<h2>知识点 5:什么时候不要模块化过度</h2>
+<p>别为一个简单的增删改查硬切一堆模块和 facade。项目和你说的一样:<strong>推荐而非铁律</strong>,根据项目复杂度和规模取用。「模块要小、能重写」≠「什么都拆」。对小项目,一个模块、甚至单层脚本反而更合适。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">项目按什么组织代码?</p>
+  <button class="opt" data-ok="false">按技术类型</button>
+  <button class="opt" data-ok="true">按业务领域</button>
+  <button class="opt" data-ok="false">按文件大小</button>
+  <button class="opt" data-ok="false">按版本号</button>
+  <p class="reveal">按业务领域分模块,每模块自带 domain/application/interface/infrastructure。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">一个用例一个文件夹叫什么?</p>
+  <button class="opt" data-ok="false">单体</button>
+  <button class="opt" data-ok="true">垂直切片</button>
+  <button class="opt" data-ok="false">水平切片</button>
+  <button class="opt" data-ok="false">金字塔</button>
+  <p class="reveal">每个业务用例一个文件夹(含其命令/服务/控制器),叫垂直切片 Vertical Slicing。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">模块想避免耦合,首选?</p>
+  <button class="opt" data-ok="false">直接 import 对方</button>
+  <button class="opt" data-ok="true">抽公共依赖</button>
+  <button class="opt" data-ok="false">复制粘贴</button>
+  <button class="opt" data-ok="false">全局变量</button>
+  <p class="reveal">把共享逻辑抽到公共文件让两边都依赖它,而不是互相 import。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">模块切得好,将来可变成?</p>
+  <button class="opt" data-ok="false">一个进程</button>
+  <button class="opt" data-ok="true">独立微服务</button>
+  <button class="opt" data-ok="false">一个文件</button>
+  <button class="opt" data-ok="false">一个循环</button>
+  <p class="reveal">边界切对的模块可单独拆成微服务,不用动领域逻辑。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0002_模块与垂直切片.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:读项目源码轮廓(或本课目录图),指出 user 模块里有哪些 commands / resolution</li>
+  <li><strong>练习 B</strong>:给一个健身房系统设计 module 划分(会员/课程/预约…),每个模块列用例</li>
+  <li><strong>练习 C</strong>:改写 repo 里一个「按技术层堆」的旧代码为「按领域分模块」</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>看 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Modules 小节</strong>和它链接的 <a href="https://garywoodfine.com/implementing-vertical-slice-architecture/">Vertical Slice 文章</a>;<a href="https://martinfowler.com/bliki/BoundedContext.html">Martin Fowler 的 Bounded Context</a> 讲「模块边界」的来源。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:垂直切片的路你会顺着走一个用例了吗?下一课进入<strong>领域层第一个积木:实体 Entity 与聚合根 Aggregate</strong>。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0001-六边形总览与依赖方向.html">← 上一篇:六边形架构总览与依赖方向</a>
+  <a href="index.html">课程地图</a>
+  <a href="0003-实体与聚合根.html">下一篇:实体 Entity 与聚合根 Aggregate →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

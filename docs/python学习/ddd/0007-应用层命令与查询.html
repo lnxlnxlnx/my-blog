@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0007 · 应用层:应用服务/命令/查询 CQS</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>应用层:应用服务 / 命令 / 查询(CQS)</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0007 · 预计 25 分钟</p>
+
+<p>领域层讲完了,向外一层是<strong>应用层</strong>。它有两个核心:<strong>应用服务</strong>(编排一个用例)和<strong>命令-查询分离 CQS</strong>(改数据走命令 Command,读数据走查询 Query)。本课讲清「一个外部请求 → 命令/查询 → 应用服务 → 领域」这条线,以及那个 bus 是什么。</p>
+
+<h2>知识点 1:命令 Command——表达"用户想做什么"</h2>
+<p><strong>命令</strong>是个数据对象,描述一次"改变状态的意图"(CreateUserCommand),它<strong>不执行</strong>业务,只是"信号的载体"。改数据(增删改)归命令:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">dataclasses</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">dataclass</span>
+
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">CreateUserCommand</span><span style="color: #000">:</span>          <span style="color: #008000"># 命令:意图的数据,不含逻辑</span>
+    <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">name</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+</pre>
+<p>命令是"需求说明书":把一个参数传进去,交给处理器去执行。它和架构课学的 Command Pattern 类似但更轻——这里它主要是数据结构(<a href="https://en.wikipedia.org/wiki/Command%E2%80%93query_separation">CQS</a>)。</p>
+
+<h2>知识点 2:查询 Query——表达"想读什么"</h2>
+<p><strong>查询</strong>表示"找东西"的意图,只读不改。按 CQS,读和写在命令/查询上分开:</p>
+<pre lang="python" class="highlight"><span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">FindUsersQuery</span><span style="color: #000">:</span>
+    <span style="color: #001080">page</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span> <span style="color: #000">=</span> <span style="color: #098658">1</span>
+    <span style="color: #001080">limit</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span> <span style="color: #000">=</span> <span style="color: #098658">20</span>
+</pre>
+<p>重要:查询<strong>不产生副作用</strong>(不写库、不发文件)。项目里查询可以直接绕过领域层和仓储,直接查数据库——因为只是读(<a href="https://codeopinion.com/should-you-use-the-repository-pattern-with-cqrs-yes-and-no/">读模型可直查</a>)。写走命令、读走查询,代码意图更清楚。</p>
+
+<h2>知识点 3:应用服务 = 命令/查询的处理器</h2>
+<p>应用服务把命令变成领域动作:拿命令 → 造/取领域对象 → 执行领域方法 → 存库 → 返回。它是"一个用例一个服务":</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">CreateUserService</span><span style="color: #000">:</span>                       <span style="color: #008000"># 应用服务(命令处理器)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">repo</span><span style="color: #000">):</span>                  <span style="color: #008000"># 依赖注入端口(0008 讲)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">repo</span> <span style="color: #000">=</span> <span style="color: #001080">repo</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">handle</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">cmd</span><span style="color: #000">:</span> <span style="color: #001080">CreateUserCommand</span><span style="color: #000">):</span>
+        <span style="color: #001080">user</span> <span style="color: #000">=</span> <span style="color: #001080">User</span><span style="color: #000">(</span><span style="color: #001080">uuid</span><span style="color: #000">(),</span> <span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #001080">cmd</span><span style="color: #000">.</span><span style="color: #001080">email</span><span style="color: #000">))</span>  <span style="color: #008000"># 命令→领域对象</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">repo</span><span style="color: #000">.</span><span style="color: #001080">save</span><span style="color: #000">(</span><span style="color: #001080">user</span><span style="color: #000">)</span>                   <span style="color: #008000"># 经端口存库</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">id</span>
+</pre>
+<p>注意:<strong>应用服务自己不含业务规则</strong>(那在领域层);它只编排——把外面装成领域类型、叫领域方法、存取数据。业务判断都往下推给实体/值对象/领域服务。</p>
+
+<h2>知识点 4:Command Bus / Query Bus——解耦"谁发谁处理"</h2>
+<p>不直接 import 服务,而是发到一个 bus,由 bus 路由到对应处理器。这样调用方(repository)不知道也不关心"谁来做",避免耦合(想想 0006 的事件 bus 是一个思路):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">CommandBus</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">register</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">command_type</span><span style="color: #000">,</span> <span style="color: #001080">handler</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span><span style="color: #000">[</span><span style="color: #001080">command_type</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">handler</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">execute</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">command</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_handlers</span><span style="color: #000">[</span><span style="color: #0070C1">type</span><span style="color: #000">(</span><span style="color: #001080">command</span><span style="color: #000">)].</span><span style="color: #001080">handle</span><span style="color: #000">(</span><span style="color: #001080">command</span><span style="color: #000">)</span>
+
+<span style="color: #001080">bus</span> <span style="color: #000">=</span> <span style="color: #001080">CommandBus</span><span style="color: #000">()</span>
+<span style="color: #001080">bus</span><span style="color: #000">.</span><span style="color: #001080">register</span><span style="color: #000">(</span><span style="color: #001080">CreateUserCommand</span><span style="color: #000">,</span> <span style="color: #001080">CreateUserService</span><span style="color: #000">(</span><span style="color: #001080">repo</span><span style="color: #000">))</span>
+<span style="color: #001080">user_id</span> <span style="color: #000">=</span> <span style="color: #001080">bus</span><span style="color: #000">.</span><span style="color: #001080">execute</span><span style="color: #000">(</span><span style="color: #001080">CreateUserCommand</span><span style="color: #000">(</span><span style="color: #001080">email</span><span style="color: #000">=</span><span style="color: #A31515">&quot;a@x.com&quot;</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">=</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">))</span>
+</pre>
+<p>这就是 NestJS CQRS 的 <code>command bus</code>。好处:从任何地方发命令都不 import 具体服务;改实现不碰调用方。</p>
+
+<h2>知识点 5:命令别调命令——用事件衔接</h2>
+<p>项目强烈建议<strong>别让一个命令处理器去执行另一个命令</strong>(Command→Command 变耦合成链)。要用事件:<code>Command → Event → Command</code>。命令 A 完成就发布事件,事件的处理器再去发命令 B。这样链条是松耦合的,可扩展。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">"创建用户"这个意图用什么表达?</p>
+  <button class="opt" data-ok="false">Query</button>
+  <button class="opt" data-ok="true">Command</button>
+  <button class="opt" data-ok="false">ValueObject</button>
+  <button class="opt" data-ok="false">Entity</button>
+  <p class="reveal">改状态的操作(Create/Update/Delete)用 Command;读数据用 Query。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">查询 Query 应当?</p>
+  <button class="opt" data-ok="false">可写库</button>
+  <button class="opt" data-ok="true">只读无副作用</button>
+  <button class="opt" data-ok="false">发文件</button>
+  <button class="opt" data-ok="false">改状态</button>
+  <p class="reveal">Query 无副作用,只读取;写归 Command。读模型可绕过仓储直查库。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">应用服务是否该含业务规则?</p>
+  <button class="opt" data-ok="false">应该有</button>
+  <button class="opt" data-ok="true">不应有</button>
+  <button class="opt" data-ok="false">视心情</button>
+  <button class="opt" data-ok="false">全都在这</button>
+  <p class="reveal">应用服务只编排(转换类型、调领域方法、存库),业务规则在领域层。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">想让命令处理器别直接调另一个命令,用?</p>
+  <button class="opt" data-ok="false">深嵌套</button>
+  <button class="opt" data-ok="true">事件衔接</button>
+  <button class="opt" data-ok="false">全局变量</button>
+  <button class="opt" data-ok="false">脚本跳转</button>
+  <p class="reveal">Command→Event→Command,用事件而不是命令直接调命令,保持松耦合。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0007_应用层命令与查询.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:为"下单"写 CreateOrderCommand + 应用服务 handle</li>
+  <li><strong>练习 B</strong>:实现一个极简 CommandBus + QueryBus,注册并执行</li>
+  <li><strong>练习 C</strong>:离开 repo,用假 repo 对着应用服务写一个单元测试(不连库)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Application layer / Application Services / Commands and Queries</strong> 三小节,再点开它的 <a href="https://en.wikipedia.org/wiki/Command%E2%80%93query_separation">CQS</a> 与 <a href="https://docs.microsoft.com/en-us/azure/architecture/patterns/cqrs">CQRS</a> 链接。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:命令/查询分开了吗?下一课讲<strong>端口 Ports 与适配器 + 依赖注入落地</strong>——领域/应用层怎么"不碰数据库"却还能取到数据。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0006-领域事件与集成事件.html">← 上一篇:领域事件与集成事件</a>
+  <a href="index.html">课程地图</a>
+  <a href="0008-端口适配器与依赖注入.html">下一篇:端口 Ports 与适配器 + 依赖注入 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

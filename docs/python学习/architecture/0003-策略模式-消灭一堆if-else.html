@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0003 · 策略模式:消灭一堆 if/else</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>策略模式:消灭一堆 if/else</h1>
+<p class="meta">架构与设计模式 · 课程 0003 · 预计 20 分钟</p>
+
+<p>上一课的接口与多态,是「招式」;从这一课开始,我们学「套路」。<strong>策略模式(Strategy Pattern)</strong>是设计模式里最简单、也最实用的一个:它专门解决代码里最常见的一种坏味道——<strong>一堆 if/else 决定行为</strong>。</p>
+
+<h2>知识点 1:问题的样子——if/else 雪球</h2>
+<p>先看一段「典型演化出来」的代码。假设你在写电商结算,会员等级越多,折扣逻辑就越长:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">):</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;按会员等级计算折扣。&quot;&quot;&quot;</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">level</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;normal&quot;</span><span style="color: #000">:</span>          <span style="color: #008000"># 普通:不打折</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span>
+    <span style="color: #00F">elif</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">level</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;gold&quot;</span><span style="color: #000">:</span>          <span style="color: #008000"># 黄金:95 折</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.95</span>
+    <span style="color: #00F">elif</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">level</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;platinum&quot;</span><span style="color: #000">:</span>      <span style="color: #008000"># 铂金:9 折</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.90</span>
+    <span style="color: #00F">elif</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">level</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;birthday&quot;</span><span style="color: #000">:</span>      <span style="color: #008000"># 生日:8 折</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.80</span>
+    <span style="color: #00F">else</span><span style="color: #000">:</span>
+        <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;未知等级: {</span><span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">level</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+</pre>
+<p>这段代码有三个问题(<a href="https://refactoring.guru/zh/smells/switch-statements">Switch 语句坏味道</a>):</p>
+<ul>
+  <li><strong>加一个等级 = 改 checkout</strong>:每次新增会员等级,都得打开这个函数,改动一处影响全局(违反开闭原则)</li>
+  <li><strong>分支越滚越大</strong>:等你有 10 个等级 + 满减 + 节日促销,这个函数会有 100 行 if/else</li>
+  <li><strong>没法单独测</strong>:想测「黄金会员」的折扣,得先造一个 user、再调 checkout,分支逻辑和调用逻辑混在一起</li>
+</ul>
+
+<h2>知识点 2:策略模式的三张牌</h2>
+<p>策略模式把「每个分支里的算法」抽出来,各自封装成独立的类/函数,让它们<strong>可以互相替换</strong>。三个角色(<a href="https://refactoringguru.cn/design-patterns/strategy">官方讲解</a>):</p>
+<div class="grid">
+  <div class="card"><h3>策略 Strategy</h3><p>「算法」的接口/约定。例:Discount(只有一个方法 apply)。</p></div>
+  <div class="card"><h3>具体策略 ConcreteStrategy</h3><p>算法的每个版本。例:GoldDiscount、PlatinumDiscount。</p></div>
+  <div class="card"><h3>上下文 Context</h3><p>持有策略、负责调用的调用方。例:checkout。</p></div>
+</div>
+<p>一句话: <strong>上下文只认接口,具体策略随便换</strong>。这正是上一课学的依赖抽象,第一次实战。</p>
+
+<h2>知识点 3:重构——先定接口,再填实现</h2>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">abc</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ABC</span><span style="color: #000">,</span> <span style="color: #001080">abstractmethod</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Discount</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>                  <span style="color: #008000"># ① 策略接口:约定「怎么打折」</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">apply</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">total</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">NoDiscount</span><span style="color: #000">(</span><span style="color: #001080">Discount</span><span style="color: #000">):</span>           <span style="color: #008000"># ② 具体策略 1:普通</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">apply</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">total</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">total</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">GoldDiscount</span><span style="color: #000">(</span><span style="color: #001080">Discount</span><span style="color: #000">):</span>         <span style="color: #008000"># ② 具体策略 2:黄金</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">apply</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">total</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.95</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">PlatinumDiscount</span><span style="color: #000">(</span><span style="color: #001080">Discount</span><span style="color: #000">):</span>     <span style="color: #008000"># ② 具体策略 3:铂金</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">apply</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">total</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.90</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">discount</span><span style="color: #000">:</span> <span style="color: #001080">Discount</span><span style="color: #000">):</span>   <span style="color: #008000"># ③ 上下文:只认接口</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">discount</span><span style="color: #000">.</span><span style="color: #001080">apply</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span><span style="color: #000">)</span>
+
+
+<span style="color: #001080">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">GoldDiscount</span><span style="color: #000">())</span>       <span style="color: #008000"># 用法:传入哪个策略,就是哪种折扣</span>
+</pre>
+<p>对比重构前,三个问题全解决:</p>
+<ul>
+  <li><strong>加等级 = 新增一个类</strong>,<code>checkout</code> 一行不改(开闭原则)</li>
+  <li>每个策略独立成类,<strong>单独可测</strong>:<code>GoldDiscount().apply(100)</code> 直接断言</li>
+  <li>分支逻辑不再嵌套,每段都是平铺的小类</li>
+</ul>
+
+<h2>知识点 4:Python 特色——函数就是策略</h2>
+<p>经典教材里策略都是类(因为 Java 没有一等函数)。Python 里,<strong>一个函数/可调用对象就是一个现成的策略</strong>,更轻:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">discount</span><span style="color: #000">):</span>        <span style="color: #008000"># 上下文:传入任何「可调用对象」</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">discount</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">.</span><span style="color: #001080">total</span><span style="color: #000">)</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">no_discount</span><span style="color: #000">(</span><span style="color: #001080">total</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">total</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">gold_discount</span><span style="color: #000">(</span><span style="color: #001080">total</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.95</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">platinum_discount</span><span style="color: #000">(</span><span style="color: #001080">total</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">total</span> <span style="color: #000">*</span> <span style="color: #098658">0.90</span>
+
+
+<span style="color: #001080">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">gold_discount</span><span style="color: #000">)</span>        <span style="color: #008000"># 用法完全一样,少写了一堆类</span>
+</pre>
+<p>再配合第一课学过的<strong>注册表</strong>,就形成了 AI 代码里最常见的组合:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">DISCOUNTS</span> <span style="color: #000">=</span> <span style="color: #000">{</span>                         <span style="color: #008000"># 名字 → 函数 的注册表</span>
+    <span style="color: #A31515">&quot;normal&quot;</span><span style="color: #000">:</span> <span style="color: #001080">no_discount</span><span style="color: #000">,</span>
+    <span style="color: #A31515">&quot;gold&quot;</span><span style="color: #000">:</span> <span style="color: #001080">gold_discount</span><span style="color: #000">,</span>
+    <span style="color: #A31515">&quot;platinum&quot;</span><span style="color: #000">:</span> <span style="color: #001080">platinum_discount</span><span style="color: #000">,</span>
+<span style="color: #000">}</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">make_discount</span><span style="color: #000">(</span><span style="color: #001080">level</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">):</span>        <span style="color: #008000"># 工厂:按名字取策略</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">level</span> <span style="color: #AF00DB">not</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">DISCOUNTS</span><span style="color: #000">:</span>
+        <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;未知等级: {</span><span style="color: #001080">level</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">DISCOUNTS</span><span style="color: #000">[</span><span style="color: #001080">level</span><span style="color: #000">]</span>
+
+
+<span style="color: #001080">checkout</span><span style="color: #000">(</span><span style="color: #001080">order</span><span style="color: #000">,</span> <span style="color: #001080">make_discount</span><span style="color: #000">(</span><span style="color: #A31515">&quot;gold&quot;</span><span style="color: #000">))</span>
+</pre>
+<p>如果你现在回头看第一课 <code>make_trainer()</code> 的代码,会发现它就是「注册表 + 工厂」——只不过第一课注册的是类,这里注册的是函数。套路是同一个。</p>
+
+<h2>知识点 5:策略模式其实无处不在</h2>
+<p>你早就用过策略模式,只是没意识到:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># Python 内置的 sorted:key 参数就是「策略」</span>
+<span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #0070C1">len</span><span style="color: #000">)</span>                <span style="color: #008000"># 按长度排:一个策略</span>
+<span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #0070C1">str</span><span style="color: #000">.</span><span style="color: #001080">lower</span><span style="color: #000">)</span>          <span style="color: #008000"># 按字典序排:换一个策略</span>
+<span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #00F">lambda</span> <span style="color: #001080">s</span><span style="color: #000">:</span> <span style="color: #000">-</span><span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">))</span>  <span style="color: #008000"># 自定义策略,都不用改 sorted 源码</span>
+
+<span style="color: #008000"># 训练模型时传不同的模型对象,也是策略</span>
+<span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">make_trainer</span><span style="color: #000">(</span><span style="color: #A31515">&quot;svm&quot;</span><span style="color: #000">)</span>         <span style="color: #008000"># 换个名字,行为就换了</span>
+</pre>
+<p>认出来的好处:以后看到「函数作为参数传进来」「对象里有可替换的方法」,你就能说出这是策略模式——<strong>这就是能参与讨论的词汇量</strong>。</p>
+
+<h2>知识点 6:什么时候别用</h2>
+<p>设计模式不是越多越好。策略模式只值得用在:</p>
+<ul>
+  <li>同一行为确实有<strong>多个版本且会继续增加</strong>(折扣、排序、压缩、加密、计价……)</li>
+  <li>分支逻辑<strong>会变化</strong>(加一个策略就要改一次调用方,才是真痛点)</li>
+</ul>
+<p>如果就两三个分支、两年没变过,直接用 if/else 更简单——<strong>过度设计比没有设计更糟</strong>。判断标准一句话:分支在「变」,就用策略;分支在「死」,别折腾。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">策略模式想解决什么?</p>
+  <button class="opt" data-ok="false">消灭条件判断</button>
+  <button class="opt" data-ok="true">隔离不同算法</button>
+  <button class="opt" data-ok="false">简化所有代码</button>
+  <button class="opt" data-ok="false">加速运行速度</button>
+  <p class="reveal">不是消灭 if/else 本身,而是把每个分支里的「算法」隔离成独立单元,各自可替换、可测试。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">调用策略的是哪个?</p>
+  <button class="opt" data-ok="false">策略接口类</button>
+  <button class="opt" data-ok="false">具体策略类</button>
+  <button class="opt" data-ok="false">抽象算法类</button>
+  <button class="opt" data-ok="true">上下文对象</button>
+  <p class="reveal">上下文(Context)持有策略并调用它;策略接口只是约定,具体策略是约定的一份实现。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">Python 里策略可以是?</p>
+  <button class="opt" data-ok="false">私有内部类</button>
+  <button class="opt" data-ok="false">全局常量值</button>
+  <button class="opt" data-ok="true">普通函数对象</button>
+  <button class="opt" data-ok="false">泛型数据结构</button>
+  <p class="reveal">函数/可调用对象本身就是策略;类策略适合「带状态」的策略,函数策略更轻。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0003_策略模式.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:找出 if/else 版折扣代码的问题,然后用「策略类」重构(先自己写再对答案)</li>
+  <li><strong>练习 B</strong>:把同一个需求用「函数策略 + 注册表」再写一遍,对比两种写法的取舍</li>
+  <li><strong>练习 C</strong>:判断 5 个场景该不该用策略模式(答案内联在文件里)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 策略模式</strong>(<a href="https://refactoringguru.cn/design-patterns/strategy">中文版</a>):读「问题-解决方案-结构」三段,对照本课的折扣例子,再看一眼「真实世界类比」——交通应用里的导航策略。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 里函数策略和类策略你更喜欢哪个?为什么?下一课进入<strong>工厂模式(Factory)</strong>——你已经在第一课见过注册表工厂,下一课我们会把它和「为什么 AI 代码爱用工厂」讲透。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0002-接口与多态-ABC和Protocol.html">← 上一篇:接口与多态:ABC 和 Protocol</a>
+  <a href="index.html">课程地图</a>
+  <a href="0004-工厂模式-把创建和用分开.html">下一篇:工厂模式:把创建和用分开 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

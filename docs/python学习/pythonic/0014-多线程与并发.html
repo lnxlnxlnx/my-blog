@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0014 · 多线程与并发 threading/concurrent.futures</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>多线程与并发 threading / concurrent.futures</h1>
+<p class="meta">Pythonic 代码 · 课程 0014 · 预计 25 分钟</p>
+
+<p>C 里线程很麻烦(pthread_create,手动互斥锁)。Python 提供了两档:底层 <code>threading.Thread</code> 自己管线程和锁;<strong>现代推荐 <code>concurrent.futures</code></strong>——把「派一堆任务」「收集结果」封装好,几行搞定。本课先给最实用的 futures,再说 threading 与锁。</p>
+
+<h2>先记一句重要的:Python 线程的真相</h2>
+<p>Python 有 <strong>GIL(全局解释器锁)</strong>,同一时刻只有一个线程在执行 Python 字节码。<strong>计算密集任务用线程不会变快</strong>(C 程序员常幻想多线程=快)。但 <strong>IO 密集任务(网络、磁盘、睡眠)用线程/异步能大幅提速</strong>。所以:烧 CPU 用多进程(ProcessPoolExecutor),等 IO 用多线程/异步。</p>
+
+<h2>知识点 1:concurrent.futures ThreadPoolExecutor——最省心的并发</h2>
+<p>想「并发的做一堆 IO 任务」,用 <code>ThreadPoolExecutor.map</code> 或 <code>submit</code>,几行完事:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">concurrent.futures</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ThreadPoolExecutor</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fetch</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">):</span>
+    <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>          <span style="color: #008000"># 假装是网络请求</span>
+    <span style="color: #00F">return</span> <span style="color: #A31515">f&quot;OK {</span><span style="color: #001080">url</span><span style="color: #A31515">}&quot;</span>
+
+<span style="color: #001080">urls</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">f&quot;http://site/{</span><span style="color: #001080">i</span><span style="color: #A31515">}&quot;</span> <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)]</span>
+
+<span style="color: #008000"># map:把 fetch 依次应用到每个 url,并行的跑</span>
+<span style="color: #00F">with</span> <span style="color: #001080">ThreadPoolExecutor</span><span style="color: #000">(</span><span style="color: #001080">max_workers</span><span style="color: #000">=</span><span style="color: #098658">4</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">ex</span><span style="color: #000">:</span>
+    <span style="color: #001080">results</span> <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">ex</span><span style="color: #000">.</span><span style="color: #001080">map</span><span style="color: #000">(</span><span style="color: #001080">fetch</span><span style="color: #000">,</span> <span style="color: #001080">urls</span><span style="color: #000">))</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">results</span><span style="color: #000">)</span>
+<span style="color: #008000"># 5 个各睡 1 秒,4 个 worker 并发 ≈ 2 秒完成,而不是 5 秒</span>
+</pre>
+<p><code>ThreadPoolExecutor(max_workers=n)</code> 建一个线程池,<code>ex.map(f, list)</code> 并行地把 f 作用到每个元素、按序收集结果。<code>with</code> 会自动等全部完成并清理。</p>
+
+<h2>知识点 2:submit / as_completed——拿到每个结果,先完成的先处理</h2>
+<p><code>map</code> 按输入顺序给结果;<code>submit</code> 返回 future,配合 <code>as_completed</code> 谁先完成谁先被处理(适合耗时不均):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">concurrent.futures</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ThreadPoolExecutor</span><span style="color: #000">,</span> <span style="color: #001080">as_completed</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">job</span><span style="color: #000">(</span><span style="color: #001080">i</span><span style="color: #000">):</span>
+    <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">((</span><span style="color: #098658">5</span> <span style="color: #000">-</span> <span style="color: #001080">i</span><span style="color: #000">)</span> <span style="color: #000">*</span> <span style="color: #098658">0.2</span><span style="color: #000">)</span>   <span style="color: #008000"># job 0 最慢</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">i</span>
+
+<span style="color: #00F">with</span> <span style="color: #001080">ThreadPoolExecutor</span><span style="color: #000">(</span><span style="color: #001080">max_workers</span><span style="color: #000">=</span><span style="color: #098658">3</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">ex</span><span style="color: #000">:</span>
+    <span style="color: #001080">futures</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #001080">ex</span><span style="color: #000">.</span><span style="color: #001080">submit</span><span style="color: #000">(</span><span style="color: #001080">job</span><span style="color: #000">,</span> <span style="color: #001080">i</span><span style="color: #000">):</span> <span style="color: #001080">i</span> <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)}</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">fut</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">as_completed</span><span style="color: #000">(</span><span style="color: #001080">futures</span><span style="color: #000">):</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">fut</span><span style="color: #000">.</span><span style="color: #001080">result</span><span style="color: #000">())</span>    <span style="color: #008000"># 先完成的先打印:4,3,2,1,0</span>
+</pre>
+<p><code>fut.result()</code> 拿到返回值;任务里抛异常会在这里抛出。<code>as_completed</code> 按完成顺序 yield future。</p>
+
+<h2>知识点 3:烧 CPU 的任务用 ProcessPoolExecutor</h2>
+<p>计算密集(如大量浮点运算)线程被 GIL 卡住变不快,<strong>改用 <code>ProcessPoolExecutor</code></strong>,用多进程绕过 GIL(注意:开销更大,任务要能入队、不能传太复杂的对象):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">concurrent.futures</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ProcessPoolExecutor</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">heavy</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #0070C1">sum</span><span style="color: #000">(</span><span style="color: #001080">i</span> <span style="color: #000">*</span> <span style="color: #001080">i</span> <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">))</span>
+
+<span style="color: #00F">if</span> <span style="color: #001080">__name__</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;__main__&quot;</span><span style="color: #000">:</span>      <span style="color: #008000"># 多进程必须套这个</span>
+    <span style="color: #00F">with</span> <span style="color: #001080">ProcessPoolExecutor</span><span style="color: #000">(</span><span style="color: #001080">max_workers</span><span style="color: #000">=</span><span style="color: #098658">4</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">ex</span><span style="color: #000">:</span>
+        <span style="color: #001080">res</span> <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">ex</span><span style="color: #000">.</span><span style="color: #001080">map</span><span style="color: #000">(</span><span style="color: #001080">heavy</span><span style="color: #000">,</span> <span style="color: #000">[</span><span style="color: #098658">1_000_000</span><span style="color: #000">]</span> <span style="color: #000">*</span> <span style="color: #098658">4</span><span style="color: #000">))</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">res</span><span style="color: #000">)</span>
+</pre>
+<p><code>ProcessPoolExecutor</code> 用法和线程池一样,只是内核不同;多进程代码要放 <code>if __name__ == "__main__"</code> 里(上一课学过)。</p>
+
+<h2>知识点 4:底层 threading.Thread 与 join</h2>
+<p>要自己起一个单独线程跑一段任务,用 <code>threading.Thread</code>,<code>.start()</code> 启动、<code>.join()</code> 等它结束:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">threading</span><span style="color: #000">, </span><span style="color: #001080">time</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">worker</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;开始 {</span><span style="color: #001080">name</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+    <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;结束 {</span><span style="color: #001080">name</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #001080">t</span> <span style="color: #000">=</span> <span style="color: #001080">threading</span><span style="color: #000">.</span><span style="color: #001080">Thread</span><span style="color: #000">(</span><span style="color: #001080">target</span><span style="color: #000">=</span><span style="color: #001080">worker</span><span style="color: #000">,</span> <span style="color: #001080">args</span><span style="color: #000">=(</span><span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,))</span>
+<span style="color: #001080">t</span><span style="color: #000">.</span><span style="color: #001080">start</span><span style="color: #000">()</span>          <span style="color: #008000"># 在后台线程跑</span>
+<span style="color: #001080">t</span><span style="color: #000">.</span><span style="color: #001080">join</span><span style="color: #000">()</span>           <span style="color: #008000"># 主线程等 t 结束再继续</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;完毕&quot;</span><span style="color: #000">)</span>
+</pre>
+<p>什么时候手写 Thread?少数情况(需要 long-running 后台线程、精细控制)。多数「跑一批返回结果」的任务,futures 更省心。</p>
+
+<h2>知识点 5:共享数据与锁(进阶,先了解)</h2>
+<p>多个线程改同一个变量会有竞态;要保护共享数据用 <code>threading.Lock</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">threading</span>
+
+<span style="color: #001080">lock</span> <span style="color: #000">=</span> <span style="color: #001080">threading</span><span style="color: #000">.</span><span style="color: #001080">Lock</span><span style="color: #000">()</span>
+<span style="color: #001080">counter</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">inc</span><span style="color: #000">():</span>
+    <span style="color: #00F">global</span> <span style="color: #001080">counter</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">_</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">1000</span><span style="color: #000">):</span>
+        <span style="color: #00F">with</span> <span style="color: #001080">lock</span><span style="color: #000">:</span>          <span style="color: #008000"># 进入锁,保护临界区</span>
+            <span style="color: #001080">counter</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span>
+
+<span style="color: #001080">threads</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #001080">threading</span><span style="color: #000">.</span><span style="color: #001080">Thread</span><span style="color: #000">(</span><span style="color: #001080">target</span><span style="color: #000">=</span><span style="color: #001080">inc</span><span style="color: #000">)</span> <span style="color: #00F">for</span> <span style="color: #001080">_</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">t</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">threads</span><span style="color: #000">:</span> <span style="color: #001080">t</span><span style="color: #000">.</span><span style="color: #001080">start</span><span style="color: #000">()</span>
+<span style="color: #00F">for</span> <span style="color: #001080">t</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">threads</span><span style="color: #000">:</span> <span style="color: #001080">t</span><span style="color: #000">.</span><span style="color: #001080">join</span><span style="color: #000">()</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">counter</span><span style="color: #000">)</span>   <span style="color: #008000"># 应该 10000;没锁可能 &lt; 10000</span>
+</pre>
+<p><code>with lock:</code> 是带着锁的缩进块,像 with 文件一样自动释放。<strong>尽量避免共享可变状态</strong>(futures 的 map/submit 天然避免)比加锁更好。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">Python 里,哪种任务用线程能变快?</p>
+  <button class="opt" data-ok="false">纯计算</button>
+  <button class="opt" data-ok="true">IO 等待(网络/磁盘)</button>
+  <button class="opt" data-ok="false">浮点运算</button>
+  <button class="opt" data-ok="false">都不会</button>
+  <p class="reveal">GIL 让计算不并行,但 IO 等待时能并发;烧 CPU 用多进程。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">并发对一堆 IO 任务,最省心写法?</p>
+  <button class="opt" data-ok="false">threading.Thread 手写</button>
+  <button class="opt" data-ok="true">ThreadPoolExecutor.map</button>
+  <button class="opt" data-ok="false">while + sleep</button>
+  <button class="opt" data-ok="false">递归</button>
+  <p class="reveal">ThreadPoolExecutor 封装线程池和结果收集,几行并发。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">烧 CPU 的任务要并行,用?</p>
+  <button class="opt" data-ok="false">ThreadPoolExecutor</button>
+  <button class="opt" data-ok="true">ProcessPoolExecutor</button>
+  <button class="opt" data-ok="false">asyncio</button>
+  <button class="opt" data-ok="false">threading.Lock</button>
+  <p class="reveal">计算密集用多进程(ProcessPoolExecutor)绕过 GIL 变快。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">保护多线程共享变量,用?</p>
+  <button class="opt" data-ok="false">time.sleep</button>
+  <button class="opt" data-ok="true">threading.Lock</button>
+  <button class="opt" data-ok="false">while 循环</button>
+  <button class="opt" data-ok="false">ProcessPool</button>
+  <p class="reveal">共享可变数据要加锁(用 with lock:),但优先避免共享。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0014_多线程与并发.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写一个模拟 sleep 的任务,用 ThreadPoolExecutor.map 并发跑 6 个,对比耗时</li>
+  <li><strong>练习 B</strong>:用 submit + as_completed 处理耗时不均的任务;用 ProcessPoolExecutor 跑计算任务</li>
+  <li><strong>练习 C</strong>:判断题:下面任务该用线程还是多进程;写 counter+lock 演示竞态</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档<a href="https://docs.python.org/zh-cn/3/library/concurrent.futures.html">concurrent.futures</a></strong>:前半段(ThreadPoolExecutor / ProcessPoolExecutor / map / submit)够用。<strong>注意它也是 node/Java 里 Future 的熟悉形态。</strong></p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:Executor.map 是不是比手写线程舒服多了?下一课(收尾)讲<strong>测试与日志 pytest / logging</strong>——让你写的东西能被验证、出错能查。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0013-网络编程.html">← 上一篇:网络编程 requests / socket</a>
+  <a href="index.html">课程地图</a>
+  <a href="0015-测试与日志.html">下一篇:测试与日志 pytest / logging →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

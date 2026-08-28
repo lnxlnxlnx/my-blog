@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0001 · 数据结构 Series 与 DataFrame</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>数据结构 Series 与 DataFrame</h1>
+<p class="meta">Pandas 专题 · 课程 0001 · 预计 25 分钟 · 书 5.1 + hangsz 1、8</p>
+
+<p>pandas 的两大主角:<strong>Series</strong>(带标签的一维序列)与<strong>DataFrame</strong>(带标签的二维表)。你已会 numpy,这一课把三个关键心智装进脑子:<strong>① 有索引 index/columns;② 标签对齐;③ 缺失值 NaN</strong>。参考资料:[书 5.1](https://github.com/BrambleXu/pydata-notebook)、[hangsz 笔记 1](https://github.com/hangsz/pandas-tutorial)、[pandas 官方数据结构文档](https://pandas.pydata.org/docs/getting_started/intro_tutorials/01_table_oriented.html)。</p>
+
+<h2>知识点 1:Series——带索引的一维序列</h2>
+<p>从列表/字典造,自带 index(自动 0..n-1 或你指定):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+
+<span style="color: #008000"># 从列表:自动整数索引</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">7</span><span style="color: #000">])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">values</span><span style="color: #000">)</span>     <span style="color: #008000"># array([1, 3, -5, 7])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">index</span><span style="color: #000">)</span>      <span style="color: #008000"># RangeIndex(0,1,2,3)</span>
+
+<span style="color: #008000"># 从字典:键变成索引</span>
+<span style="color: #001080">s2</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">({</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">:</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">:</span> <span style="color: #098658">3</span><span style="color: #000">})</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s2</span><span style="color: #000">[</span><span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">])</span>      <span style="color: #008000"># 2</span>
+
+<span style="color: #008000"># 显式指定索引 + 名字</span>
+<span style="color: #001080">s3</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #000">-</span><span style="color: #098658">5</span><span style="color: #000">],</span> <span style="color: #001080">index</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;z&quot;</span><span style="color: #000">],</span> <span style="color: #001080">name</span><span style="color: #000">=</span><span style="color: #A31515">&quot;数据&quot;</span><span style="color: #000">)</span>
+</pre>
+<p>Series = numpy 数组 + 索引。取数据用索引不是下标:<code>s2["b"]</code>、<code>s[x]</code>。</p>
+
+<h2>知识点 2:标签对齐——字典对齐的核心魔法</h2>
+<p>两个 Series 相加时,<strong>按索引自动对齐</strong>,同名的才对上,对不上的得到 NaN:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">s_a</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">({</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">:</span> <span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">:</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">:</span> <span style="color: #098658">8</span><span style="color: #000">})</span>
+<span style="color: #001080">s_b</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">({</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">:</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;date&quot;</span><span style="color: #000">:</span> <span style="color: #098658">10</span><span style="color: #000">})</span>
+<span style="color: #001080">s_a</span> <span style="color: #000">+</span> <span style="color: #001080">s_b</span>
+<span style="color: #008000"># apple 7.0, banana 7.0, cherry NaN, date NaN (缺失)</span>
+</pre>
+<p>这是 pandas 与 numpy 最重要的差别:不用自己保证顺序,标签对齐自动处理。對不上的值是 <code>NaN</code>(缺失)。判断缺失用 <code>pd.isnull(x)/pd.notnull(x)</code>。</p>
+
+<h2>知识点 3:DataFrame——带行列标签的表格</h2>
+<p>DataFrame 由「字典: 列名→序列」或嵌套 dict 造出;自动对齐行索引,缺的填 NaN:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #000">{</span>
+    <span style="color: #A31515">&quot;state&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Ohio&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Ohio&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Nevada&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Nevada&quot;</span><span style="color: #000">],</span>
+    <span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">:</span>  <span style="color: #000">[</span><span style="color: #098658">2000</span><span style="color: #000">,</span> <span style="color: #098658">2001</span><span style="color: #000">,</span> <span style="color: #098658">2001</span><span style="color: #000">,</span> <span style="color: #098658">2002</span><span style="color: #000">],</span>
+    <span style="color: #A31515">&quot;pop&quot;</span><span style="color: #000">:</span>   <span style="color: #000">[</span><span style="color: #098658">1.5</span><span style="color: #000">,</span> <span style="color: #098658">1.7</span><span style="color: #000">,</span> <span style="color: #098658">2.4</span><span style="color: #000">,</span> <span style="color: #098658">2.9</span><span style="color: #000">],</span>
+<span style="color: #000">}</span>
+<span style="color: #001080">frame</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>        <span style="color: #008000"># 列=键,行=自动整数索引</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">.</span><span style="color: #001080">head</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">))</span>              <span style="color: #008000"># 看前2行</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">.</span><span style="color: #001080">columns</span><span style="color: #000">)</span>             <span style="color: #008000"># Index([&#39;state&#39;,&#39;year&#39;,&#39;pop&#39;])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">[</span><span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">])</span>             <span style="color: #008000"># 选一列(返回 Series)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">.</span><span style="color: #001080">index</span><span style="color: #000">)</span>               <span style="color: #008000"># 行索引</span>
+</pre>
+<p>DataFrame = 若干列的 Series 拼成表。可指定 columns 顺序、自定义行 index:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">frame2</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">DataFrame</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">,</span> <span style="color: #001080">columns</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;state&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;notexist&quot;</span><span style="color: #000">])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame2</span><span style="color: #000">)</span>                     <span style="color: #008000"># notexist 列全是 NaN;列按给的顺序</span>
+<span style="color: #001080">frame2</span><span style="color: #000">[</span><span style="color: #A31515">&quot;new&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">)</span>          <span style="color: #008000"># 加一列</span>
+<span style="color: #00F">del</span> <span style="color: #001080">frame2</span><span style="color: #000">[</span><span style="color: #A31515">&quot;new&quot;</span><span style="color: #000">]</span>                 <span style="color: #008000"># 删一列</span>
+</pre>
+<p>要哪几列就直接传 columns 列表;没在 data 里的列自动补 NaN;取行转置用 <code>frame.T</code>。</p>
+
+<h2>知识点 4:Index 对象——不可变的钥匙</h2>
+<p>行/列标签都是 <code>Index</code> 对象,<strong>不可变</strong>(不能改元素),能容纳重复值;支持切片、成员判断、并集交集:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">obj</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">),</span> <span style="color: #001080">index</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">idx</span> <span style="color: #000">=</span> <span style="color: #001080">obj</span><span style="color: #000">.</span><span style="color: #001080">index</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">idx</span><span style="color: #000">)</span>               <span style="color: #008000"># Index([&#39;a&#39;,&#39;b&#39;,&#39;c&#39;])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">idx</span><span style="color: #000">[:</span><span style="color: #098658">2</span><span style="color: #000">])</span>           <span style="color: #008000"># 切片</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a&quot;</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">idx</span><span style="color: #000">)</span>        <span style="color: #008000"># True</span>
+<span style="color: #001080">obj</span><span style="color: #000">.</span><span style="color: #001080">index</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;x&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;y&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;z&quot;</span><span style="color: #000">]</span>   <span style="color: #008000"># 想改:整个重新赋值(不是原位改)</span>
+
+<span style="color: #008000"># DataFrame 的行列也都是 Index</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">.</span><span style="color: #001080">columns</span><span style="color: #000">.</span><span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">frame</span><span style="color: #000">.</span><span style="color: #001080">index</span><span style="color: #000">.</span><span style="color: #001080">name</span><span style="color: #000">)</span>
+</pre>
+<p>Index 就像"字典的键集合":不可变、可哈希、按标签取。<a href="https://pandas.pydata.org/docs/reference/api/pandas.Index.html">Index API</a>。</p>
+
+<h2>知识点 5:快速看整体——info / head / shape / describe(hangsz 8)</h2>
+<p>拿到数据先"体检":</p>
+<pre lang="python" class="highlight"><span style="color: #001080">url</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;https://raw.githubusercontent.com/hangsz/pandas-tutorial/master/tips.csv&quot;</span>
+<span style="color: #001080">tips</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_csv</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #0070C1">type</span><span style="color: #000">(</span><span style="color: #001080">tips</span><span style="color: #000">),</span> <span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">shape</span><span style="color: #000">)</span>     <span style="color: #008000"># (244, 7) 行×列</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">head</span><span style="color: #000">()</span>                        <span style="color: #008000"># 前5行</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">tail</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">)</span>                       <span style="color: #008000"># 后3行</span>
+<span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">info</span><span style="color: #000">()</span>                        <span style="color: #008000"># 各列类型、非空数量</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">tips</span><span style="color: #000">.</span><span style="color: #001080">describe</span><span style="color: #000">())</span>             <span style="color: #008000"># 数值列统计(count/mean/std/min/max…)</span>
+</pre>
+<p><code>.info()</code> 看都有哪些列+类型+多少非空;<code>.describe()</code> 一次性给出数值统计;<code>.shape</code> 行×列。这三个是"第一眼看数据"标配。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">Series 与 numpy 数组的差别?</p>
+  <button class="opt" data-ok="false">没有差别</button>
+  <button class="opt" data-ok="true">有标签索引</button>
+  <button class="opt" data-ok="false">只能存数字</button>
+  <button class="opt" data-ok="false">不可变</button>
+  <p class="reveal">Series = numpy数组 + 索引;对齐/取名/缺失值都靠标签。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">两个 Series 相加,索引对不上的?</p>
+  <button class="opt" data-ok="false">报错</button>
+  <button class="opt" data-ok="true">补 NaN</button>
+  <button class="opt" data-ok="false">丢弃</button>
+  <button class="opt" data-ok="false">取第一个</button>
+  <p class="reveal">按索引对齐,同名的相加,对不上的得到 NaN(缺失)。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">DataFrame 的行列标签是?</p>
+  <button class="opt" data-ok="false">列表</button>
+  <button class="opt" data-ok="true">Index 对象</button>
+  <button class="opt" data-ok="false">元组</button>
+  <button class="opt" data-ok="false">dict</button>
+  <p class="reveal">行用 index、列用 columns,都是不可变的 Index 对象。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">快速看各列类型与缺失,用?</p>
+  <button class="opt" data-ok="false">.shape</button>
+  <button class="opt" data-ok="true">.info()</button>
+  <button class="opt" data-ok="false">.head()</button>
+  <button class="opt" data-ok="false">.value</button>
+  <p class="reveal">.info() 列出每列类型/非空数量;.describe() 给数值统计。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0001_数据结构Series与DataFrame.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A(书 5.1)</strong>:从 dict 造 Series 并观察对齐;从嵌套 dict 造 DataFrame 并指定列序</li>
+  <li><strong>练习 B(hangsz 1/8)</strong>:用 tips.csv 做 info/head/tail/describe 体检;练习 Series 的四个属性</li>
+  <li><strong>练习 C(补额外练习)</strong>:造一个"合并两 Series 出现 NaN"的例子;给 DataFrame 加减列;试 Index 并集</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>pandas 官方 <a href="https://pandas.pydata.org/docs/getting_started/">Getting started</a> 教程的「Data structures」部分;再翻 [书 5.1](https://github.com/BrambleXu/pydata-notebook) 与 [hangsz 笔记 1、8](https://github.com/hangsz/pandas-tutorial) 对应小节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:标签对齐这个"魔法"你感受到了吗?下一课讲<strong>基础功能:索引/选择/排序/统计</strong>(书 5.2/5.3 + hangsz 2/9/10)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-基础功能.html">下一篇:基础功能:索引、选择、排序、统计 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

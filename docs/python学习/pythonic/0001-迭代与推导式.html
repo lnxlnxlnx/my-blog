@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0001 · 从下标循环到迭代与推导式</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>从下标循环到迭代与推导式</h1>
+<p class="meta">Pythonic 代码 · 课程 0001 · 预计 20 分钟</p>
+
+<p>在 C/C++ 里你习惯了 <code>for (i=0; i&lt;n; i++)</code>——因为 C 的数组就只认下标。但 Python 的 list / dict 是<strong>容器</strong>,不是「带下标的格子」,最强的取数方式是<strong>直接迭代元素</strong>,而不是拿下标去「够」它。这一课帮你把「需要下标」的执念卸掉一大半。</p>
+
+<h2>知识点 1:for 直接遍历元素,而不是下标</h2>
+<p>C 思维:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">fruits</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">fruits</span><span style="color: #000">)):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">fruits</span><span style="color: #000">[</span><span style="color: #001080">i</span><span style="color: #000">])</span>          <span style="color: #008000"># 用下标去够</span>
+</pre>
+<p>Pythonic:list 本身就可迭代,直接拿元素:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">fruits</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">fruit</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">fruits</span><span style="color: #000">:</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">fruit</span><span style="color: #000">)</span>              <span style="color: #008000"># 直接是元素,不用下标</span>
+</pre>
+<p>要点:除非你真的<strong>需要下标</strong>,否则永远写 <code>for x in seq</code>。大多数时候你其实不需要下标。</p>
+
+<h2>知识点 2:真需要下标时用 enumerate</h2>
+<p>当你要「元素 + 它在第几个」时,<code>enumerate</code> 一次给你两个,别手写计数器:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">fruits</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">i</span><span style="color: #000">,</span> <span style="color: #001080">fruit</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">enumerate</span><span style="color: #000">(</span><span style="color: #001080">fruits</span><span style="color: #000">):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">i</span><span style="color: #000">,</span> <span style="color: #001080">fruit</span><span style="color: #000">)</span>            <span style="color: #008000"># 0 apple / 1 banana / 2 cherry</span>
+</pre>
+<p>还想从 1 开始数:<code>enumerate(fruits, start=1)</code>。这就是 Python 典型的「禁止 `i+=1`」的地方——计数交给内建。</p>
+
+<h2>知识点 3:两个序列并行,用 zip 不用双下标</h2>
+<p>C 思维(两个数组按同一下标并行):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">names</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Alice&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Cara&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">ages</span>  <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">25</span><span style="color: #000">,</span> <span style="color: #098658">30</span><span style="color: #000">,</span> <span style="color: #098658">22</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">)):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">[</span><span style="color: #001080">i</span><span style="color: #000">],</span> <span style="color: #001080">ages</span><span style="color: #000">[</span><span style="color: #001080">i</span><span style="color: #000">])</span>
+</pre>
+<p>Pythonic:用 <code>zip</code> 把两个容器「拉链」起来同时迭代:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">names</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;Alice&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Bob&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;Cara&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">ages</span>  <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">25</span><span style="color: #000">,</span> <span style="color: #098658">30</span><span style="color: #000">,</span> <span style="color: #098658">22</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">age</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">zip</span><span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">,</span> <span style="color: #001080">ages</span><span style="color: #000">):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">age</span><span style="color: #000">)</span>           <span style="color: #008000"># Alice 25 / Bob 30 / Cara 22</span>
+</pre>
+<p>想要下标 + 两边,《组合拳》:<code>for i, (name, age) in enumerate(zip(names, ages))</code>。</p>
+
+<h2>知识点 4:列表推导式——「筛选 + 变形」一行搞定</h2>
+<p>这是 C 程序员最震撼的一个:你要「把每个元素变个样,再挑出某些」,<strong>列表推导式(list comprehension)</strong>用方括号直接写出「结果长什么样」。</p>
+<p>C 思维(先建空列表,再循环 append):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">evens</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">):</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+        <span style="color: #001080">evens</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">evens</span><span style="color: #000">)</span>
+</pre>
+<p>Pythonic——一条推导式,先写「要什么」再写「从哪来、过滤条件」:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">evens</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span> <span style="color: #00F">if</span> <span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span><span style="color: #000">]</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">evens</span><span style="color: #000">)</span>                   <span style="color: #008000"># [0, 4, 16, 36, 64]</span>
+</pre>
+<p>读法口诀:[<strong>变形</strong> for <strong>变量</strong> in <strong>来源</strong> if <strong>条件</strong>]。同样的骨架还能用在字典(<code>{k: v for ...}</code>)、集合(<code>{x for ...}</code>)。</p>
+
+<h2>知识点 5:生成器表达式——数据很大时别急着建列表</h2>
+<p>推导式会一次性建好整个 list;如果数据很大 / 只需要逐个消费,用<strong>生成器表达式</strong>(圆括号),它是惰性的,用到才算一个:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">total</span> <span style="color: #000">=</span> <span style="color: #0070C1">sum</span><span style="color: #000">(</span><span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">1_000_000</span><span style="color: #000">))</span>   <span style="color: #008000"># 不会先建一百万项的列表</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">total</span><span style="color: #000">)</span>
+</pre>
+<p>对 <code>sum / min / max / any / all</code> 这类函数,直接塞生成器表达式,省内存又简洁。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">只想要每个元素,应该?</p>
+  <button class="opt" data-ok="false">for i in range(len(xs))</button>
+  <button class="opt" data-ok="false">for i, x in enumerate(xs)</button>
+  <button class="opt" data-ok="true">for x in xs</button>
+  <button class="opt" data-ok="false">zip 循环更合适</button>
+  <p class="reveal">只要元素本身就 <code>for x in xs</code>;下标没用就别要。enumerate 是「连点数一起要」时才用。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">要对两个列表按下标并行,Pythonic 写法?</p>
+  <button class="opt" data-ok="false">range(len(a)) 双下标</button>
+  <button class="opt" data-ok="true">zip(a, b)</button>
+  <button class="opt" data-ok="false">enumerate 嵌套两次</button>
+  <button class="opt" data-ok="false">列表推导式就够了</button>
+  <p class="reveal">并行迭代用 zip(a, b),自动对齐逐个配对,不用管下标。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">[x*x for x in nums if x&gt;2] 的顺序是?</p>
+  <button class="opt" data-ok="false">条件→来源→变形</button>
+  <button class="opt" data-ok="false">来源→变形→条件</button>
+  <button class="opt" data-ok="true">变形→来源→条件</button>
+  <button class="opt" data-ok="false">变形→条件→来源</button>
+  <p class="reveal">顺序:[变形 for 变量 in 来源 if 条件]。变形写最前,来源在中,条件在最后。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">数据百万条只求和,最省内存?</p>
+  <button class="opt" data-ok="false">先建大列表再 sum</button>
+  <button class="opt" data-ok="true">sum(x*x for x in r)</button>
+  <button class="opt" data-ok="false">列表推导式传给 sum</button>
+  <button class="opt" data-ok="false">for 循环手动累加</button>
+  <p class="reveal">生成器表达式是惰性求值,逐个算、不占内存;大数据的首选。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0001_迭代与推导式.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把 4 段 C 风格循环翻成 Pythonic(for x / enumerate / zip / 推导式),先把 C 版翻译,再对答案</li>
+  <li><strong>练习 B</strong>:写「打印带下标的课程列表」和「两个列表的姓名-成绩配对」</li>
+  <li><strong>练习 C</strong>:用推导式做三个真实小任务 + 训练自己 repo 里某段训练循环的列表逻辑</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Raymond Hettinger 的演讲《Transforming Code into Beautiful, Idiomatic Python》</strong>(<a href="https://www.youtube.com/watch?v=OSGv2VnC0go">YouTube</a>):他讲的第一个例子就是这个「别再 range(len())」的循环改造,而且讲得比我好。只看前 15 分钟就够本课用了。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 里哪个循环让你「改完还想改回下标」?下一课我们看<strong>内置函数与「函数当一等公民」</strong>——<code>sorted / map / filter / any / all / sum</code> 怎么让循环彻底消失。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-内置函数与一等公民.html">下一篇:内置函数与函数当一等公民 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

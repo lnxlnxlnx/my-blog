@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0012 · 音频基础：I2S / Codec / Opus</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>音频基础：I2S / Codec / Opus</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0012 · 预计 20 分钟</p>
+
+<p>xiaozhi 是语音设备,它的音频流水线占了固件一大半。这一课给你三个概念地图:<strong>I2S(数字音频总线)、Codec 芯片(模拟↔数字)、Opus(网络音频编码)</strong>。不要求你写音频代码,但读 xiaozhi 的 <code>audio/</code> 目录必须认识它们。</p>
+
+<h2>知识点 1:I2S——音频数据的公路</h2>
+<p>麦克风/喇叭是模拟信号,CPU 是数字世界,中间的桥梁是 Codec 芯片,而 Codec 和 CPU 之间走 <strong>I2S</strong>(数字音频串行总线):</p>
+<pre lang="text" class="highlight"><span style="color: #001080">Mic(模拟)</span> <span style="color: #000">→ Codec ADC →</span> <span style="color: #001080">I2S</span> <span style="color: #000">→ CPU(录音)</span>
+<span style="color: #001080">CPU(播放)</span> <span style="color: #000">→ I2S →</span> <span style="color: #001080">Codec DAC →</span> <span style="color: #001080">Speaker(模拟)</span>
+</pre>
+<p>IDF 里有 <code>i2s_std_init</code>(新 driver)或老 <code>i2s_driver_install</code>。采样率 16k/24k/48k、位数 16/24/32 都在配置里定。</p>
+
+<h2>知识点 2:Opus——网络语音编码</h2>
+<p>设备和服务器的音频走网络,用 <strong>Opus</strong> 编码(高压缩、低延迟、语音/音乐通吃)。xiaozhi 协议里每 60ms 一帧 Opus,设备收到就解码播放:</p>
+<pre lang="c" class="highlight"><span style="color: #795E26">esp_opus_decoder_create</span>(<span style="color: #098658">24000</span>, <span style="color: #098658">1</span>, &amp;dec);  <span style="color: #008000">// 24kHz 单声道</span>
+<span style="color: #795E26">esp_opus_decode</span>(dec, opus_pkt, len, pcm, &amp;out_len);
+</pre>
+<p>这就是为什么服务器端音乐要先转成 24k 单声道——和设备协商一致才不卡(还记得咱们改的 WAV 缓存吗)。</p>
+
+<h2>知识点 3:回声消除与唤醒(AFE)</h2>
+<p>音箱要"听到自己说的话又认出唤醒词",需要 <strong>AFE(音频前端)</strong>:回声消除(AEC)、降噪(NS)、唤醒词检测。乐鑫的 <code>esp-sr</code> 组件提供这些——xiaozhi 的 <code>audio/</code> 里就是 <code>AFE</code> 的封装。</p>
+
+<h2>动手</h2>
+<p>打开 <code>basic_routines/30_music</code> 和 <code>31_recoding</code>:确认音频走 I2S 还是 I2S 模拟,采样率多少。然后浏览 <code>xiaozhi-esp32-2.2.4/main/audio/</code> 目录,把文件名列下来——下一课逐个讲。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">CPU 和 Codec 之间走什么总线?</p>
+  <button class="opt" data-ok="true">I2S</button>
+  <button class="opt" data-ok="false">SPI</button>
+  <button class="opt" data-ok="false">UART</button>
+  <p class="reveal">I2S,数字音频专用串行总线。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">xiaozhi 与服务器之间音频用什么编码?</p>
+  <button class="opt" data-ok="true">Opus</button>
+  <button class="opt" data-ok="false">MP3</button>
+  <button class="opt" data-ok="false">WAV</button>
+  <p class="reveal">Opus,60ms 一帧,低延迟高压缩。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《音频驱动 I2S 文档》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/i2s.html">I2S API</a>)与 <a href="https://github.com/espressif/esp-sr">esp-sr(AFE/唤醒)</a> README。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课开始实战:读懂大工程的方法论 + xiaozhi 总览——把前面所有知识收拢到目标项目上。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0011-OTA升级机制.html">← 上一篇:OTA</a>
+  <a href="index.html">课程地图</a>
+  <a href="0013-读懂大工程与xiaozhi总览.html">下一篇:读大工程 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

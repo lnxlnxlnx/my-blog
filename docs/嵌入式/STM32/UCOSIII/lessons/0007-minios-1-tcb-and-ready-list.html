@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 7 课：MiniOS① TCB 与位图就绪表 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 7 课</nav>
+
+<h1>第 7 课：MiniOS① TCB 与位图就绪表</h1>
+<p class="subtitle">⭐ 手写内核第一步：任务控制块 + O(1) 就绪位图，把 µC/OS-III 的调度数据结构落地</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>从本课开始连续 6 课，我们动手造一个最小可运行的内核 <strong>MiniOS</strong>——设计以 µC/OS-III 为蓝本，逐层简化。第 1 步先写它的"骨架"：任务控制块 TCB 和位图就绪表。学完你能：画出 MiniOS 与 µC/OS-III 的对应关系；写出 <code>OS_PrioInsert / OS_PrioRemove / OS_PrioGetHighest</code> 三个位操作函数；并用 <code>__CLZ</code> 一条指令解释"为什么找最高优先级是 O(1)"。FreeRTOS 课的链表就绪表将在这里被完整对照。</p>
+</div>
+
+<h2>1. MiniOS 设计总览：目标、目录与对应关系</h2>
+
+<p>先定规矩。MiniOS 的野心只有一条：<strong>在 STM32F407 上跑起两个任务，让它们轮流打印串口</strong>——但每一步都必须亲手写出来。为此我们对照 µC/OS-III 的真实结构做"砍功能"（砍掉时间片、消息队列、内存管理等一切非核心），保留：<strong>位图就绪表 → 上下文切换 → 调度器 → 时基延时 → 信号量</strong>这条最小链路。</p>
+
+<table>
+<tr><th>MiniOS 文件</th><th>职责</th><th>µC/OS-III 对应物</th><th>本课交付</th></tr>
+<tr><td><code>cpu.h / cpu.c</code></td><td>CPU_STK 等类型别名、BASEPRI 临界区宏</td><td>µC/CPU（cpu_core.h/cpu_a.asm）</td><td>第 9 课落码</td></tr>
+<tr><td><code>os_core.h / os_core.c</code></td><td>TCB、位图就绪表、内核全局变量</td><td>os.h 的 OS_TCB、os_core.c 的 OS_PrioXXX</td><td>✅ 本课</td></tr>
+<tr><td><code>os_task.c</code></td><td>OSTaskStkInit、OSTaskCreate</td><td>os_task.c + 移植层 OSTaskStkInit</td><td>第 8、9 课</td></tr>
+<tr><td><code>os_sched.c</code></td><td>OSSched、OS_SchedNew、任务挂起/恢复</td><td>os_core.c 的 OSSched</td><td>第 9 课</td></tr>
+<tr><td><code>os_cpu_a.asm</code></td><td>PendSV 切换、OSStartHighRdy、OSCtxSw</td><td>Ports/ARM-Cortex-M 的 os_cpu_a.asm</td><td>第 8 课</td></tr>
+<tr><td><code>main.c</code></td><td>测试与演示代码</td><td>应用工程</td><td>每课一个版本</td></tr>
+</table>
+
+<div class="warn">
+  <p>⚠️ 工程纪律：MiniOS 写在你的 µC/OS-III 分支工程的 <code>MiniOS/</code> 目录下（当前分支不动）。FreeRTOS 课学过的所有切换/启动知识都会被直接复用——第 7、8 课的内容请先确保 FreeRTOS 第 6、7 课（启动流程、PendSV）已经消化，否则会看天书。</p>
+</div>
+
+<p>再明确一个概念对照（第 1 课剧透过）：µC/OS-III 的位图就绪表用一维数组 <code>OSPrioTbl[]</code>（第 1 课表格里写的 OSRdyGrp/OSRdyTbl 是 µC/OS-II 的两级位图写法，III 代简化了结构，但位操作思想一脉相承）。FreeRTOS 用"链表就绪表 + uxTopReadyPriority 位图找最高优先级"；<strong>µC/OS-III 的位图既是就绪记录、又是查找索引</strong>——这就是 O(1) 的来源。</p>
+
+<h2>2. TCB 结构体设计：从 OS_TCB 里挑"五脏"</h2>
+
+<p>µC/OS-III 的 OS_TCB 有几十个成员（PDF p.85~89），但大部分被配置项裁剪、或用于调试。我们只保留让内核能跑起来的五个（对照见注释）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_core.h（第 7 课交付版） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">ifndef</span>  OS_CORE_H</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_CORE_H</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;cpu.h&quot;</span>            <span style="color:#008000">/* CPU_STK / CPU_DATA / CPU_INT32U 等类型 */</span></span>
+
+<span style="color:#008000">/* ==================== 基本配置 ==================== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_CFG_PRIO_MAX       32u      <span style="color:#008000">/* 优先级总数（0~31），31 号留给空闲任务 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_TASK_STATE_RDY       1u     <span style="color:#008000">/* 任务状态：就绪 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_TASK_STATE_SUSPENDED 2u     <span style="color:#008000">/* 任务状态：挂起（第 9 课用） */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_TASK_STATE_DLY       3u     <span style="color:#008000">/* 任务状态：延时（第 10 课用） */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_STATE_OS_STOPPED     0u</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  OS_STATE_OS_RUNNING     1u</span>
+
+<span style="color:#008000">/* ==================== 类型别名（模仿 UCOS 的风格） ==================== */</span>
+<span style="color:#0000FF">typedef</span>  CPU_INT32U   OS_PRIO;         <span style="color:#008000">/* 任务优先级 */</span>
+<span style="color:#0000FF">typedef</span>  CPU_INT32U   OS_STATE;        <span style="color:#008000">/* 任务状态 */</span>
+<span style="color:#0000FF">typedef</span>  CPU_INT32U   OS_TICK;         <span style="color:#008000">/* 时基节拍计数（第 10 课用） */</span>
+
+<span style="color:#008000">/* ==================== 任务控制块 TCB ==================== */</span>
+<span style="color:#0000FF">typedef</span>  <span style="color:#267F99"><span style="color:#0000FF">struct</span>  <span style="color:#795E26">os_tcb</span>  <span style="color:#795E26">OS_TCB</span>;</span>
+<span style="color:#267F99"><span style="color:#0000FF">struct</span>  <span style="color:#795E26">os_tcb</span> {</span>
+    CPU_STK   *StkPtr;        <span style="color:#008000">/* ① 任务栈顶指针——必须是第一个成员！
+                               *   切换汇编零偏移取它（UCOS 的 OS_TCB.StkPtr，PDF p.85） */</span>
+    OS_PRIO    Prio;          <span style="color:#008000">/* ② 任务优先级，数值越小越高（OS_TCB.Prio，PDF p.86） */</span>
+    OS_STATE   TaskState;     <span style="color:#008000">/* ③ 任务状态：就绪/挂起/延时（OS_TCB.TaskState） */</span>
+    OS_TICK    TickRemain;    <span style="color:#008000">/* ④ 剩余延时节拍，第 10 课时基用（OS_TCB.TickRemain，PDF p.87） */</span>
+    <span style="color:#267F99">void</span>      *TaskEntryArg;  <span style="color:#008000">/* ⑤ 任务函数参数（OS_TCB.TaskEntryArg，调试用成员） */</span>
+};
+
+<span style="color:#008000">/* ==================== 内核全局变量 ==================== */</span>
+<span style="color:#0000FF">extern</span>  OS_TCB   *OSTCBCurPtr;         <span style="color:#008000">/* 当前运行任务的 TCB */</span>
+<span style="color:#0000FF">extern</span>  OS_TCB   *OSTCBHighRdyPtr;     <span style="color:#008000">/* 最高优先级就绪任务的 TCB */</span>
+<span style="color:#0000FF">extern</span>  OS_PRIO   OSPrioCur;           <span style="color:#008000">/* 当前任务优先级 */</span>
+<span style="color:#0000FF">extern</span>  OS_PRIO   OSPrioHighRdy;       <span style="color:#008000">/* 最高就绪优先级 */</span>
+<span style="color:#0000FF">extern</span>  OS_STATE  OSRunning;           <span style="color:#008000">/* 内核运行标志 */</span>
+
+<span style="color:#008000">/* ==================== 就绪表 API ==================== */</span>
+<span style="color:#267F99">void</span>     <span style="color:#795E26">OS_PrioInit</span>     <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;
+<span style="color:#267F99">void</span>     <span style="color:#795E26">OS_PrioInsert</span>   <span style="color:#001080">(OS_PRIO prio)</span>;
+<span style="color:#267F99">void</span>     <span style="color:#795E26">OS_PrioRemove</span>   <span style="color:#001080">(OS_PRIO prio)</span>;
+OS_PRIO  <span style="color:#795E26">OS_PrioGetHighest</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;
+
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span></pre>
+
+<p>两个设计要点：</p>
+
+<ul>
+<li><strong>StkPtr 必须是第一个成员</strong>——FreeRTOS 课第 6 课的"机制一"在这里完全复用：任务切换的本质是换栈，汇编 <code>LDR R0, [R1]</code> 零偏移取栈顶最快，所有切换代码都依赖这个约定。</li>
+<li><strong>TCB 池按优先级索引</strong>：MiniOS 用一个静态数组 <code>OSTCBTbl[OS_CFG_PRIO_MAX]</code> 充当"TCB 池"，优先级 P 的任务用槽位 P。这是对 µC/OS-III 的简化——UCOS 用 <code>OSRdyList[prio]</code> 双向链表支持"同优先级多任务 + 时间片"，MiniOS 初版牺牲这个能力（第 11 课之后可选扩展），换来的是索引直达、代码最短。</li>
+</ul>
+
+<h2>3. 位图就绪表：OSPrioTbl 与三个位操作</h2>
+
+<p>就绪表 = 一个 32 位字（我们的 OS_CFG_PRIO_MAX=32，数组只要 1 个元素；扩展时按 <code>(PRIO_MAX+31)/32</code> 加字）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_core.c（第 7 课交付版） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;os_core.h&quot;</span></span>
+
+<span style="color:#008000">/* 就绪位图：OSPrioTbl[0] 的 bit31~bit0 依次对应优先级 0~31
+ * 优先级 0（最高）→ bit31，优先级 31（最低，空闲任务）→ bit0
+ * 某个 bit 为 1 表示该优先级上有就绪任务 */</span>
+<span style="color:#267F99">static</span>  CPU_DATA  OSPrioTbl[ (OS_CFG_PRIO_MAX + <span style="color:#098658">31u</span>) &gt;&gt; <span style="color:#098658">5u</span> ];
+
+<span style="color:#008000">/* TCB 池：按优先级索引，槽位即优先级 */</span>
+OS_TCB   OSTCBTbl[OS_CFG_PRIO_MAX];
+
+OS_TCB   *OSTCBCurPtr;          <span style="color:#008000">/* 当前任务 */</span>
+OS_TCB   *OSTCBHighRdyPtr;      <span style="color:#008000">/* 最高优先级就绪任务 */</span>
+OS_PRIO   OSPrioCur;            <span style="color:#008000">/* 当前任务优先级 */</span>
+OS_PRIO   OSPrioHighRdy;        <span style="color:#008000">/* 最高就绪优先级 */</span>
+OS_STATE  OSRunning;            <span style="color:#008000">/* 内核运行标志 */</span>
+
+<span style="color:#008000">/* ---------- 就绪表初始化 ---------- */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_PrioInit</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_DATA  i;
+
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0u</span>; i &lt; (CPU_DATA)((OS_CFG_PRIO_MAX + <span style="color:#098658">31u</span>) &gt;&gt; <span style="color:#098658">5u</span>); i++) {
+        OSPrioTbl[i] = <span style="color:#098658">0u</span>;
+    }
+}
+
+<span style="color:#008000">/* ---------- 把优先级 prio 标记为就绪 ---------- */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_PrioInsert</span> <span style="color:#001080">(OS_PRIO prio)</span>
+{
+    CPU_DATA  bit;
+    CPU_DATA  bit_nbr;
+    OS_PRIO   ix;
+
+    ix      = prio &gt;&gt; <span style="color:#098658">5u</span>;                       <span style="color:#008000">/* 第几个字（32 个优先级一个字） */</span>
+    bit_nbr = prio &amp; <span style="color:#098658">0x1F</span>u;                     <span style="color:#008000">/* 字内第几位 */</span>
+    bit     = (CPU_DATA)<span style="color:#098658">1u</span> &lt;&lt; (<span style="color:#098658">31u</span> - bit_nbr);  <span style="color:#008000">/* 优先级 0 → bit31（最高位） */</span>
+    OSPrioTbl[ix] |= bit;                       <span style="color:#008000">/* 置位 */</span>
+}
+
+<span style="color:#008000">/* ---------- 把优先级 prio 标记为不就绪 ---------- */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_PrioRemove</span> <span style="color:#001080">(OS_PRIO prio)</span>
+{
+    CPU_DATA  bit;
+    CPU_DATA  bit_nbr;
+    OS_PRIO   ix;
+
+    ix      = prio &gt;&gt; <span style="color:#098658">5u</span>;
+    bit_nbr = prio &amp; <span style="color:#098658">0x1F</span>u;
+    bit     = (CPU_DATA)<span style="color:#098658">1u</span> &lt;&lt; (<span style="color:#098658">31u</span> - bit_nbr);
+    OSPrioTbl[ix] &amp;= ~bit;                      <span style="color:#008000">/* 清位 */</span>
+}
+
+<span style="color:#008000">/* ---------- 找最高优先级就绪任务：O(1) ---------- */</span>
+OS_PRIO  <span style="color:#795E26">OS_PrioGetHighest</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_DATA *p_tbl;
+    OS_PRIO   prio;
+
+    p_tbl = &amp;OSPrioTbl[<span style="color:#098658">0</span>];
+    prio  = <span style="color:#098658">0u</span>;
+    <span style="color:#0000FF">while</span> (*p_tbl == <span style="color:#098658">0u</span>) {                      <span style="color:#008000">/* 整字为 0 就跳下一个字（本工程只有 1 个字） */</span>
+        p_tbl++;
+        prio += <span style="color:#098658">32u</span>;
+    }
+    prio += (OS_PRIO)(<span style="color:#098658">31u</span> - __CLZ(*p_tbl));     <span style="color:#008000">/* 数前导零 → 最高位 1 的位置 */</span>
+    <span style="color:#0000FF">return</span> prio;
+}</pre>
+
+<p>三个函数就是 µC/OS-III 就绪表 API 的完整复刻（源码在 os_core.c，教材在 p.113、p.126、p.133 等多处调用）。数学验证一下 <code>OS_PrioGetHighest</code>：假设就绪的有优先级 3 和 7，则 <code>OSPrioTbl[0] = 0b...1011_1111_11...1</code> 里 bit(31-3)=bit28 和 bit(31-7)=bit24 为 1。前导零数 = 3，<code>31-3 = 28</code> → 优先级 3。一次 <code>__CLZ</code> 指令，常数时间——比 FreeRTOS 的链表遍历快得多。</p>
+
+<div class="tip">
+  <p>💡 为什么 bit 映射要"反着放"（优先级 0 在最高位）？因为 Cortex-M 的 CLZ 指令数的是"前导零"，天然从最高位开始找。把最高优先级放在最高位，<code>31 - __CLZ(word)</code> 一步就得到答案。这是"硬件指令与数据结构互相成就"的经典案例，FreeRTOS 课的 <code>31 - __clz(uxTopReadyPriority)</code> 彩蛋在本课正式转正。</p>
+</div>
+
+<h2>4. 就绪表初始化与第一个测试 main</h2>
+
+<p>初始化流程严格照搬 µC/OS-III：OSInit 里先 <code>OS_PrioInit()</code> 清位图、<code>OS_RdyListInit()</code> 清链表（我们简化为清 TCB 池），最后 <code>OSInitHook()</code> 算好 BASEPRI 边界（PDF p.110~113）。MiniOS 的 OSInit 精简为：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_core.c：内核初始化（第 7 课版，调度部分第 9 课补） ---------- */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OSInit</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_DATA  i;
+
+    OS_PrioInit();                      <span style="color:#008000">/* ① 就绪位图清零 */</span>
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0u</span>; i &lt; OS_CFG_PRIO_MAX; i++) {
+        OSTCBTbl[i].StkPtr     = (CPU_STK *)<span style="color:#098658">0</span>;
+        OSTCBTbl[i].Prio       = (OS_PRIO)i;
+        OSTCBTbl[i].TaskState  = OS_TASK_STATE_SUSPENDED;   <span style="color:#008000">/* 无任务 → 非就绪 */</span>
+        OSTCBTbl[i].TickRemain = <span style="color:#098658">0u</span>;
+    }
+    OSTCBCurPtr     = (OS_TCB *)<span style="color:#098658">0</span>;      <span style="color:#008000">/* ② 当前任务为空 */</span>
+    OSTCBHighRdyPtr = (OS_TCB *)<span style="color:#098658">0</span>;
+    OSPrioCur       = <span style="color:#098658">0u</span>;
+    OSPrioHighRdy   = <span style="color:#098658">0u</span>;
+    OSRunning       = OS_STATE_OS_STOPPED;
+}
+
+<span style="color:#008000">/* ---------- main.c：第 7 课验收测试 ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;os_core.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;usart.h&quot;</span>      <span style="color:#008000">/* 板级串口 */</span></span>
+
+<span style="color:#267F99">int</span> <span style="color:#795E26">main</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    OS_ERR  err;                        <span style="color:#008000">/* 占位，第 9 课才真正用于任务创建 */</span>
+
+    HAL_Init();
+    uart_init(<span style="color:#098658">115200</span>);
+    OSInit();
+
+    <span style="color:#008000">/* 模拟&quot;创建了 3 个任务&quot;：优先级 2、3、31（31 是空闲任务）进入就绪表 */</span>
+    OS_PrioInsert(<span style="color:#098658">31u</span>);
+    OS_PrioInsert(<span style="color:#098658">3u</span>);
+    OS_PrioInsert(<span style="color:#098658">2u</span>);
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;highest = %d\r\n&quot;</span>, OS_PrioGetHighest());    <span style="color:#008000">/* 应输出 2 */</span>
+
+    OS_PrioRemove(<span style="color:#098658">2u</span>);                                  <span style="color:#008000">/* 任务 2 让出/挂起 */</span>
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;highest = %d\r\n&quot;</span>, OS_PrioGetHighest());    <span style="color:#008000">/* 应输出 3 */</span>
+
+    OS_PrioRemove(<span style="color:#098658">3u</span>);
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;highest = %d\r\n&quot;</span>, OS_PrioGetHighest());    <span style="color:#008000">/* 应输出 31（只剩空闲） */</span>
+
+    <span style="color:#0000FF">for</span> (;;) { ; }
+}</pre>
+
+<p>验收很简单：串口依次打印 2、3、7。跑通了，就说明位图插入/删除/取最高三个核心操作正确——下一课的切换汇编要站在这个地基上。</p>
+
+<h2>5. 本课交付与 FreeRTOS 对照</h2>
+
+<p>本课落地的代码（<code>MiniOS/os_core.h</code> + <code>MiniOS/os_core.c</code> + 测试 main）：TCB 结构体、TCB 池、OSInit、就绪表初始化、三个位操作函数。对照 FreeRTOS 第 5 课，两种就绪表设计殊途同归：</p>
+
+<table>
+<tr><th>维度</th><th>FreeRTOS（第 5 课）</th><th>µC/OS-III / MiniOS（本课）</th></tr>
+<tr><td>就绪任务组织</td><td>pxReadyTasksLists[32] 链表数组</td><td>OSPrioTbl[] 位图（+ TCB 池索引）</td></tr>
+<tr><td>最高优先级查找</td><td>位图找优先级 → 链表取任务</td><td>位图直接出答案，一步到位</td></tr>
+<tr><td>同优先级多任务</td><td>链表多节点，时间片轮转</td><td>UCOS 用 OSRdyList 链表支持；MiniOS 暂不支持</td></tr>
+<tr><td>优先级方向</td><td>数值越大越高</td><td>数值越小越高（bit 高位 = 高优先级）</td></tr>
+<tr><td>查找复杂度</td><td>位图 O(1) + 链表 O(1)</td><td><strong>纯位图 O(1)</strong>（__CLZ 一条指令）</td></tr>
+</table>
+
+<p>一句话：<strong>FreeRTOS 的位图是"索引"，µC/OS-III 的位图是"答案"</strong>。两种都是教科书级设计——你在两门课里亲手实现了它们，这比任何结论都值钱。</p>
+
+<h2>动手练习（约 25 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 7.1：在 MiniOS/ 写下 TCB 与就绪表代码</h3>
+  <p class="step">1️⃣ 在你的 µC/OS-III 分支工程下新建 <code>MiniOS/</code> 目录，按本课第 2、3 节代码写下 <code>os_core.h</code> 和 <code>os_core.c</code>（中文注释自己补全，理解每一行再落笔）。</p>
+  <p class="step">2️⃣ 写一个 <code>cpu.h</code> 的"迷你版"：只需 <code>typedef unsigned int CPU_STK; typedef unsigned int CPU_DATA; typedef unsigned int CPU_INT32U;</code> 三个别名（正式版第 9 课补临界区宏）。</p>
+  <p class="step">3️⃣ 把两个文件加进工程（或直接和 main.c 一起编译），跑第 4 节的测试 main。</p>
+  <p class="step">4️⃣ 验收标准：串口依次打印 2、3、31；再用调试器 Watch <code>OSPrioTbl[0]</code>，亲手验证插入 2/3/31 后位图的值（bit29、bit28、bit0 置 1）。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 7.2：位图边界实验</h3>
+  <p class="step">1️⃣ 在测试 main 里连续插入 <code>OS_PrioInsert(0u)</code> 和 <code>OS_PrioInsert(31u)</code>，验证 <code>OS_PrioGetHighest()</code> 返回 0——优先级 0 必须压过一切（这就是 UCOS 保留 0/1 给内核任务的原因）。</p>
+  <p class="step">2️⃣ 把 <code>OS_CFG_PRIO_MAX</code> 改成 64，重新算 <code>OSPrioTbl</code> 的数组长度（应变成 2 个字），插入优先级 40，验证 <code>OS_PrioGetHighest</code> 的 while 循环能正确跳过第一个空字返回 40。</p>
+  <p class="step">3️⃣ 思考题：为什么空闲任务必须"常驻就绪表"（bit0 永远为 1）？如果位图全 0，<code>OS_PrioGetHighest</code> 会怎样？（提示：while 会越界——这正是 UCOS 无论如何都保证最低优先级有位的原因，PDF p.113 的 OS_PrioInit 注释。）</p>
+  <p class="step">4️⃣ 验收标准：能口头解释"位图永不为空"这个不变式，以及它在调度器里的安全意义。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. MiniOS 的 OSPrioTbl 中，优先级 5 对应哪个 bit？</p>
+  <p class="opt">A. bit5</p>
+  <p class="opt">B. bit26</p>
+  <p class="opt">C. bit31</p>
+  <p class="opt">D. bit27</p>
+  <details><summary>查看答案</summary><div class="answer">B。bit_nbr = 5 &amp; 0x1F = 5，bit = 1 &lt;&lt; (31-5) = 1 &lt;&lt; 26。优先级越小越靠近高位（OS_PrioInsert 实现）。</div></details>
+
+  <p class="q">Q2. OS_PrioGetHighest 用 __CLZ 在做什么？</p>
+  <p class="opt">A. 统计就绪任务的总数量</p>
+  <p class="opt">B. 清零位图中最高位的 1</p>
+  <p class="opt">C. 数前导零，定位位图最高位的 1</p>
+  <p class="opt">D. 反转位图的比特顺序</p>
+  <details><summary>查看答案</summary><div class="answer">C。前导零数 n 对应的最高位 1 位置是 31-n，即最高就绪优先级，一条指令 O(1) 完成查找。</div></details>
+
+  <p class="q">Q3. TCB 第一个成员为什么必须是 StkPtr？</p>
+  <p class="opt">A. 编译器要求结构体首成员为指针</p>
+  <p class="opt">B. 切换汇编零偏移取栈顶，约定俗成</p>
+  <p class="opt">C. 方便统计任务栈使用量</p>
+  <p class="opt">D. 任务名数组必须排在指针后面</p>
+  <details><summary>查看答案</summary><div class="answer">B。任务切换的本质是换栈；PendSV 汇编用 ldr r0,[r1] 取 TCB 第一个字当新栈顶，零偏移最快。µC/OS-III 与 FreeRTOS 都遵守这个约定（PDF p.85、FreeRTOS 课第 6 课）。</div></details>
+
+  <p class="q">Q4. 与 FreeRTOS 链表就绪表相比，位图就绪表的直接优势是？</p>
+  <p class="opt">A. 支持任意数量的同优先级任务</p>
+  <p class="opt">B. 找最高优先级一步到位，无需二级查找</p>
+  <p class="opt">C. 节省内存，不需要任务控制块</p>
+  <p class="opt">D. 调度器可以不做任务选择</p>
+  <details><summary>查看答案</summary><div class="answer">B。位图既是就绪记录又是查找索引，__CLZ 直接出最高优先级；FreeRTOS 需先查位图再按优先级进链表取任务。同优先级多任务恰恰是 UCOS 用 OSRdyList 链表补的。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》5.5 节（<span class="pg">PDF p.84~89</span>）——OS_TCB 完整结构，对照本课"砍掉"的成员</li>
+<li>📖 同书 7.3 节（<span class="pg">PDF p.110~117</span>）——OSInit 里 OS_PrioInit/OS_RdyListInit 的原始调用流程</li>
+<li>🔁 对照：<a href="../../FreeRTOS/lessons/0005-lists-and-list-items.html">FreeRTOS 课程第 5 课（列表与列表项）</a>——链表就绪表的家底，本课对照的基准</li>
+<li>🌐 <a href="https://arm-software.github.io/CMSIS_5/core/html/group__intrinsic__CS.html">CMSIS 内置函数文档（__CLZ）</a>——CLZ 指令的官方说明</li>
+</ul>
+
+<div class="footer-note">
+  <p>地基打好了：TCB 池 + 就绪位图，下一个任务是让这些数据结构"动"起来。下一课 MiniOS②：任务栈初始化 + PendSV 切换汇编——让 CPU 真的从一个任务跳到另一个任务。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0006-interrupts-and-critical-sections.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0008-minios-2-context-switch.html">下一课：MiniOS② 上下文切换 →</a>
+</nav>
+
+</div>
+</body>
+</html>

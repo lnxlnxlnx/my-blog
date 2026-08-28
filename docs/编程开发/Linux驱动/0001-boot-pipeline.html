@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L01 · 看清启动全过程 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L01 · 看清启动全过程：从电源到你的 Qt 界面</h1>
+<p class="meta"><span class="tag">阶段 0</span><span class="tag">零风险·只读</span> · 动手约 20 分钟</p>
+<p class="lead">今天不写任何代码、不改任何东西。目标：按一下电源，你亲眼看着这颗芯片走完整个启动流水线，并把它每一步对应到你板子上真实的"镜像放哪、日志长什么样"。</p>
+
+<h2>启动一共是哪四棒</h2>
+<p>嵌入式 Linux 的启动不是"一个东西启动了"。它是四段程序接力：</p>
+<ol>
+<li><strong>BootROM</strong>（芯片内部固化，出厂写死）：上电先跑，做最小初始化，然后按启动拨码去存储介质里找 u-boot。</li>
+<li><strong>u-boot</strong>（引导程序）：初始化 DDR、串口、网卡等，把 <strong>zImage（内核）</strong> 和 <strong>dtb（设备树）</strong> 加载进内存，跳转执行内核。</li>
+<li><strong>Linux 内核</strong>：打印启动日志，根据 dtb 认硬件、匹配驱动，最后挂载 <strong>根文件系统</strong> 并启动 init 进程。</li>
+<li><strong>根文件系统里的用户态</strong>：init → 各种服务 → 你的 Qt/systemui。之后的"整个世界"都在这一层。</li>
+</ol>
+<p>记住这句话：<strong>前三棒负责"把系统激活"，第四棒负责"活成什么样"。</strong></p>
+
+<h2>它们在存储介质里的典型布局</h2>
+<p>以最常见的 SD/eMMC 布局为例（你的板子可能略有不同，练习里要自己求证）：</p>
+<table>
+<tr><th>位置</th><th>内容</th><th>由谁读取</th></tr>
+<tr><td>最前部（如偏移 1KB 处）</td><td>u-boot.imx（带 IVT 头的 u-boot）</td><td>BootROM</td></tr>
+<tr><td>一个可读分区（FAT/ext4）</td><td>zImage + dtb</td><td>u-boot（按 bootcmd 加载）</td></tr>
+<tr><td>挂载为 / 的分区（ext4）</td><td>根文件系统</td><td>内核（按 bootargs 里 root= 挂载）</td></tr>
+</table>
+<p>u-boot 传给内核的启动参数叫 <strong>bootargs</strong>（也叫 cmdline）。它变成内核里的 <code>/proc/cmdline</code>。这是全流程串起来的"胶水"。详见 <a href="../reference/glossary.html">术语表</a>。</p>
+
+<h2>抓一份真实的 boot 日志</h2>
+<p>你要做的第一步永远是<b>记录现场</b>。接上串口线，开串口终端，复位板子：</p>
+<pre><code class="language-bash"># 1. 先确认串口设备名（插拔后有新行出现的就是）
+dmesg | tail -20                 # 找 ttyUSB0 / ttyACM0
+
+# 2. 打开串口终端，115200 波特率（screen 最轻量）
+screen /dev/ttyUSB0 115200
+
+# 3. 拨/按复位，或断电重上电 —— 你会看到满屏日志开始滚动
+#    建议同时用 script 存一份：
+script -c "screen /dev/ttyACM0 115200" ~/boot1.log</code></pre>
+
+<div class="exercise">
+<div class="t">练习 L01-A：在日志里找到四段接力棒</div>
+<p>把日志里出现以下"特征行"的位置找出来，标出它们各自属于哪一段：</p>
+<ol>
+<li><code>U-Boot 20xx.xx-...</code> 或 <code>Hit any key to stop autoboot</code> → u-boot 段</li>
+<li><code>Starting kernel ...</code>、<code>Linux version 4.1.15-...</code> → 内核段</li>
+<li><code>VFS: Mounted root (ext4) filesystem</code> 或 <code>mount_root</code> → 挂载根文件系统</li>
+<li>出现登录提示符或 shell/systemui 字样 → 用户态起来了</li>
+</ol>
+<p>小技巧：<code>Ctrl-A</code> <code>然后 k</code> 退出 screen。日志长的话可以先 <code>Ctrl-A</code> <code>[</code> 进入翻页模式。</p>
+</div>
+
+<h2>从运行中的系统反推布局</h2>
+<p>光看启动日志还不够——你要证明"我知道它从哪读的"。上板（SSH 或串口 shell）跑下面这些只读命令，和<b>你自己的板子</b>对答案：</p>
+<pre><code class="language-bash">uname -a                                # 内核版本，记下来！
+cat /proc/cmdline                       # = u-boot 传给内核的 bootargs
+cat /proc/partitions                    # 看 SD/eMMC 分了几个区，各多大
+mount | grep -E 'mmcblk|root'           # 根文件系统挂在哪个设备
+ls /sys/class/block/                    # 块设备都有哪些</code></pre>
+
+<div class="exercise">
+<div class="t">练习 L01-B：反推你板子的真实布局</div>
+<ol>
+<li>把 <code>/proc/cmdline</code> 逐项拆开：<code>console=</code>、<code>root=</code>、<code>rootfstype=</code> 都在说什么？</li>
+<li>根据 <code>/proc/partitions</code> 和 <code>mount</code> 结果，画出你这块板子 eMMC/SD 的布局草图（u-boot 大致、内核分区、rootfs 分区）——和上面表格比一比</li>
+<li>把<b>内核版本</b>写进 <code>linux-learning/NOTES.md</code> 的环境速查里。← 重要：Phase 0/1 编译模块必须对准这个版本</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测（先想，再点开）</div>
+<details><summary>启动时内核和 u-boot，谁先启动？</summary><p class="a">BootROM → u-boot → 内核 → rootfs。u-boot 负责把内核加载进内存，内核不是"自带"在芯片里的。芯片出厂只有 BootROM。</p></details>
+<details><summary>设备树 dtb 是被谁读进内存、传给谁的？</summary><p class="a">u-boot 把 dtb（和 zImage）加载进内存，跳转时把 dtb 地址传给内核。内核靠它才知道"这块板子上接了哪些硬件"。</p></details>
+<details><summary>如果你改了一个驱动的逻辑，最可能要重编译的是哪个东西？</summary><p class="a">驱动编译成内核模块(.ko)或编进内核(zImage)。注意：<b>不需要</b>动 u-boot，也通常不动 rootfs——这理解对了，后面的路就顺了。</p></details>
+</div>
+
+<p class="callout"><span class="t">本课要带走的</span> ① 启动是四段接力；② 每段对应"镜像在哪、由谁读"；③ 你对自家板子的布局和内核版本有了<b>书面证据</b>。下一课我们从 <code>/proc</code> 和 <code>/sys</code> 继续给系统做体检。</p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>你手上的《I.MX6U 驱动开发指南 V1.81》第三章「系统烧写 / 开发环境」，对照你自己板子的烧录方式。</li>
+<li>本工作区：<a href="../reference/roadmap.html">学习路线图</a> · <a href="../reference/glossary.html">术语表</a></li>
+<li>Linux 官方：<a href="https://www.kernel.org/doc/html/latest/admin-guide/">内核管理文档</a>（/proc、/sys 的官方说明）</li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>——我就是你的老师，任何概念、任何命令，可以当场追到底。做练习时卡在哪一步，贴给我看。</p>
+</body>
+</html>

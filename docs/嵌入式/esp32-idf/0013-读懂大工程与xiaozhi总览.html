@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0013 · 读懂大工程与 xiaozhi 总览</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>读懂大工程与 xiaozhi 总览</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0013 · 预计 25 分钟</p>
+
+<p>前 12 课是零件,这一课开始装机。目标:<strong>用一套方法论把 xiaozhi 这个几千文件的工程"读薄"</strong>。这课是分水岭——后面 5 课都拆 xiaozhi。</p>
+
+<h2>知识点 1:读大工程的三个尺度</h2>
+<table>
+<tr><th>尺度</th><th>问的问题</th><th>工具</th></tr>
+<tr><td>全局</td><td>有几个子系统?数据怎么流?</td><td>目录树、CMakeLists、README</td></tr>
+<tr><td>模块</td><td>这个组件对谁负责?接口是什么?</td><td>头文件(.h)优先,实现后看</td></tr>
+<tr><td>局部</td><td>这个函数在哪个线程/事件里跑?</td><td>日志 TAG、调用链、xTaskCreate</td></tr>
+</table>
+<p>顺序永远是:目录 → 头文件 → 入口 → 事件流,<strong>绝不从 .c 第一行读起</strong>。</p>
+
+<h2>知识点 2:xiaozhi 全局地图</h2>
+<pre lang="text" class="highlight"><span style="color: #001080">xiaozhi-esp32-2.2.4/main/</span>
+<span style="color: #000">├── main.cc</span>              <span style="color: #008000"># 入口:app_main → Application</span>
+<span style="color: #000">├── application.cc</span>       <span style="color: #008000"># 主应用:状态机 + 事件调度</span>
+<span style="color: #000">├── boards/</span>              <span style="color: #008000"># 板级抽象(70+ 开发板)</span>
+<span style="color: #000">├── audio/</span>               <span style="color: #008000"># 音频流水线(采集/播放/AFE)</span>
+<span style="color: #000">├── protocols/</span>           <span style="color: #008000"># WebSocket / MQTT 通信</span>
+<span style="color: #000">├── ota.cc</span>               <span style="color: #008000"># OTA 升级</span>
+<span style="color: #000">├── settings.cc</span>          <span style="color: #008000"># NVS 配置</span>
+<span style="color: #000">├── display/</span>  <span style="color: #000">├── led/</span>    <span style="color: #008000"># 屏与灯</span>
+<span style="color: #000">└── device_state_machine.cc</span>  <span style="color: #008000"># 设备状态机</span>
+</pre>
+
+<h2>知识点 3:一句话数据流</h2>
+<blockquote>
+<p>麦克风 → <code>audio</code> 采集(AFE 唤醒词) → 认到"小智小智" → 录到说话结束 → <code>protocols</code> 打包发送(Opus) → 服务器回文本+音频 → <code>audio</code> 播放 → <code>display/led</code> 同步表情。</p>
+</blockquote>
+
+<h2>动手</h2>
+<p>打开 <code>xiaozhi-esp32-2.2.4</code>,<strong>只做三件事</strong>:①读根 <code>CMakeLists.txt</code> 和 <code>main/CMakeLists.txt</code> 看注册了哪些源文件;②数 <code>boards/</code> 下有多少个板目录;③在 <code>application.cc</code> 里搜 <code>xTaskCreate</code>,列出创建了哪几个任务。不用读实现。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">读大工程的第一步是什么?</p>
+  <button class="opt" data-ok="true">看目录结构</button>
+  <button class="opt" data-ok="false">读main.c</button>
+  <button class="opt" data-ok="false">跑一遍</button>
+  <p class="reveal">先建立全局地图,再逐层下钻。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">xiaozhi 的唤醒流程起点在哪?</p>
+  <button class="opt" data-ok="true">audio采集</button>
+  <button class="opt" data-ok="false">protocols</button>
+  <button class="opt" data-ok="false">display</button>
+  <p class="reveal">audio 的 AFE 唤醒词检测。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>xiaozhi 官方文档目录</strong>(<a href="https://github.com/78/xiaozhi-esp32/tree/main/docs">仓库 docs/</a>):先读 websocket.md 和 custom-board.md 两篇,和这课的全局地图互相印证。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课拆启动流程:<code>main.cc</code> → <code>Application</code> 怎么把上面这堆组件串起来。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0012-音频基础.html">← 上一篇:音频基础</a>
+  <a href="index.html">课程地图</a>
+  <a href="0014-xiaozhi启动流程.html">下一篇:启动流程 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

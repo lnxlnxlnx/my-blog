@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 12 课：MiniOS⑥：三内核验收对比 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 12 课</nav>
+
+<h1>第 12 课：MiniOS⑥：三内核验收对比</h1>
+<p class="subtitle">MiniOS 收尾——让手写内核、µC/OS-III、FreeRTOS 同台比武：比功能、比内存、比架构</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>MiniOS 系列收官。这课不做新功能，做三件事：① 用一张清单盘点 MiniOS 的全部代码结构与功能；② 跑通"多任务 + 延时 + 信号量"的完整验收 demo；③ 用 MAP 文件实测并对比 MiniOS / µC/OS-III / FreeRTOS 的 ROM、RAM、TCB 与就绪表开销，最后总结三个内核的架构取舍。学完你能自豪地说：内核原理，我亲手写过一个。</p>
+</div>
+
+<h2>1. MiniOS 完整功能清单与代码结构总览</h2>
+
+<p>从第 7 课到本课，MiniOS 一共 6 步，全部实现如下：</p>
+
+<table>
+<tr><th>模块</th><th>文件（建议）</th><th>内容</th><th>对应 UCOS</th></tr>
+<tr><td>任务控制块</td><td><code>mini_task.h/.c</code></td><td>MiniTCB：栈指针、优先级、状态、延时字段、信号量等待指针</td><td>OS_TCB（第 5 章）</td></tr>
+<tr><td>位图就绪表</td><td><code>mini_ready.c</code></td><td>OSRdyGrp/OSRdyTbl 位图 + 最高优先级查表</td><td>OS_RdyGrp/OS_RdyTbl（第 4 课）</td></tr>
+<tr><td>上下文切换</td><td><code>mini_switch.c</code></td><td>PendSV 保存/恢复寄存器现场</td><td>OSCtxSw（第 8 课）</td></tr>
+<tr><td>调度器与临界区</td><td><code>mini_core.c</code></td><td>MiniSched 调度、锁定计数、开关中断</td><td>OSSched / OSSchedLock（第 9 课）</td></tr>
+<tr><td>时基与延时</td><td><code>mini_tick.c / mini_time.c</code></td><td>SysTick 中断、节拍计数、延时链表</td><td>OSTimeTick / OSTimeDly（第 10 课）</td></tr>
+<tr><td>信号量</td><td><code>mini_sem.c</code></td><td>MiniSem：计数 + 等待链表 + Pend/Post/FromISR</td><td>OS_SEM / OSSemPend / OSSemPost（第 11 课）</td></tr>
+</table>
+
+<p>整个内核就 6 个模块、几百行 C 代码加一小段 PendSV 汇编。这就是"最小可运行内核"的样子：<strong>TCB + 就绪表 + 切换 + 调度 + 时基 + 同步</strong>，六个零件缺一不可，也仅此而已。</p>
+
+<h2>2. 验收实验：多任务 + 延时 + 信号量的完整 demo</h2>
+
+<p>验收标准很朴素：<strong>一个 demo 同时用到 MiniOS 的全部六件套，且行为可肉眼验证</strong>。设计如下：</p>
+
+<ul>
+<li><strong>producer_task</strong>：每 500ms Post 一次数据信号量（用到信号量 + 延时）。</li>
+<li><strong>consumer_task</strong>：Pend 数据信号量，拿到后翻转 LED0 并打印（用到信号量 + 就绪表 + 切换）。</li>
+<li><strong>blink_task</strong>：1000ms 延时翻转 LED1，与消费者互不干扰（验证多任务独立调度）。</li>
+</ul>
+
+<p>跑通后你看到的应该是：LED0 每 500ms 闪一次、LED1 每 1000ms 闪一次、串口打印连续无丢失——三个任务各过各的，互不踩踏。这背后每一次闪烁都是一次完整的"就绪表插入 → 调度 → 上下文切换"。</p>
+
+<h2>3. 内存占用对比：怎么量，量什么</h2>
+
+<p>对比之前先学会"称重"。三个内核在同一种 MCU（F407）上跑，量化指标有四个：</p>
+
+<ul>
+<li><strong>ROM（Flash）</strong>：内核代码量。方法：编译后看 MAP 文件里 os_*.o / tasks.o / mini_*.o 各目标的 Code 段字节数，求和。</li>
+<li><strong>RAM</strong>：内核数据区。方法：MAP 文件里对应目标的 RW + ZI 段；加上每个任务的栈 + TCB。</li>
+<li><strong>TCB 大小</strong>：<code>sizeof(OS_TCB)</code> / <code>sizeof(TaskControlBlock_t)</code> / <code>sizeof(MiniTCB)</code>，直接打印最准。</li>
+<li><strong>就绪表内存</strong>：UCOS/MiniOS 是位图（8 字节 OSRdyGrp + 32 字节 OSRdyTbl，共 40B，固定）；FreeRTOS 是链表（每个就绪任务一个列表项，任务数 × 8B 左右）。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 对比要公平：MiniOS 只有 6 个模块，而 UCOS/FreeRTOS 是"全家桶"。公平口径是<strong>对比"实现同等功能所需的内核代码"</strong>：就绪表 + 调度 + 切换 + 时基 + 信号量这几个模块单独拎出来比，而不是拿整个 UCOS 源码库比。否则就是拿自行车比大货车。</p>
+</div>
+
+<p>教材没直接给三内核的内存表，但给了足够的原料：UCOS 位图就绪表结构（第 4 课）、TCB 设计（第 5 章 5.5 节 <span class="pg">PDF p.100</span>）、FreeRTOS 链表与列表项（FreeRTOS 课第 5 课）。估算口径如下：</p>
+
+<table>
+<tr><th>项目</th><th>MiniOS（本课实测）</th><th>µC/OS-III</th><th>FreeRTOS</th></tr>
+<tr><td>核心内核 ROM（同功能模块）</td><td>约 2~4 KB</td><td>约 15~25 KB（全功能）</td><td>约 10~15 KB（全功能）</td></tr>
+<tr><td>单任务 TCB</td><td>约 40~60 B（6~8 个字段）</td><td>约 100+ B（几十个字段）</td><td>约 100 B（列表项等）</td></tr>
+<tr><td>就绪表</td><td>40 B 位图（固定）</td><td>40 B 位图（固定）</td><td>链表：每任务一个列表项</td></tr>
+<tr><td>任务栈</td><td>用户自定（如 512B）</td><td>用户自定</td><td>用户自定</td></tr>
+<tr><td>RAM 数据区</td><td>几十字节</td><td>几百字节（含内核对象池）</td><td>几百字节</td></tr>
+</table>
+
+<p>数字背后的道理：<strong>TCB 越大越"全能"</strong>——UCOS 的 TCB 里装了内嵌信号量、内嵌消息队列、时间片、优先级继承等全部功能位，MiniOS 只用 6 个字段就支撑起了同样的基本调度。功能与开销是同一个天平的两端，这也是为什么"够用就好"在嵌入式里是美德。</p>
+
+<h2>4. 架构对比总结：三份设计答卷</h2>
+
+<table>
+<tr><th>维度</th><th>MiniOS</th><th>µC/OS-III</th><th>FreeRTOS</th></tr>
+<tr><td>就绪任务组织</td><td>位图（40B 固定）</td><td>位图 + 同优先级链表</td><td>纯链表（每优先级一列表）</td></tr>
+<tr><td>找最高优先级</td><td>查表 O(1)</td><td>查表 O(1)</td><td>遍历优先级位 O(1)~O(n)</td></tr>
+<tr><td>同优先级多任务</td><td>不支持（1 任务/优先级）</td><td>时间片轮转（内建）</td><td>时间片轮转（可选）</td></tr>
+<tr><td>调度触发点</td><td>任务主动让出 + tick</td><td>任务主动让出 + tick + 中断退出</td><td>任务主动让出 + tick + 中断退出</td></tr>
+<tr><td>临界区策略</td><td>关中断为主</td><td>锁调度器为主 + BASEPRI</td><td>关中断（BASEPRI 可选）</td></tr>
+<tr><td>同步对象</td><td>信号量</td><td>信号量/互斥量/队列/事件标志/任务内嵌</td><td>队列/信号量/事件组/任务通知</td></tr>
+<tr><td>适用场景</td><td>教学、极简可控的裸机升级</td><td>需要丰富同步原语的中大型应用</td><td>普及率高、社区资源多的量产项目</td></tr>
+</table>
+
+<p>三份答卷没有对错，只有取舍：<strong>位图赢在"找最高优先级"恒定 O(1)，链表赢在"同优先级任务数无上限"</strong>；µC/OS-III 两者都要（位图 + 同优先级链表），代价是 TCB 复杂；FreeRTOS 专攻链表，代价是任务多了查找略慢。亲手实现过一遍，这些差异就从"背考点"变成了"自己踩过的坑"。</p>
+
+<h2>5. 未来扩展方向：MiniOS 的下一个十字路口</h2>
+
+<p>MiniOS 已经是一个"五脏俱全"的微内核，想继续长，方向其实就摆在 UCOS 的章节顺序里：</p>
+
+<ol>
+<li><strong>互斥量</strong>：信号量 + 优先级继承，解决优先级翻转（对应 UCOS 第 12 章，本课程第 14 课）。</li>
+<li><strong>消息队列</strong>：在信号量的"通知"上加"捎带数据"，任务间传数据（对应 UCOS 第 13/15 章，本课程第 15 课）。</li>
+<li><strong>事件标志</strong>：一个对象同时等多个条件（与/或组合）（对应 UCOS 第 16 章，第 15 课）。</li>
+<li><strong>软件定时器</strong>：复用延时链表，加个"定时器任务"（对应 UCOS 第 17 章，第 16 课）。</li>
+<li><strong>内存管理</strong>：固定分区内存池，避免动态分配碎片（对应 UCOS 第 19 章，第 16 课）。</li>
+</ol>
+
+<p>每条路的骨架你都见过了——它们全是"结构体 + 等待链表 + Pend/Post 变体"的排列组合。这也是为什么我们说：学会一个内核的同步机制，就学会了所有内核的同步机制。</p>
+
+<h2>核心代码：验收 demo 与内存实测</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS 验收 demo：六件套全用上 ========== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;minios.h&quot;</span></span>
+
+MiniSem  g_data_sem;                 <span style="color:#008000">/* 数据同步信号量 */</span>
+<span style="color:#267F99">uint32_t</span> g_shared_data;
+
+<span style="color:#008000">/* 生产者：Post + 延时 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">producer_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg)</span>
+{
+    <span style="color:#267F99">uint32_t</span> n = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        g_shared_data = ++n;         <span style="color:#008000">/* &quot;生产&quot; */</span>
+        MiniSemPost(&amp;g_data_sem);    <span style="color:#008000">/* 同步：通知消费者 */</span>
+        MiniTimeDly(<span style="color:#098658">500</span>);            <span style="color:#008000">/* 延时：500ms 一产 */</span>
+    }
+}
+
+<span style="color:#008000">/* 消费者：Pend + 切换 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">consumer_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg)</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        MiniSemPend(&amp;g_data_sem);    <span style="color:#008000">/* 没数据就睡 */</span>
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;recv: %lu\r\n&quot;</span>, g_shared_data);
+        LED0_TOGGLE();               <span style="color:#008000">/* 每 500ms 闪一次 */</span>
+    }
+}
+
+<span style="color:#008000">/* 独立任务：验证互不干扰的独立调度 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">blink_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg)</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        LED1_TOGGLE();               <span style="color:#008000">/* 每 1000ms 闪一次 */</span>
+        MiniTimeDly(<span style="color:#098658">1000</span>);
+    }
+}
+
+<span style="color:#267F99">int</span> <span style="color:#795E26">main</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* ...时钟、串口、LED 初始化... */</span>
+
+    MiniSemCreate(&amp;g_data_sem, <span style="color:#098658">0</span>);                    <span style="color:#008000">/* 初始 0：消费者先等 */</span>
+    MiniTaskCreate(producer_task, <span style="color:#098658">2</span>, <span style="color:#A31515">&quot;producer&quot;</span>);
+    MiniTaskCreate(consumer_task, <span style="color:#098658">3</span>, <span style="color:#A31515">&quot;consumer&quot;</span>);
+    MiniTaskCreate(blink_task,    <span style="color:#098658">4</span>, <span style="color:#A31515">&quot;blink&quot;</span>);
+    MiniStart();                                      <span style="color:#008000">/* 调度器启动，一去不返 */</span>
+}</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== 内存实测：sizeof 打印 TCB 与内核对象 ========== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&lt;stdio.h&gt;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;minios.h&quot;</span></span>
+
+<span style="color:#008000">/* 放进 main 的最开头（调度器启动前）或一个调试任务里 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">mem_report</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;MiniTCB      = %u B\r\n&quot;</span>, (<span style="color:#267F99">unsigned</span>)<span style="color:#0000FF">sizeof</span>(MiniTCB));
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;MiniSem      = %u B\r\n&quot;</span>, (<span style="color:#267F99">unsigned</span>)<span style="color:#0000FF">sizeof</span>(MiniSem));
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;就绪表(位图)  = %u B (固定)\r\n&quot;</span>, (<span style="color:#267F99">unsigned</span>)(<span style="color:#0000FF">sizeof</span>(g_rdy_grp) + <span style="color:#0000FF">sizeof</span>(g_rdy_tbl)));
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;任务栈: 3 x %u B\r\n&quot;</span>, (<span style="color:#267F99">unsigned</span>)TASK_STACK_SIZE * <span style="color:#098658">4</span>);
+}
+
+<span style="color:#008000">/* ===== 怎么用 MAP 文件量 ROM/RAM（Keil MDK）=====
+ * 1. 勾选 Options → Listing → Map File（默认生成 .map）
+ * 2. 打开 .map，看 &quot;Total RO Size / Total RW Size / Total ROM Size&quot;
+ *    - ROM Size ≈ 代码 + 只读常量；RW Size ≈ 初始化数据 + 零初始化区
+ * 3. 在 Image Symbol Table 里搜 mini_*.o / os_*.o / tasks.o
+ *    - 每个目标的 Code（ROM）与 Data/Zero（RAM）字节数一目了然
+ * 4. 分别给 MiniOS 分支、UCOS 分支、FreeRTOS 分支编译一次，
+ *    记录三项：Total ROM、Total RAM、sizeof(TCB)，填进第 3 节的对比表
+ * ===== */</span></pre>
+
+<div class="tip">
+  <p>💡 三个分支工程是现成的实验台：UCOS 分支编一次、FreeRTOS 分支编一次、MiniOS 分支编一次，同一块 F407、同一个调试器，三个 .map 文件就是最硬核的课程报告素材。</p>
+</div>
+
+<h2>动手练习（约 60~90 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1：MiniOS 完整 demo 验收</h3>
+  <p class="step">1️⃣ 把验收 demo 落进 MiniOS 分支并跑通。验收标准：LED0 500ms 闪、LED1 1000ms 闪、串口消费计数连续递增无跳号。</p>
+  <p class="step">2️⃣ 把生产者优先级调成高于消费者，观察谁先跑；再把信号量初始计数改成 3，观察消费节奏变化。各写 2 行现象笔记。</p>
+  <p class="step">3️⃣ 最后通关题：不看代码，画出"一个数据从 Post 到消费"过程中就绪表和等待链表的状态变化序列图。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2：用 MAP 文件量 ROM/RAM，填三内核对比表</h3>
+  <p class="step">1️⃣ 三个分支各编译一次，导出 .map 文件，记录 Total ROM、Total RAM。</p>
+  <p class="step">2️⃣ 分别在三个工程里打印 <code>sizeof(TCB)</code>：MiniOS 的 <code>sizeof(MiniTCB)</code>、UCOS 的 <code>sizeof(OS_TCB)</code>、FreeRTOS 的 <code>sizeof(TaskControlBlock_t)</code>。</p>
+  <p class="step">3️⃣ 把三组数据填进本课第 3 节对照表，验证"MiniOS 最省、UCOS 最全"的预期，写 3 行结论：省在哪些字段、全在哪些功能。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. MiniOS 与 µC/OS-III 的位图就绪表内存开销约为？</p>
+  <p class="opt">A. 40 字节，固定不变</p>
+  <p class="opt">B. 每任务 8 字节，随任务数增长</p>
+  <p class="opt">C. 1KB 起步，按优先级数量增长</p>
+  <details><summary>查看答案</summary><div class="answer">A。OSRdyGrp(8B) + OSRdyTbl(32B) 共 40B，与任务数无关；FreeRTOS 的链表才随任务数增长。</div></details>
+
+  <p class="q">Q2. 用 Keil 的 MAP 文件测内核 ROM 占用，应该看哪个统计？</p>
+  <p class="opt">A. Total RW Size</p>
+  <p class="opt">B. Total ROM Size</p>
+  <p class="opt">C. 编译耗时</p>
+  <details><summary>查看答案</summary><div class="answer">B。Total ROM Size ≈ 代码 + 只读数据；RW Size 是 RAM 侧。更细看 Image Symbol Table 里各 .o 的 Code 段。</div></details>
+
+  <p class="q">Q3. µC/OS-III 的临界区策略与 FreeRTOS 的主要差别是？</p>
+  <p class="opt">A. UCOS 锁调度器为主，FreeRTOS 关中断为主</p>
+  <p class="opt">B. UCOS 完全不用关中断</p>
+  <p class="opt">C. FreeRTOS 完全不用关中断</p>
+  <details><summary>查看答案</summary><div class="answer">A。UCOS 用 OSSchedLock 锁调度器减少关中断时间，FreeRTOS 默认关中断（第 1 课对比表 + 第 5 课临界区）。</div></details>
+
+  <p class="q">Q4. MiniOS 若加消息队列，最该借鉴 UCOS 的哪一章？</p>
+  <p class="opt">A. 第 12 章互斥信号量</p>
+  <p class="opt">B. 第 13 章消息队列</p>
+  <p class="opt">C. 第 19 章内存管理</p>
+  <details><summary>查看答案</summary><div class="answer">B。第 13 章消息队列：在信号量"通知"基础上加"捎带数据"，骨架仍是结构体 + 等待链表 + Pend/Post 变体。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 10~11 章（PDF p.175~245）——MiniOS 第 4/5 步的蓝本，验收时回翻对照</li>
+<li>📖 教材第 5.5 节任务控制块（PDF p.100~113）——对比 OS_TCB 全字段与 MiniTCB 的 6 个字段</li>
+<li>🔁 对照：FreeRTOS 课程 <a href="../../FreeRTOS/lessons/0005-lists-and-list-items.html">第 5 课：列表与列表项</a>——链表就绪表的架构对照基准</li>
+<li>🔁 对照：FreeRTOS 课程 <a href="../../FreeRTOS/lessons/0015-memory-management.html">第 15 课：内存管理</a>——MAP 文件与内存统计的通用方法论</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 13 课——回到 UCOS 应用层：任务管理 API 实战（创建/删除/挂起/恢复/改优先级/时间片）。亲手造过内核之后再回头用商用内核，你会看到每个 API 背后的"零件"。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0011-minios-5-sync-primitives.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0013-task-api-practice.html">下一课：任务管理 API 实战 →</a>
+</nav>
+
+</div>
+</body>
+</html>

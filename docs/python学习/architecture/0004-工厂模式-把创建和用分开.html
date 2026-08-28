@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0004 · 工厂模式:把创建和用分开</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>工厂模式:把创建和用分开</h1>
+<p class="meta">架构与设计模式 · 课程 0004 · 预计 20 分钟</p>
+
+<p>上一课你见到了「注册表 + 工厂」的影子。这课把它放大讲透。<strong>工厂模式(Factory Pattern)</strong>是整个创建型模式的代表,也是 AI 生成的代码里<strong>出现频率最高</strong>的套路——名字叫 <code>make_xxx</code>、<code>create_xxx</code>、<code>build_xxx</code>、<code>get_xxx</code> 的函数,基本都是工厂。</p>
+
+<h2>知识点 1:问题——到处 new 具体类</h2>
+<p>假设没有工厂,代码会写成这样——调用方到处「new 具体类」:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train_svm</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">):</span>
+    <span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">SVMTrainer</span><span style="color: #000">()</span>          <span style="color: #008000"># 直接 new 具体类</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train_logreg</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">):</span>
+    <span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">LogisticRegressionTrainer</span><span style="color: #000">()</span>   <span style="color: #008000"># 又一个具体类</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+
+
+<span style="color: #008000"># 想「全局把默认模型从 SVM 换成决策树」?</span>
+<span style="color: #008000"># → 你得上百个地方,逐个把 SVMTrainer() 改成 TreeTrainer()</span>
+</pre>
+<p>问题:创建细节(怎么 new)和使用逻辑(怎么用)<strong>混在一起</strong>。两者一起变的时候,代码到处要改。</p>
+<p>工厂做的事很简单:<strong>把「怎么造对象」集中到一个地方</strong>。使用方只问一句话:「给我一个叫 X 的东西」。</p>
+
+<h2>知识点 2:简单工厂(Simple Factory)</h2>
+<p>最基本的一档:一个函数,按参数返回不同对象。这是「集中创建」的最小形态:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">make_trainer</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">):</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;简单工厂:把『按名字造训练器的逻辑』集中在这一处。&quot;&quot;&quot;</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">name</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;svm&quot;</span><span style="color: #000">:</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">SVMTrainer</span><span style="color: #000">()</span>
+    <span style="color: #00F">elif</span> <span style="color: #001080">name</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;logreg&quot;</span><span style="color: #000">:</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">LogisticRegressionTrainer</span><span style="color: #000">()</span>
+    <span style="color: #00F">else</span><span style="color: #000">:</span>
+        <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;未知训练器: {</span><span style="color: #001080">name</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+
+
+<span style="color: #008000"># 调用方(所有地方都长这样):</span>
+<span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">make_trainer</span><span style="color: #000">(</span><span style="color: #A31515">&quot;svm&quot;</span><span style="color: #000">)</span>       <span style="color: #008000"># 只认名字,不认具体类</span>
+<span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+</pre>
+<p>好处立竿见影:以后想改默认实现、想加日志、想加缓存,只动<code>make_trainer</code> 一处。<strong>存在的代价</strong>:每加一种训练器,还得回来改<code>make_trainer</code> 的 if。</p>
+
+<h2>知识点 3:注册表工厂——AI 代码的标准答案</h2>
+<p>AI 生成的代码几乎都是用「<strong>注册表 + 工厂函数</strong>」把上面那个 if 也干掉——新增类不用碰工厂。这就是你第一课见过的 <code>TrainerRegistry</code>,拆开看:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">TrainerRegistry</span><span style="color: #000">:</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;一个全局的『名字 → 类』登记处。&quot;&quot;&quot;</span>
+    <span style="color: #001080">_registry</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+
+    <span style="color: #AF00DB">@classmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">register</span><span style="color: #000">(</span><span style="color: #267F99">cls</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">):</span>
+<span style="color: #000">        </span><span style="color: #A31515">&quot;&quot;&quot;装饰器:用 @TrainerRegistry.register(&#39;svm&#39;) 就能登记。&quot;&quot;&quot;</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">wrap</span><span style="color: #000">(</span><span style="color: #001080">trainer_cls</span><span style="color: #000">):</span>
+            <span style="color: #267F99">cls</span><span style="color: #000">.</span><span style="color: #001080">_registry</span><span style="color: #000">[</span><span style="color: #001080">name</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">trainer_cls</span>     <span style="color: #008000"># 把类存进字典</span>
+            <span style="color: #00F">return</span> <span style="color: #001080">trainer_cls</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">wrap</span>
+
+
+<span style="color: #AF00DB">@TrainerRegistry</span><span style="color: #000">.</span><span style="color: #001080">register</span><span style="color: #000">(</span><span style="color: #A31515">&quot;svm&quot;</span><span style="color: #000">)</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SVMTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span> <span style="color: #000">...</span>     <span style="color: #008000"># 定义完类,顺手登记</span>
+
+<span style="color: #AF00DB">@TrainerRegistry</span><span style="color: #000">.</span><span style="color: #001080">register</span><span style="color: #000">(</span><span style="color: #A31515">&quot;logreg&quot;</span><span style="color: #000">)</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">LogisticRegressionTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">make_trainer</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">):</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;工厂:从登记处取类,再实例化。&quot;&quot;&quot;</span>
+    <span style="color: #00F">try</span><span style="color: #000">:</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">TrainerRegistry</span><span style="color: #000">.</span><span style="color: #001080">_registry</span><span style="color: #000">[</span><span style="color: #001080">name</span><span style="color: #000">]()</span>  <span style="color: #008000"># 字典取值 → new</span>
+    <span style="color: #00F">except</span> <span style="color: #CD3131">KeyError</span><span style="color: #000">:</span>
+        <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;未知训练器: {</span><span style="color: #001080">name</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span> <span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #00F">None</span>
+</pre>
+<p>现在加「决策树训练器」只需<strong>新增一个类 + 一行装饰器</strong>,<code>make_trainer</code> 永远不用改。这就是「创建 vs 使用」解耦的终极形态——<strong>这也是为什么 AI 生成的代码里到处是 register/make_xxx</strong>:新功能以「注册」的方式插进来,不破坏已有代码。</p>
+
+<h2>知识点 4:工厂方法(Factory Method)——让子类决定</h2>
+<p>更「面向对象」的一档:把「创建逻辑」本身放回类里,子类各写各的。当不同子类的构建方式差异很大时用它(<a href="https://refactoringguru.cn/design-patterns/factory-method">官方讲解</a>):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">abc</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ABC</span><span style="color: #000">,</span> <span style="color: #001080">abstractmethod</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">BaseTrainer</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>
+    <span style="color: #AF00DB">@classmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create</span><span style="color: #000">(</span><span style="color: #267F99">cls</span><span style="color: #000">,</span> <span style="color: #001080">config</span><span style="color: #000">):</span>          <span style="color: #008000"># 工厂方法:公共骨架</span>
+<span style="color: #000">        </span><span style="color: #A31515">&quot;&quot;&quot;按配置造好一个训练器(子类各自实现 _build)。&quot;&quot;&quot;</span>
+        <span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #267F99">cls</span><span style="color: #000">.</span><span style="color: #001080">_build</span><span style="color: #000">(</span><span style="color: #001080">config</span><span style="color: #000">)</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">cls</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">)</span>
+
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">_build</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">config</span><span style="color: #000">):</span> <span style="color: #000">...</span>     <span style="color: #008000"># 具体怎么构建,子类填</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SVMTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">_build</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">config</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">SVC</span><span style="color: #000">(</span><span style="color: #001080">C</span><span style="color: #000">=</span><span style="color: #001080">config</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;C&quot;</span><span style="color: #000">,</span> <span style="color: #098658">1.0</span><span style="color: #000">))</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">TreeTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">_build</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">config</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">RandomForest</span><span style="color: #000">(</span><span style="color: #001080">n_estimators</span><span style="color: #000">=</span><span style="color: #001080">config</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;n&quot;</span><span style="color: #000">,</span> <span style="color: #098658">100</span><span style="color: #000">))</span>
+
+
+<span style="color: #001080">svm</span> <span style="color: #000">=</span> <span style="color: #001080">SVMTrainer</span><span style="color: #000">.</span><span style="color: #001080">create</span><span style="color: #000">({</span><span style="color: #A31515">&quot;C&quot;</span><span style="color: #000">:</span> <span style="color: #098658">0.5</span><span style="color: #000">})</span>    <span style="color: #008000"># 同一个 create,行为由子类决定</span>
+<span style="color: #001080">tree</span> <span style="color: #000">=</span> <span style="color: #001080">TreeTrainer</span><span style="color: #000">.</span><span style="color: #001080">create</span><span style="color: #000">({</span><span style="color: #A31515">&quot;n&quot;</span><span style="color: #000">:</span> <span style="color: #098658">200</span><span style="color: #000">})</span>
+</pre>
+<p>区别一句话:<strong>简单工厂是「一个函数管所有类」;工厂方法是「每个类自己决定怎么被创建」</strong>。前者写起来快,后者扩展更自然。</p>
+
+<h2>知识点 5:抽象工厂(Abstract Factory)——一整套配套对象</h2>
+<p>当你要造的是一组<strong>必须配套</strong>的对象(不能混搭)时用抽象工厂(<a href="https://refactoringguru.cn/design-patterns/abstract-factory">官方讲解</a>)。经典例子:GUI 控件一族——按钮/菜单/文本框必须来自同一套风格:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">GUIFactory</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_button</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_menu</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">WindowsFactory</span><span style="color: #000">(</span><span style="color: #001080">GUIFactory</span><span style="color: #000">):</span>      <span style="color: #008000"># Windows 风格一族</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_button</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #001080">WindowsButton</span><span style="color: #000">()</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_menu</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>   <span style="color: #00F">return</span> <span style="color: #001080">WindowsMenu</span><span style="color: #000">()</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">MacFactory</span><span style="color: #000">(</span><span style="color: #001080">GUIFactory</span><span style="color: #000">):</span>          <span style="color: #008000"># Mac 风格一族</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_button</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #001080">MacButton</span><span style="color: #000">()</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_menu</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>   <span style="color: #00F">return</span> <span style="color: #001080">MacMenu</span><span style="color: #000">()</span>
+</pre>
+<p>使用方只认 <code>GUIFactory</code>,拿到的一定是「配套」的一套,不会出现 MacButton 配 WindowsMenu。这个模式在你的日常里少见,<strong>认得出来就行</strong>。</p>
+
+<h2>知识点 6:工厂帮了你一个暗中的忙——测试</h2>
+<p>因为创建被集中了,测试时就能「偷梁换柱」:注册一个假的训练器,不碰真实模型:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_pipeline</span><span style="color: #000">():</span>
+    <span style="color: #008000"># 注册一个假训练器,完全不训练,只测流程</span>
+    <span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">FakeTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #00F">None</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">evaluate</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #098658">1.0</span>
+
+    <span style="color: #001080">TrainerRegistry</span><span style="color: #000">.</span><span style="color: #001080">_registry</span><span style="color: #000">[</span><span style="color: #A31515">&quot;fake&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">FakeTrainer</span>
+
+    <span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">make_trainer</span><span style="color: #000">(</span><span style="color: #A31515">&quot;fake&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 工厂照常工作,管道全走通</span>
+    <span style="color: #00F">assert</span> <span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">1.0</span>
+</pre>
+<p>没有工厂的话,每次测试都得临时 new 一个真的模型——又慢又不可控。这就是「解耦创建」付给可测试性的红利。</p>
+
+<h2>知识点 7:什么时候别用</h2>
+<ul>
+  <li>整个项目就<strong>一种</strong>对象、毫无替换迹象 → 直接 new,别建工厂(YAGNI)</li>
+  <li>创建逻辑简单到只有一个 <code>return Xxx()</code> → 工厂是多余的一层</li>
+  <li>判断标准:创建逻辑<strong>会不会变化/扩展</strong>?会,才值得为它建一条缝。</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">工厂模式主要解决?</p>
+  <button class="opt" data-ok="false">降低内存的占用</button>
+  <button class="opt" data-ok="true">解耦创建和使用</button>
+  <button class="opt" data-ok="false">简化代码的语法</button>
+  <button class="opt" data-ok="false">加密敏感的数据</button>
+  <p class="reveal">把「怎么造对象」集中到一处,让使用方只认名字/接口,换实现不用改调用方。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">工厂方法让谁决定对象?</p>
+  <button class="opt" data-ok="false">全局的配置决定</button>
+  <button class="opt" data-ok="false">接口的方法决定</button>
+  <button class="opt" data-ok="true">子类来决定对象</button>
+  <button class="opt" data-ok="false">静态的方法决定</button>
+  <p class="reveal">工厂方法把「创建」放回类里,同一个 create() 由子类的 _build() 决定造出什么。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">AI 代码工厂常配什么?</p>
+  <button class="opt" data-ok="false">一个单例类对象</button>
+  <button class="opt" data-ok="true">一个注册表字典</button>
+  <button class="opt" data-ok="false">一种多继承体系</button>
+  <button class="opt" data-ok="false">一根异步任务队列</button>
+  <p class="reveal">注册表(名字→类的字典)+ 工厂函数,是 AI 代码里最常见的组合:新增类靠装饰器登记,工厂永远不用改。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0004_工厂模式.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把 if/elif 版简单工厂改造成「注册表 + 装饰器」工厂,并新增一个决策树训练器(不碰 make_trainer)</li>
+  <li><strong>练习 B</strong>:用工厂方法写「按配置构建」,让 SVM 和决策树各自决定构建细节</li>
+  <li><strong>练习 C</strong>:判断题:5 个场景该用哪种工厂 / 还是不用(答案内联)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 工厂方法</strong>(<a href="https://refactoringguru.cn/design-patterns/factory-method">中文版</a>):读「问题-解决方案-结构」,注意它的「真实世界类比」(物流公司按运输方式派车)——和图解一起看,理解简单工厂 / 工厂方法 / 抽象工厂的差别。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 A 里新增决策树时,你<strong>真的</strong>没改一处旧代码吗?下一课进入<strong>结构型模式:适配器(Adapter)与门面(Facade)</strong>——一个解决「接口对不上」,一个解决「东西太多难用」,都是 AI 代码里高频出现的两个。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-策略模式-消灭一堆if-else.html">← 上一篇:策略模式:消灭一堆 if/else</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-适配器与门面-两个结构型模式.html">下一篇:适配器与门面:两个结构型模式 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

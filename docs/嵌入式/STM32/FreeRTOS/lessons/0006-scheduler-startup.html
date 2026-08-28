@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 6 课：系统启动流程源码解析 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 6 课</nav>
+
+<h1>第 6 课：系统启动流程源码解析</h1>
+<p class="subtitle">从 vTaskStartScheduler() 到第一个任务跑起来，逐函数、逐条汇编走一遍</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>这是全书最硬的一课（教材第 8 章，PDF p.129~167）。学完你能在白板上画出启动全链路：<code>vTaskStartScheduler()</code> → <code>xPortStartScheduler()</code> → <code>prvStartFirstTask()</code> → <code>vPortSVCHandler()</code> → 第一个任务函数；能说清 TCB 第一个成员为什么必须是栈顶指针；能画出 <code>pxPortInitialiseStack()</code> 初始化出的栈帧布局。真正的"原理深入"就从这里开始。</p>
+</div>
+
+<h2>1. 启动全景：一条不归路</h2>
+
+<p>你分支工程里的 FreeRTOS 例程，入口几乎都是这个套路：先创建 <code>start_task</code> 任务，然后调用 <code>vTaskStartScheduler()</code>（PDF p.129）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">freertos_demo</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    lcd_show_string(<span style="color:#098658">10</span>, <span style="color:#098658">10</span>, <span style="color:#098658">220</span>, <span style="color:#098658">32</span>, <span style="color:#098658">32</span>, <span style="color:#A31515">&quot;STM32&quot;</span>, RED);
+    lcd_show_string(<span style="color:#098658">10</span>, <span style="color:#098658">47</span>, <span style="color:#098658">220</span>, <span style="color:#098658">24</span>, <span style="color:#098658">24</span>, <span style="color:#A31515">&quot;FreeRTOS Porting&quot;</span>, RED);
+
+    <span style="color:#008000">/* 创建 start_task 任务 */</span>
+    xTaskCreate( (TaskFunction_t )start_task,      <span style="color:#008000">/* 任务函数 */</span>
+                (<span style="color:#267F99">const</span> <span style="color:#267F99">char</span>*    )<span style="color:#A31515">&quot;start_task&quot;</span>,     <span style="color:#008000">/* 任务名称 */</span>
+                (<span style="color:#267F99">uint16_t</span>       )START_STK_SIZE,   <span style="color:#008000">/* 任务堆栈大小 */</span>
+                (<span style="color:#267F99">void</span>*          )<span style="color:#098658">NULL</span>,             <span style="color:#008000">/* 传给任务函数的参数 */</span>
+                (UBaseType_t    )START_TASK_PRIO,  <span style="color:#008000">/* 任务优先级 */</span>
+                (TaskHandle_t*  )&amp;StartTask_Handler); <span style="color:#008000">/* 任务句柄 */</span>
+    vTaskStartScheduler();                         <span style="color:#008000">/* 启动任务调度器 */</span>
+}</pre>
+
+<p>关键认知：<strong>vTaskStartScheduler() 是一条不归路</strong>。它启动调度器后，除非调用 <code>xTaskEndScheduler()</code>（本课程基本用不到），否则永远不会返回。它后面的代码一行都不会执行。整个启动链路是这样的：</p>
+
+<ol>
+<li><code>vTaskStartScheduler()</code>：创建空闲任务（+可选的定时器服务任务）→ 关中断 → 初始化全局变量 → 调 <code>xPortStartScheduler()</code></li>
+<li><code>xPortStartScheduler()</code>（移植层，port.c）：设置 PendSV/SysTick 优先级 → 配置 SysTick → 使能 FPU → 调 <code>prvStartFirstTask()</code></li>
+<li><code>prvStartFirstTask()</code>（汇编）：重设 MSP → 开全局中断 → <code>svc 0</code> 触发 SVC 异常</li>
+<li><code>vPortSVCHandler()</code>（汇编，SVC 中断服务函数）：从 <code>pxCurrentTCB</code> 取第一个任务 → 恢复任务现场 → 异常返回跳进任务函数</li>
+</ol>
+
+<p>下面把这四个环节逐个拆开。中间穿插 <code>xTaskCreate()</code> 的源码——毕竟没有任务，调度器也没东西可调。</p>
+
+<h2>2. vTaskStartScheduler()：调度器的"开门仪式"</h2>
+
+<p>这个函数在 task.c 里，做了六件事（PDF p.132）：创建空闲任务、创建定时器服务任务（可选）、关闭中断、初始化全局变量、初始化运行时间统计时基、调用 <code>xPortStartScheduler()</code>。关键代码如下：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">vTaskStartScheduler</span><span style="color:#001080">( <span style="color:#267F99">void</span> )</span>
+{
+    BaseType_t xReturn;
+
+    <span style="color:#008000">/* ① 创建空闲任务：支持静态分配则用静态方式，否则动态方式 */</span>
+    xReturn = xTaskCreate( prvIdleTask,           <span style="color:#008000">/* 空闲任务函数 */</span>
+                           configIDLE_TASK_NAME,  <span style="color:#008000">/* 任务名 &quot;IDLE&quot; */</span>
+                           configMINIMAL_STACK_SIZE,
+                           ( <span style="color:#267F99">void</span> * ) <span style="color:#098658">NULL</span>,
+                           portPRIVILEGE_BIT,     <span style="color:#008000">/* 优先级 0，最低 */</span>
+                           &amp;xIdleTaskHandle);
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> ( configUSE_TIMERS == 1 )</span>
+    <span style="color:#008000">/* ② 启用软件定时器时，创建定时器服务任务 */</span>
+    <span style="color:#0000FF">if</span>( xReturn == pdPASS )
+    {
+        xReturn = xTimerCreateTimerTask();
+    }
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+
+    <span style="color:#0000FF">if</span>( xReturn == pdPASS )
+    {
+        <span style="color:#008000">/* ③ 关闭受 FreeRTOS 管理的中断：
+         * 防止 SysTick 在调度器真正运行前产生中断，打乱初始化过程 */</span>
+        portDISABLE_INTERRUPTS();
+
+        <span style="color:#008000">/* ④ 初始化全局变量 */</span>
+        xNextTaskUnblockTime = portMAX_DELAY;   <span style="color:#008000">/* 下一个任务解除阻塞的时间 */</span>
+        xSchedulerRunning = pdTRUE;             <span style="color:#008000">/* 调度器运行标志置位 */</span>
+        xTickCount = ( TickType_t ) configINITIAL_TICK_COUNT;  <span style="color:#008000">/* 系统节拍计数 */</span>
+
+        <span style="color:#008000">/* ⑤ 初始化任务运行时间统计的时基定时器（可选功能） */</span>
+        portCONFIGURE_TIMER_FOR_RUN_TIME_STATS();
+
+        <span style="color:#008000">/* ⑥ 进入移植层，配置硬件并启动第一个任务（不再返回） */</span>
+        <span style="color:#0000FF">if</span>( xPortStartScheduler() != pdFALSE )
+        {
+            <span style="color:#008000">/* 正常情况下到不了这里 */</span>
+        }
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 注意顺序的玄机：先创建空闲任务和定时器任务，再关中断。因为创建任务会用到就绪列表等内核数据结构，如果此时被 SysTick 中断插一脚，可能操作未初始化的列表——所以先建好任务、再关中断、再初始化全局变量。第一个任务跑起来时（SVC 里）会重新打开中断，见第 4 节。</p>
+</div>
+
+<h2>3. xPortStartScheduler() 与 prvStartFirstTask()：硬件侧接力</h2>
+
+<p><code>xPortStartScheduler()</code> 属于移植层（port.c），做的是"连接硬件"的活（PDF p.133）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">BaseType_t <span style="color:#795E26">xPortStartScheduler</span><span style="color:#001080">( <span style="color:#267F99">void</span> )</span>
+{
+    <span style="color:#008000">/* ① 把 PendSV 和 SysTick 的中断优先级设为最低优先级 */</span>
+    <span style="color:#008000">/*    这样任务切换（PendSV）永远等所有中断处理完才执行 */</span>
+    portNVIC_SYSPRI2_REG |= portNVIC_PENDSV_PRI;   <span style="color:#008000">/* SHPR3 寄存器，0xE000ED20 */</span>
+    portNVIC_SYSPRI2_REG |= portNVIC_SYSTICK_PRI;
+
+    <span style="color:#008000">/* ② 配置 SysTick：清计数值、按 configTICK_RATE_HZ 算重装载值、开启中断 */</span>
+    vPortSetupTimerInterrupt();
+
+    <span style="color:#008000">/* ③ 临界区嵌套计数器归零（进临界区是允许嵌套的） */</span>
+    uxCriticalNesting = <span style="color:#098658">0</span>;
+
+    <span style="color:#008000">/* ④ 使能 FPU（仅 Cortex-M4/M7 有这行） */</span>
+    prvEnableVFP();
+
+    <span style="color:#008000">/* ⑤ FPCCR 置位 ASPEN/LSPEN：进出异常时自动保存/恢复 FPU 寄存器 */</span>
+    *( portFPCCR ) |= portASPEN_AND_LSPEN_BITS;
+
+    <span style="color:#008000">/* ⑥ 启动第一个任务 */</span>
+    prvStartFirstTask();
+
+    <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;   <span style="color:#008000">/* 永远不会执行到这里 */</span>
+}</pre>
+
+<p>然后跳进汇编 <code>prvStartFirstTask()</code>（port.c）。这段汇编只有 8 条有效指令，但信息量极大（PDF p.134）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">__asm <span style="color:#267F99">void</span> <span style="color:#795E26">prvStartFirstTask</span><span style="color:#001080">( <span style="color:#267F99">void</span> )</span>
+{
+    PRESERVE8                    <span style="color:#008000">/* 保持 8 字节对齐（栈对齐要求） */</span>
+
+    ldr r0, =<span style="color:#098658">0xE000ED08</span>          <span style="color:#008000">/* 0xE000ED08 是 VTOR（向量表偏移寄存器）地址 */</span>
+    ldr r0, [ r0 ]               <span style="color:#008000">/* 取出 VTOR 的值 = 向量表首地址 */</span>
+    ldr r0, [ r0 ]               <span style="color:#008000">/* 向量表第一个字 = 栈顶（MSP 初始值） */</span>
+
+    msr msp, r0                  <span style="color:#008000">/* 把 MSP 重设为栈底，丢弃之前的所有栈数据 */</span>
+
+    cpsie i                      <span style="color:#008000">/* 开全局中断（IRQ） */</span>
+    cpsie f                      <span style="color:#008000">/* 开全局中断（FIQ，M3/M4 上无实际意义） */</span>
+    dsb
+    isb
+
+    svc <span style="color:#098658">0</span>                        <span style="color:#008000">/* 触发 SVC 异常，进入 vPortSVCHandler */</span>
+    nop
+    nop
+}</pre>
+
+<p>三个要点：</p>
+
+<ul>
+<li><strong>MSP 和 PSP 的分工</strong>：Cortex-M 内核有两个堆栈指针。MSP（主堆栈指针）给系统/中断用，PSP（进程堆栈指针）给任务用。FreeRTOS 里任务跑在 PSP 上，进中断后硬件自动切回 MSP。记住这个分工，第 4、5 节和下一课都会用到。</li>
+<li><strong>为什么要重设 MSP</strong>：从复位到这里的栈数据（调用链、局部变量）都是"一次性"的，因为调度器启动后走的是任务栈。直接把 MSP 打回初始值，等于宣布"旧世界作废"。</li>
+<li><strong>为什么用 SVC</strong>：Cortex-M 上不能直接"切到任务模式用 PSP 跑任意函数"，但可以通过异常返回机制实现。SVC 是软件可触发的同步异常，用它作为进入第一个任务的"跳板"。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 向量表第一个字是初始栈顶指针，这个事实来自启动文件 start_stm32f407xx.s：<code>__Vectors DCD __initial_sp</code>。所以 <code>prvStartFirstTask</code> 三次 <code>ldr</code> 是"取 VTOR → 取向量表地址 → 取栈顶"的连环套。如果你改了向量表位置（比如放在外部 RAM），这段代码依然正确——因为它读的是 VTOR 而不是硬编码地址。</p>
+</div>
+
+<h2>4. vPortSVCHandler()：伪造一次"中断返回"</h2>
+
+<p><code>svc 0</code> 一执行，就进入了 SVC 的中断服务函数 <code>vPortSVCHandler()</code>（port.c）。它的任务：把第一个任务"看起来像刚从上下文切换回来一样"（PDF p.136）。以你板子用的 Cortex-M4F 移植为例：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">__asm <span style="color:#267F99">void</span> <span style="color:#795E26">vPortSVCHandler</span><span style="color:#001080">( <span style="color:#267F99">void</span> )</span>
+{
+    PRESERVE8
+
+    <span style="color:#008000">/* ① 取第一个任务：pxCurrentTCB 指向最高优先级就绪任务 */</span>
+    ldr r3, =pxCurrentTCB        <span style="color:#008000">/* r3 = pxCurrentTCB 变量的地址 */</span>
+    ldr r1, [ r3 ]               <span style="color:#008000">/* r1 = TCB 首地址 */</span>
+    ldr r0, [ r1 ]               <span style="color:#008000">/* r0 = TCB 第一个成员 = 任务栈顶指针 */</span>
+
+    <span style="color:#008000">/* ② 模拟&quot;出栈&quot;：把任务栈里的 R4~R11、R14 恢复到 CPU 寄存器 */</span>
+    ldmia r0!, { r4 - r11, r14 }
+
+    msr psp, r0                  <span style="color:#008000">/* ③ PSP 指向任务栈剩余部分 */</span>
+    isb
+
+    <span style="color:#008000">/* ④ 允许所有中断（BASEPRI = 0） */</span>
+    mov r0, #<span style="color:#098658">0</span>
+    msr basepri, r0
+
+    <span style="color:#008000">/* ⑤ 修改 EXC_RETURN 并返回：线程模式 + PSP */</span>
+    orr r14, #<span style="color:#098658">0xd</span>                <span style="color:#008000">/* EXC_RETURN | 0x0D */</span>
+    bx r14                       <span style="color:#008000">/* 异常返回，硬件自动出栈剩余寄存器 */</span>
+}</pre>
+
+<p>这里藏着本课最核心的两个机制：</p>
+
+<p><strong>机制一：为什么 TCB 第一个成员必须是栈顶指针？</strong> 因为任务切换的本质就是"换栈"：谁在跑，SP 就指向谁的栈。TCB（任务控制块）的第一个成员 <code>pxTopOfStack</code> 就是任务当前栈顶，代码里 <code>ldr r0, [r1]</code> 直接取第一个字，零偏移。这个约定贯穿所有切换代码。</p>
+
+<p><strong>机制二：EXC_RETURN 与"伪造返回"。</strong> 进入异常时，LR（r14）会被硬件自动改写为 EXC_RETURN，它告诉 CPU 返回后进入什么模式、用哪个栈指针：</p>
+
+<table>
+<tr><th>EXC_RETURN 值</th><th>bit[4] FPU</th><th>bit[3] 模式</th><th>bit[2] 栈指针</th></tr>
+<tr><td>0xFFFFFFE1 / 0xFFFFFFF1</td><td>用 / 不用</td><td>Handler 模式</td><td>MSP</td></tr>
+<tr><td>0xFFFFFFE9 / 0xFFFFFFF9</td><td>用 / 不用</td><td>线程模式</td><td>MSP</td></tr>
+<tr><td>0xFFFFFFED / 0xFFFFFFFD</td><td>用 / 不用</td><td>线程模式</td><td><strong>PSP</strong></td></tr>
+</table>
+
+<p>SVC 是从线程模式触发的，此时 r14 = 0xFFFFFFF9（线程模式 + MSP）。<code>orr r14, #0xd</code> 把 bit3、bit2 置 1：0xF9 | 0x0D = 0xFD —— <strong>变成"线程模式 + PSP"</strong>。于是 <code>bx r14</code> 执行异常返回时，CPU 从 PSP 指向的任务栈自动出栈 R0、R1、R2、R3、R12、LR、PC、xPSR，然后跳到 PC 指向的代码——也就是任务函数！任务函数入口地址早在创建任务时就写进了任务栈（第 5 节）。</p>
+
+<div class="tip">
+  <p>💡 理解"异常返回 = 出栈 PC 并跳转"后，你会豁然开朗：任务的第一次运行和以后的每一次恢复，走的是同一条路——硬件从 PSP 栈上出栈 PC。区别只是第一次栈里是 <code>pxPortInitialiseStack</code> 预先埋好的值，之后是上次切换时 <code>xPortPendSVHandler</code> 存进去的值。</p>
+</div>
+
+<h2>5. xTaskCreate() 全链路：TCB 与任务栈的诞生</h2>
+
+<p>启动链路看完了，回头补课：任务到底是怎么"造"出来的。此时 <code>start_task</code>、空闲任务、定时器任务都创建过了——SVC 里第一个跑的其实是优先级最高的定时器任务（31 级 &gt; start_task 的 1 级 &gt; 空闲任务的 0 级，见 PDF p.136 的表）。<code>xTaskCreate()</code> 的骨架（PDF p.138）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">BaseType_t <span style="color:#795E26">xTaskCreate</span><span style="color:#001080">( TaskFunction_t pxTaskCode,
+                         <span style="color:#267F99">const</span> <span style="color:#267F99">char</span> * <span style="color:#267F99">const</span> pcName,
+                         <span style="color:#267F99">const</span> configSTACK_DEPTH_TYPE usStackDepth,
+                         <span style="color:#267F99">void</span> * <span style="color:#267F99">const</span> pvParameters,
+                         UBaseType_t uxPriority,
+                         TaskHandle_t * <span style="color:#267F99">const</span> pxCreatedTask )</span>
+{
+    TCB_t * pxNewTCB;
+
+    <span style="color:#008000">/* STM32 栈向下生长，portSTACK_GROWTH 为 -1，先申请任务栈 */</span>
+    pxStack = pvPortMallocStack( usStackDepth * <span style="color:#0000FF">sizeof</span>( StackType_t ) );
+    <span style="color:#0000FF">if</span>( pxStack != <span style="color:#098658">NULL</span> )
+    {
+        pxNewTCB = ( TCB_t * ) pvPortMalloc( <span style="color:#0000FF">sizeof</span>( TCB_t ) );
+        <span style="color:#0000FF">if</span>( pxNewTCB != <span style="color:#098658">NULL</span> )
+        {
+            pxNewTCB-&gt;pxStack = pxStack;   <span style="color:#008000">/* 记下任务栈地址 */</span>
+        }
+        <span style="color:#0000FF">else</span>
+        {
+            vPortFreeStack( pxStack );      <span style="color:#008000">/* TCB 申请失败则回滚栈 */</span>
+        }
+    }
+
+    <span style="color:#0000FF">if</span>( pxNewTCB != <span style="color:#098658">NULL</span> )
+    {
+        <span style="color:#008000">/* 初始化 TCB 的各个成员：名字、优先级、列表项、任务栈…… */</span>
+        prvInitialiseNewTask( pxTaskCode, pcName, usStackDepth,
+                              pvParameters, uxPriority, pxCreatedTask,
+                              pxNewTCB, <span style="color:#098658">NULL</span> );
+        <span style="color:#008000">/* 把任务挂进就绪列表，并更新 pxCurrentTCB */</span>
+        prvAddNewTaskToReadyList( pxNewTCB );
+        xReturn = pdPASS;
+    }
+    <span style="color:#0000FF">return</span> xReturn;
+}</pre>
+
+<p>内存申请失败会"回滚"：栈失败就返回 NULL，TCB 失败就释放栈——保证不留内存泄漏。<code>prvInitialiseNewTask()</code>（PDF p.141）做的主要事情：把栈写满标记值（<code>tskSTACK_FILL_BYTE</code>，方便日后查栈溢出）、拷贝任务名、校验并保存优先级（同时保存 <code>uxBasePriority</code> 供互斥量优先级继承用）、初始化两个列表项（<code>xStateListItem</code>、<code>xEventListItem</code>）并登记 owner、然后调用今天的主角 <code>pxPortInitialiseStack()</code> 初始化任务栈。</p>
+
+<p>STM32F407 是 CM4F 内核，对应带 FPU 支持的任务栈初始化（PDF p.149，与 CM3 版本的差别是多存了一个 EXC_RETURN）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">StackType_t * <span style="color:#795E26">pxPortInitialiseStack</span><span style="color:#001080">( StackType_t * pxTopOfStack,
+                                     TaskFunction_t pxCode,
+                                     <span style="color:#267F99">void</span> * pvParameters )</span>
+{
+    <span style="color:#008000">/* 模拟一次上下文切换中断后的栈帧结构 */</span>
+    pxTopOfStack--;                    <span style="color:#008000">/* 硬件入栈前的栈顶偏移 */</span>
+    *pxTopOfStack = portINITIAL_XPSR;  <span style="color:#008000">/* xPSR = 0x01000000（Thumb 标志） */</span>
+    pxTopOfStack--;
+    *pxTopOfStack = ( ( StackType_t ) pxCode ) &amp; portSTART_ADDRESS_MASK;  <span style="color:#008000">/* PC = 任务函数入口 */</span>
+    pxTopOfStack--;
+    *pxTopOfStack = ( StackType_t ) prvTaskExitError;  <span style="color:#008000">/* LR = 错误退出函数 */</span>
+    pxTopOfStack -= <span style="color:#098658">5</span>;                 <span style="color:#008000">/* 预留 R12、R3、R2、R1 */</span>
+    *pxTopOfStack = ( StackType_t ) pvParameters;      <span style="color:#008000">/* R0 = 任务参数 */</span>
+    pxTopOfStack--;
+    *pxTopOfStack = portINITIAL_EXC_RETURN;            <span style="color:#008000">/* EXC_RETURN = 0xFFFFFFFD */</span>
+    pxTopOfStack -= <span style="color:#098658">8</span>;                 <span style="color:#008000">/* 预留 R11、R10、R9、R8、R7、R6、R5、R4 */</span>
+
+    <span style="color:#0000FF">return</span> pxTopOfStack;               <span style="color:#008000">/* 新栈顶存入 TCB-&gt;pxTopOfStack */</span>
+}</pre>
+
+<p>初始化后的任务栈从高地址到低地址长这样（对照第 4 节，硬件出栈顺序正好相反）：</p>
+
+<table>
+<tr><th>栈地址方向</th><th>内容</th><th>对应寄存器</th></tr>
+<tr><td rowspan="8">高地址（栈底）<br>↓<br>低地址（栈顶）</td><td>0x01000000</td><td>xPSR（置 Thumb 位）</td></tr>
+<tr><td>任务函数地址</td><td>PC</td></tr>
+<tr><td>prvTaskExitError 地址</td><td>LR</td></tr>
+<tr><td>预留</td><td>R12、R3、R2、R1</td></tr>
+<tr><td>任务参数 pvParameters</td><td>R0</td></tr>
+<tr><td>0xFFFFFFFD</td><td>EXC_RETURN（线程模式+PSP）</td></tr>
+<tr><td>预留</td><td>R11~R4</td></tr>
+<tr><td>← pxTopOfStack 返回给 TCB</td><td>（从此处开始真正使用）</td></tr>
+</table>
+
+<p>最后 <code>prvAddNewTaskToReadyList()</code> 把任务挂进就绪列表（PDF p.151）：计数 <code>uxCurrentNumberOfTasks++</code>；如果 <code>pxCurrentTCB</code> 还是 NULL（第一个任务），顺手 <code>prvInitialiseTaskLists()</code> 初始化所有内核列表；调度器未运行时，新任务优先级 ≥ 当前 <code>pxCurrentTCB</code> 就替换之——所以创建顺序和优先级共同决定了谁第一个跑。然后通过宏 <code>prvAddTaskToReadyList</code> 把任务的状态列表项插到 <code>pxReadyTasksLists[优先级]</code> 末尾，同时用位图记录"这个优先级有任务"（<code>taskRECORD_READY_PRIORITY</code>），下一课选任务就靠这张位图。</p>
+
+<h2>6. 任务生命周期：删除、挂起、恢复与空闲任务</h2>
+
+<p>启动流程讲完，把任务管理剩下的几个函数过一遍（细节留到后续实验课验证）：</p>
+
+<p><strong>vTaskDelete()</strong>（PDF p.154）：传入 NULL 表示删除自己。关键分支——<strong>任务无法删掉正在运行的自己</strong>，于是把自己挂进 <code>xTasksWaitingTermination</code> 待删除列表，并让 <code>uxDeletedTasksWaitingCleanUp++</code>，由空闲任务来"收尸"；删别的任务就直接调用 <code>prvDeleteTCB()</code> 释放 TCB 和任务栈内存（<code>vPortFreeStack(pxTCB-&gt;pxStack)</code> + <code>vPortFree(pxTCB)</code>）。删除自己后必须立刻让出 CPU（<code>portYIELD_WITHIN_API()</code>），否则一个"不存在"的任务还在跑。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">vTaskDelete</span><span style="color:#001080">( TaskHandle_t xTaskToDelete )</span>
+{
+    pxTCB = prvGetTCBFromHandle( xTaskToDelete );  <span style="color:#008000">/* NULL = 自己 */</span>
+    taskENTER_CRITICAL();
+
+    uxListRemove( &amp;( pxTCB-&gt;xStateListItem ) );   <span style="color:#008000">/* 移出原状态列表 */</span>
+    <span style="color:#0000FF">if</span>( listLIST_ITEM_CONTAINER( &amp;( pxTCB-&gt;xEventListItem ) ) != <span style="color:#098658">NULL</span> )
+    {
+        uxListRemove( &amp;( pxTCB-&gt;xEventListItem ) ); <span style="color:#008000">/* 还在等事件？一并移除 */</span>
+    }
+
+    <span style="color:#0000FF">if</span>( pxTCB == pxCurrentTCB )
+    {
+        <span style="color:#008000">/* 删自己：挂进待删除列表，等空闲任务清理 */</span>
+        vListInsertEnd( &amp;xTasksWaitingTermination, &amp;( pxTCB-&gt;xStateListItem ) );
+        ++uxDeletedTasksWaitingCleanUp;
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        --uxCurrentNumberOfTasks;
+        prvResetNextTaskUnblockTime();
+    }
+    taskEXIT_CRITICAL();
+
+    <span style="color:#0000FF">if</span>( pxTCB != pxCurrentTCB )
+    {
+        prvDeleteTCB( pxTCB );                    <span style="color:#008000">/* 删别人：直接释放内存 */</span>
+    }
+    <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span>( xSchedulerRunning != pdFALSE )
+    {
+        portYIELD_WITHIN_API();                   <span style="color:#008000">/* 删自己：立刻切换任务 */</span>
+    }
+}</pre>
+
+<p><strong>vTaskSuspend() / vTaskResume()</strong>（PDF p.158）：挂起就是把任务从就绪/阻塞列表移到 <code>xSuspendedTaskList</code>（挂起列表），恢复时再移回就绪列表。挂起自己同样要立刻切换。两个函数都要处理"下一个解除阻塞任务"的更新，避免算错休眠时间。</p>
+
+<p><strong>vTaskSwitchContext()</strong>（PDF p.161）：内核里负责更新 <code>pxCurrentTCB</code> 指向最高优先级就绪任务的函数，核心是宏 <code>taskSELECT_HIGHEST_PRIORITY_TASK()</code>。本课先留个印象——它就是"查位图找最高优先级 → 从对应就绪列表取下一个任务"，真正的上下文切换发生在 PendSV 里，下一课逐条汇编分析。</p>
+
+<p><strong>空闲任务 prvIdleTask()</strong>（PDF p.165）：优先级 0，永不停歇的"管家"，主要干三件事：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#795E26">portTASK_FUNCTION</span><span style="color:#001080">( prvIdleTask, pvParameters )</span>
+{
+    <span style="color:#0000FF">for</span>( ; ; )
+    {
+        <span style="color:#008000">/* ① 清理待删除列表：执行真正被&quot;删除自己&quot;的任务收尾 */</span>
+        prvCheckTasksWaitingTermination();
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> ( ( configUSE_PREEMPTION == 1 ) &amp;&amp; ( configIDLE_SHOULD_YIELD == 1 ) )</span>
+        <span style="color:#008000">/* ② 有同优先级（0 级）任务就绪时让出 CPU，避免饿死它们 */</span>
+        <span style="color:#0000FF">if</span>( listCURRENT_LIST_LENGTH( &amp;( pxReadyTasksLists[ tskIDLE_PRIORITY ] ) ) &gt; <span style="color:#098658">1</span> )
+        {
+            taskYIELD();
+        }
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> ( configUSE_IDLE_HOOK == 1 )</span>
+        vApplicationIdleHook();   <span style="color:#008000">/* ③ 用户钩子：低功耗、喂狗等放这里 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+    }
+}</pre>
+
+<h2>动手练习（约 25 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 6.1：断点走一遍启动流程</h3>
+  <p class="step">1️⃣ 打开你的 FreeRTOS 分支工程，在 <code>freertos_demo()</code> 调用 <code>vTaskStartScheduler()</code> 那行打断点，单步进入（F11 需要先关掉"跳过系统库"选项，或直接 Ctrl+F11 进汇编）。</p>
+  <p class="step">2️⃣ 依次在 <code>xPortStartScheduler()</code>、<code>prvStartFirstTask()</code>、<code>vPortSVCHandler()</code> 入口打断点，观察：进入 <code>prvStartFirstTask</code> 前后 MSP 的值怎么变？<code>svc 0</code> 单步后 SP 是否变成了 PSP 的值？</p>
+  <p class="step">3️⃣ 在 Watch 窗口添加 <code>pxCurrentTCB</code>，等 vPortSVCHandler 执行完，确认它指向的是定时器服务任务（优先级 31 最高）；在任务函数入口打断点，确认跳进的就是它。</p>
+  <p class="step">4️⃣ 验收标准：能说出"从复位到第一个任务运行"经过了哪 4 个关键函数，以及每步 SP 在 MSP/PSP 之间如何切换。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 6.2：画出 pxPortInitialiseStack 的栈帧</h3>
+  <p class="step">1️⃣ 在你的工程里打开 <code>port.c</code>，找到 <code>pxPortInitialiseStack()</code>，对照本课第 5 节的表格逐行核对（注意你的工程可能是 CM4F 版本，有 EXC_RETURN 那行）。</p>
+  <p class="step">2️⃣ 在 <code>prvInitialiseNewTask()</code> 调用 <code>pxPortInitialiseStack()</code> 之后打断点，在 Memory 窗口查看任务栈内容，验证：栈顶往下的第 4 个字（PC 位置）是不是任务函数地址？第 6 个字是不是 0xFFFFFFFD？</p>
+  <p class="step">3️⃣ 修改 <code>portINITIAL_EXC_RETURN</code> 的注释内容，用一两句话解释：为什么任务第一次"跑起来"时，硬件自动出栈的顺序恰好和入栈顺序相反。</p>
+  <p class="step">4️⃣ 验收标准：你能在白纸上默写这个栈帧布局（8 个区域），并指出 R0 里存的为什么是 <code>pvParameters</code>。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. vTaskStartScheduler() 中调用 portDISABLE_INTERRUPTS() 的目的是？</p>
+  <p class="opt">A. 防止用户任务在调度器启动前抢占执行</p>
+  <p class="opt">B. 防止 SysTick 在调度器开启前或过程中产生中断</p>
+  <p class="opt">C. 让空闲任务优先获得 CPU 使用权</p>
+  <p class="opt">D. 保护串口打印不被中断打断</p>
+  <details><summary>查看答案</summary><div class="answer">B。关闭受 FreeRTOS 管理的中断，防止 SysTick 在任务调度器开启前产生中断干扰初始化，第一个任务运行时（SVC 里 BASEPRI=0）会重新打开中断（PDF p.130~131）。</div></details>
+
+  <p class="q">Q2. prvStartFirstTask() 里读取的 0xE000ED08 是什么寄存器？</p>
+  <p class="opt">A. SysTick 控制和状态寄存器</p>
+  <p class="opt">B. 中断控制状态寄存器（ICSR）</p>
+  <p class="opt">C. 向量表偏移寄存器（VTOR）</p>
+  <p class="opt">D. 应用程序中断和复位控制寄存器</p>
+  <details><summary>查看答案</summary><div class="answer">C。VTOR 保存向量表偏移地址；向量表第一个字就是初始栈顶指针（MSP 初始值），所以连续三次 ldr 取出栈顶（PDF p.134）。</div></details>
+
+  <p class="q">Q3. vPortSVCHandler() 末尾 "orr r14, #0xd" 的作用是？</p>
+  <p class="opt">A. 使能浮点单元并保存浮点寄存器</p>
+  <p class="opt">B. 把 EXC_RETURN 改为"返回线程模式并使用 PSP"</p>
+  <p class="opt">C. 触发 PendSV 异常以完成后续切换</p>
+  <p class="opt">D. 将中断优先级设置为最低等级</p>
+  <details><summary>查看答案</summary><div class="answer">B。SVC 里 r14 是 EXC_RETURN（0xFFFFFFF9，线程模式+MSP），orr 0x0D 后变成 0xFFFFFFFD（线程模式+PSP），bx r14 时硬件从 PSP 任务栈自动出栈寄存器并跳进任务函数（PDF p.137）。</div></details>
+
+  <p class="q">Q4. TCB 结构体的第一个成员为什么必须是栈顶指针？</p>
+  <p class="opt">A. 因为编译器要求结构体首成员是栈指针</p>
+  <p class="opt">B. 因为任务切换的本质是换栈，切换汇编零偏移取栈顶</p>
+  <p class="opt">C. 为了方便统计任务栈的最大使用量</p>
+  <p class="opt">D. 因为任务名数组必须排在栈指针后面</p>
+  <details><summary>查看答案</summary><div class="answer">B。谁在运行，SP 就指向谁的栈；切换时汇编用 ldr r0,[r1] 直接取 TCB 第一个字作为新任务的栈顶，零偏移最快（PDF p.136、p.170 等多处可见该约定）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 8 章（<span class="pg">PDF p.129~167</span>）——本课全部源码依据，建议配合工程逐函数读</li>
+<li>🌐 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a> 第 3 章（Task Management）——官方书对任务创建/删除的语义讲得更细</li>
+<li>📄 <a href="https://www.freertos.org/xTaskCreate.html">FreeRTOS API: xTaskCreate</a>——官方 API 参考，注意形参语义与源码一一对应</li>
+</ul>
+
+<div class="footer-note">
+  <p>本课是全课程信息密度最大的一课，一次消化不了很正常，建议配合练习 6.1 的断点走查再读一遍源码。下一课预告：第 7 课——任务切换原理，把 PendSV 的每一行汇编和"选谁上场"的算法彻底拆开。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0005-lists-and-list-items.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0007-task-switching-pendsv.html">下一课：任务切换原理（PendSV）→</a>
+</nav>
+
+</div>
+</body>
+</html>

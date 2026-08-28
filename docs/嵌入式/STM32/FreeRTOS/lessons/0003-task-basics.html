@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 3 课：任务基础知识 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 3 课</nav>
+
+<h1>第 3 课：任务基础知识</h1>
+<p class="subtitle">状态、优先级、调度方式与 TCB——任务的身世档案</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>从"任务"这个最小单元讲起。学完你能用文字画出任务四种状态的转换图，说清优先级数值与调度顺序的关系（注意和中断优先级相反！），区分抢占式调度与时间片调度，并读懂任务控制块 TCB 里每个字段在干嘛，理解任务栈大小的单位为什么是"字"。这是后续一切 API 与内核机制的地基。</p>
+</div>
+
+<h2>1. 单任务系统 vs 多任务系统</h2>
+
+<p>单任务系统就是裸机的前后台系统（PDF 第 5.1.1 节 <span class="pg">PDF p.82</span>）：<code>main()</code> 里一个大 while 循环顺序处理事务（后台），中断服务函数处理紧急事件（前台）。它的致命弱点是<strong>实时性差</strong>——事务没有优先级之分，紧急事务没轮到就只能干等。</p>
+
+<p>多任务系统把大循环拆成多个独立任务（PDF 第 5.1.2 节 <span class="pg">PDF p.82~83</span>）：单核 CPU 同一时刻仍只能跑一个任务，但调度器按调度算法极快地分配 CPU 使用权，宏观上造成多个任务"同时"运行的错觉。关键收益：<strong>紧急事务可以放进高优先级任务，像中断抢占一样立刻获得 CPU</strong>。</p>
+
+<h2>2. 任务的四种状态</h2>
+
+<p>FreeRTOS 中任务必然处于以下四种状态之一（PDF 第 5.2 节 <span class="pg">PDF p.83~84</span>）：</p>
+
+<table>
+<tr><th>状态</th><th>含义</th><th>典型进入/退出方式</th></tr>
+<tr><td>🏃 运行态</td><td>正在占用 CPU 执行</td><td>单核下任意时刻只有一个任务处于运行态</td></tr>
+<tr><td>💺 就绪态</td><td>具备运行条件，但 CPU 被同/更高优先级任务占着</td><td>阻塞/挂起解除后进入；被更高优先级抢占时退回</td></tr>
+<tr><td>😴 阻塞态</td><td>因延时或等待事件而暂停</td><td>vTaskDelay() 延时未到、等待队列/信号量/事件组；超时后自动解除</td></tr>
+<tr><td>⏸️ 挂起态</td><td>被主动挂起，不参与调度</td><td>vTaskSuspend() 进入，vTaskResume() 退出（不会自动恢复！）</td></tr>
+</table>
+
+<p><strong>状态转换图（文字版）</strong>（对应 PDF 图 5.2.1 <span class="pg">PDF p.84</span>）：</p>
+
+<ul>
+<li>任务创建 → <strong>就绪态</strong>（创建成功即进入就绪列表，等调度器选中）</li>
+<li>就绪态 → <strong>运行态</strong>：调度器选中该任务（优先级最高，或同优先级时间片轮转到）</li>
+<li>运行态 → <strong>就绪态</strong>：被更高优先级任务抢占，或时间片用完</li>
+<li>运行态 → <strong>阻塞态</strong>：调用 vTaskDelay / 等待事件（带超时）</li>
+<li>运行态 → <strong>挂起态</strong>：调用 vTaskSuspend</li>
+<li>阻塞态/挂起态 → <strong>就绪态</strong>：延时超时 / 事件到达 / vTaskResume 恢复</li>
+<li>任意状态 → 任务删除（vTaskDelete）</li>
+</ul>
+
+<div class="tip">
+  <p>💡 判断状态的土办法：问两个问题——"它能不能被调度器选中？"能 → 看它是否正在跑：跑着=运行态，排队=就绪态；"它是不是主动让位了？"阻塞是"睡到点或等事件自动醒"，挂起是"被叫醒才醒"。阻塞和挂起都不占 CPU，但解除条件完全不同。</p>
+</div>
+
+<h2>3. 任务优先级：数值越大越优先</h2>
+
+<p>每个任务被分配 0~(configMAX_PRIORITIES-1) 的优先级（PDF 第 5.3 节 <span class="pg">PDF p.84</span>）：</p>
+
+<ul>
+<li><strong>数值 0 是最低优先级</strong>，数值 (configMAX_PRIORITIES-1) 是最高优先级。</li>
+<li>如果启用硬件优化选任务（configUSE_PORT_OPTIMISED_TASK_SELECTION=1，用 CLZ 前导零指令），STM32 上 configMAX_PRIORITIES 不能超过 32。</li>
+<li>优先级数量越多，系统消耗资源越多，够用就好。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ FreeRTOS 任务优先级与 STM32 中断优先级的数值含义<strong>正好相反</strong>（PDF 图 5.3.1 <span class="pg">PDF p.84</span>）：任务优先级数值越大越优先；NVIC 中断优先级数值越小越优先。刚入门特别容易在这上面栽跟头——把两个体系混着记。</p>
+</div>
+
+<h2>4. 调度方式：抢占式 + 时间片</h2>
+
+<p>FreeRTOS 支持三种调度方式（PDF 第 5.4 节 <span class="pg">PDF p.85</span>）：</p>
+
+<ul>
+<li>⚔️ <strong>抢占式调度</strong>：针对优先级不同的任务。高优先级任务随时抢占低优先级任务，只有高优先级任务阻塞或挂起，低优先级任务才有机会跑。</li>
+<li>🔁 <strong>时间片调度</strong>：针对优先级相同的任务。每个系统节拍（tick）切换一次，同优先级任务轮流各跑一个 tick。</li>
+<li>🗑️ <strong>协程式调度</strong>：官方已声明不再开发（"专为资源极少的设备设计，现已很少用到"），本课程不涉及。</li>
+</ul>
+
+<p>抢占式调度的"抢占"发生在哪？主要两个时刻：tick 中断里发现更高优先级任务就绪（<code>xTaskIncrementTick()</code> 返回需要切换）、以及任务从阻塞中醒来时。具体切换动作由 PendSV 完成，第 7 课逐行分析。</p>
+
+<h2>5. 任务控制块 TCB：任务的"身份证"</h2>
+
+<p>每个创建的任务都有一个任务控制块结构体变量，存储任务的属性（PDF 第 5.5 节 <span class="pg">PDF p.86~87</span>）。<code>TaskHandle_t</code> 其实就是指向 TCB 的指针。核心字段逐个看：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* tasks.c 中 TCB 的定义（核心字段） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tskTaskControlBlock</span>
+{</span>
+    <span style="color:#0000FF">volatile</span> StackType_t *pxTopOfStack;  <span style="color:#008000">/* 指向任务栈栈顶：切换现场时从这里恢复寄存器 */</span>
+
+    ListItem_t xStateListItem;   <span style="color:#008000">/* 状态列表项：任务挂在就绪/阻塞/挂起列表里就是靠它 */</span>
+    ListItem_t xEventListItem;   <span style="color:#008000">/* 事件列表项：任务等待队列/信号量等事件时使用 */</span>
+
+    UBaseType_t uxPriority;      <span style="color:#008000">/* 任务优先级：数值越大优先级越高 */</span>
+    StackType_t *pxStack;        <span style="color:#008000">/* 任务栈起始地址 */</span>
+    <span style="color:#267F99">char</span> pcTaskName[configMAX_TASK_NAME_LEN]; <span style="color:#008000">/* 任务名（调试用） */</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> (configUSE_MUTEXES == 1)</span>
+    UBaseType_t uxBasePriority;  <span style="color:#008000">/* 基础优先级：互斥量优先级翻转后用来恢复原优先级 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> (configUSE_TASK_NOTIFICATIONS == 1)</span>
+    <span style="color:#0000FF">volatile</span> <span style="color:#267F99">uint32_t</span> ulNotifiedValue[configTASK_NOTIFICATION_ARRAY_ENTRIES]; <span style="color:#008000">/* 任务通知值 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+} tskTCB;
+
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tskTaskControlBlock</span> *<span style="color:#795E26">TaskHandle_t</span>;</span>
+</pre>
+
+<p>TCB 字段大多能用 FreeRTOSConfig.h 的宏裁剪（<span class="pg">PDF p.87</span>）：不用互斥量就不编译 uxBasePriority，不用任务通知就不编译 ulNotifiedValue。内核保持"按需编译"，这也是 FreeRTOS 内存占用可控的原因之一。</p>
+
+<p>特别留意 <code>xStateListItem</code> 和 <code>xEventListItem</code>：它们就是第 5 课的主角——列表项。调度器靠"任务 TCB 里的列表项"把任务挂进各种列表来管理，这解释了为什么第 5 课列表知识是内核原理的地基。</p>
+
+<h2>6. 任务栈：单位是"字"，别搞成"字节"</h2>
+
+<p>函数局部变量、函数调用的现场保护和返回地址都存在栈里（PDF 第 5.6 节 <span class="pg">PDF p.88~89</span>）。RTOS 里每个任务有独立的栈，任务切换时现场（寄存器）保存到当前任务栈，恢复时从目标任务栈弹回。</p>
+
+<ul>
+<li>创建任务时给的栈大小参数，单位是<strong>字（word）</strong>，不是字节！</li>
+<li>STM32 上 <code>StackType_t</code> 就是 <code>uint32_t</code>，所以 128 字 = 128×4 = 512 字节。动态创建时内核用 <code>pxStack = pvPortMallocStack(usStackDepth * sizeof(StackType_t))</code> 申请内存。</li>
+<li><code>configMINIMAL_STACK_SIZE</code> 是空闲任务的栈大小（正点原子例程为 128 字）。</li>
+<li>任务函数里的局部变量、调用的函数嵌套越深，需要的栈越大。给不够会<strong>栈溢出</strong>：栈指针冲出边界，踩坏相邻内存（可能是另一个任务的栈或堆数据），表现通常是"跑一阵子莫名死机/HardFault"。可以在 FreeRTOSConfig.h 打开 <code>configCHECK_FOR_STACK_OVERFLOW</code>（1 或 2）检测溢出，或让栈底填充已知值来检查。</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 任务栈大小 = 字数的直观理解 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> TASK_STK_SIZE  128   <span style="color:#008000">/* 128 字 = 512 字节 */</span></span>
+TaskHandle_t Task_Handler;
+
+xTaskCreate(task_entry, <span style="color:#A31515">&quot;task&quot;</span>, TASK_STK_SIZE, <span style="color:#098658">NULL</span>, <span style="color:#098658">2</span>, &amp;Task_Handler);
+
+<span style="color:#008000">/* 动态创建时内核做的事（tasks.c）：
+ * pxStack = pvPortMallocStack(128 * sizeof(StackType_t));
+ * 即申请 128 * 4 = 512 字节，够不够用全看任务代码 */</span>
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 抢占式调度演示：高优先级任务先跑、常驻 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">high_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>   <span style="color:#008000">/* 优先级 4 */</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;high  running\r\n&quot;</span>);
+        LED0_TOGGLE();
+        vTaskDelay(<span style="color:#098658">500</span>);
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">low_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>    <span style="color:#008000">/* 优先级 1 */</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;low   running\r\n&quot;</span>);
+        LED1_TOGGLE();
+        vTaskDelay(<span style="color:#098658">500</span>);
+    }
+}
+
+<span style="color:#008000">/* 观察现象：high 一就绪就抢 CPU，&quot;low running&quot; 只出现在
+ * high 阻塞的 500 tick 期间 —— 这就是抢占式调度 */</span>
+</pre>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 3.1：改优先级，观察调度变化</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里，创建两个任务：task_hi（LED0 翻转，vTaskDelay(500)）和 task_lo（LED1 翻转，vTaskDelay(500)），先给 task_hi 优先级 2、task_lo 优先级 1。</p>
+  <p class="step">2️⃣ 把优先级互换：task_hi 改成 1，task_lo 改成 2。</p>
+  <p class="step"><strong>观察什么：</strong>互换前 task_hi 常"压着" task_lo（LED0 闪烁节奏正常，LED1 只在 task_hi 阻塞时动）；互换后 LED0 变"慢半拍"。用串口打印两个任务名更能看清先后顺序——高优先级任务永远先输出。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 3.2：让任务阻塞，观察就绪态</h3>
+  <p class="step">1️⃣ 三个任务：t1（优先级 3，串口打印 "t1"，vTaskDelay(1000)）、t2（优先级 2，打印 "t2"，vTaskDelay(3000)）、t3（优先级 1，打印 "t3"，vTaskDelay(5000)）。</p>
+  <p class="step">2️⃣ 把 t3 的 vTaskDelay 改成 0（vTaskDelay(0) 表示让出当前时间片但不进入阻塞，立即回就绪态）。</p>
+  <p class="step"><strong>观察什么：</strong>阻塞时打印顺序严格按优先级排队；t3 用 vTaskDelay(0) 后，打印频率暴涨——它始终就绪，但永远轮不到它跑（t1/t2 优先级更高），这就是"就绪态任务在排队等 CPU"的直观体现。也可以中途把 t1 删除，观察 t3 突然"翻身"。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. FreeRTOS 中任务优先级数值与优先级的对应关系是？</p>
+  <p class="opt">A. 数值越大优先级越高</p>
+  <p class="opt">B. 数值越小优先级越高</p>
+  <p class="opt">C. 数值与优先级无关</p>
+  <details><summary>查看答案</summary><div class="answer">A。FreeRTOS 优先级 0 最低，configMAX_PRIORITIES-1 最高，与 STM32 中断优先级（数值小=高）相反（PDF p.84）。</div></details>
+
+  <p class="q">Q2. 任务调用 vTaskDelay(1000) 后处于什么状态？</p>
+  <p class="opt">A. 挂起态，等待恢复</p>
+  <p class="opt">B. 阻塞态，延时到期自动就绪</p>
+  <p class="opt">C. 就绪态，等待调度器分配</p>
+  <details><summary>查看答案</summary><div class="answer">B。vTaskDelay 延时未到前任务处于阻塞态，超时后自动解除阻塞进入就绪态（PDF p.84）。</div></details>
+
+  <p class="q">Q3. 两个同优先级任务轮流运行，靠的是什么机制？</p>
+  <p class="opt">A. 抢占式调度</p>
+  <p class="opt">B. 时间片调度</p>
+  <p class="opt">C. 协程式调度</p>
+  <details><summary>查看答案</summary><div class="answer">B。时间片调度针对同优先级任务，每个 tick 切换一次；抢占式针对不同优先级（PDF p.85）。</div></details>
+
+  <p class="q">Q4. xTaskCreate 的栈大小参数 128，实际占用内存是多少？</p>
+  <p class="opt">A. 128 字节</p>
+  <p class="opt">B. 128 字 = 512 字节</p>
+  <p class="opt">C. 128 个栈帧</p>
+  <details><summary>查看答案</summary><div class="answer">B。STM32 上 StackType_t 为 uint32_t，1 字 = 4 字节，128 字 = 512 字节（PDF p.88~89）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 5 章（PDF p.82~89）——本课全部依据</li>
+<li>📖 同书第 3 章 FreeRTOSConfig.h（PDF p.57~65）——configUSE_PREEMPTION、configUSE_TIME_SLICING 等宏出处</li>
+<li>🌐 <a href="https://www.freertos.org/a00110.html">FreeRTOS 官方配置项文档</a>——调度相关配置宏的官方说明</li>
+<li>📕 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a>——第 3 章 "Tasks" 系统讲解任务状态与调度</li>
+</ul>
+
+<div class="footer-note">
+  <p>任务的状态和调度是"概念层"，下一课把它们落成代码——创建、删除、挂起、恢复四个 API 实战。如果对 TCB 里的列表项好奇，那是第 5 课埋的彩蛋，到时候逐字段解剖 😉</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0002-porting-and-first-task.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0004-task-api.html">下一课：任务 API 实战 →</a>
+</nav>
+
+</div>
+</body>
+</html>

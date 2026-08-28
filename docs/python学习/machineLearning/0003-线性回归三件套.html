@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0003 · 线性回归：三件套完整走一遍</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>线性回归：三件套完整走一遍</h1>
+<p class="meta">课程 0003 · 预计 25 分钟 · 前置：<a href="0002-模型与算法三要素.html">课程 0002</a></p>
+
+<p>上一课你学会了「模型 / 策略 / 算法」三要素的辨析。这一课就用最简单的算法——<strong>线性回归</strong>——把三件套从头到尾亲手装一遍。这是全书最简单的一课，但也是最值得练熟的一课：你会第一次看到「过拟合」和「正则化」在真实数字里长什么样。</p>
+
+<h2>三要素之「模型」：假设空间</h2>
+<p>线性回归假设：输出是输入的<b>线性组合</b>加一个常数。写成向量形式：</p>
+<pre>ŷ = w₁x₁ + w₂x₂ + … + w_d x_d + b  =  wᵀx + b</pre>
+<p><strong>模型</strong> = 所有形如 wᵀx + b 的函数（w、b 取任何实数）。<strong>假设空间是「所有直线/超平面」的集合</strong>，学习就是在这个集合里挑一条。</p>
+<p>我们把 b 收进 w：记增广输入 x' = (x₁,…,x_d,1)，则 ŷ = wᵀx'。代码里一行 `np.hstack([x, ones])` 就干这个。</p>
+
+<h2>三要素之「策略」：均方误差 + 经验风险最小化</h2>
+<p>怎么判断一条线好不好？用<strong>均方误差（MSE）</strong>：</p>
+<pre>L(w) = (1/N) Σ (yᵢ − ŷᵢ)² = (1/N) ||Xw − y||²</pre>
+<p>含义：预测和真实值平均差多少（平方）。MSE 是二次函数、处处可导、对大误差惩罚重——所以既好算又「对离群点敏感」。</p>
+<p><strong>策略</strong> = 经验风险最小化（ERM）：<code>w* = argmin L(w)</code>。「经验」指我们用的是训练集上的平均损失（样本均值），而不是真实分布的期望。</p>
+
+<h2>三要素之「算法」：两条路到终点</h2>
+<p>同一个「模型 + 策略」，有两条搜索路径：</p>
+<div class="grid">
+  <div class="card"><h3>正规方程（解析解）</h3><p>令梯度为 0，直接解出 w* = (XᵀX)⁻¹Xᵀy。一步到位。</p></div>
+  <div class="card"><h3>梯度下降（迭代）</h3><p>w ← w − η·∇L(w)，沿损失下降最快的方向一步步走。可扩展到神经网络。</p></div>
+</div>
+<p>你跑脚本时两条路得到几乎一样的 w——这正好证明：<strong>换「算法」只是换搜索方法，终点相同</strong>。什么时候不同？当 (XᵀX) 不可逆（特征太多/有共线性）或特征维度极大时，正规方程就不可行或太慢，只能梯度下降。</p>
+
+<h2>泛化：过拟合与正则化</h2>
+<p>线性回归不够用时，人们会把特征变「花哨」——比如多项式特征 1, x, x², …, xᵈ。于是「模型」变大了（候选函数更多、更弯）。这时出现经典一幕：</p>
+<ul>
+  <li><strong>欠拟合</strong>：degree 太小（d=1 一条直线），训练和测试误差都高。</li>
+  <li><strong>过拟合</strong>：degree 太大（d=20），训练误差很低，但测试误差暴涨——模型把噪声也背下来了。</li>
+</ul>
+<p>对策是<strong>正则化</strong>：在损失里加惩罚项，主动收紧模型。李航把它叫做<strong>结构风险最小化（SRM）</strong>：</p>
+<pre>损失 = MSE + λ·||w||²            ← 岭回归（L2）
+损失 = MSE + λ·Σ|wⱼ|             ← Lasso（L1，会让系数变成 0）</pre>
+<p>λ 是「惩罚力度」：太大则模型被压得太扁（欠拟合），太小则压不住（过拟合）。<strong>偏差-方差权衡</strong>说的就是这个换挡过程。</p>
+
+<h2>动手：跑一遍，亲眼看数字</h2>
+<p>运行课程配套脚本（我已写好并验证过）：</p>
+<pre>uv run python practice/0003_linear_regression.py</pre>
+<p>你会看到三张表。读表时回答文末 5 道题（S 理解 / M 动手 / H 挑战），重点想这三件事：</p>
+<ol>
+  <li>正规方程 vs 梯度下降为什么收敛到同一个 w？</li>
+  <li>degree 升高时，train/test MSE 各怎么变？过拟合在哪一侧？</li>
+  <li>λ 从 0 增大时，train/test MSE 各怎么变？为什么岭回归能救回测试误差？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">线性回归的「模型」指的是什么？</p>
+  <button class="opt" data-ok="false">一次梯度下降</button>
+  <button class="opt" data-ok="false">均方误差函数</button>
+  <button class="opt" data-ok="true">全体线性函数</button>
+  <button class="opt" data-ok="false">训练集数据</button>
+  <p class="reveal">模型 = 候选函数的集合。线性回归的候选空间是所有 wᵀx+b 组成的集合。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">均方误差在「三要素」里属于？</p>
+  <button class="opt" data-ok="false">模型</button>
+  <button class="opt" data-ok="false">算法</button>
+  <button class="opt" data-ok="true">策略</button>
+  <button class="opt" data-ok="false">数据</button>
+  <p class="reveal">损失函数 = 判断好坏的标准 = 策略。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">训练误差很低、测试误差很高，首先怀疑？</p>
+  <button class="opt" data-ok="false">欠拟合</button>
+  <button class="opt" data-ok="false">数据太少</button>
+  <button class="opt" data-ok="false">算法错误</button>
+  <button class="opt" data-ok="true">过拟合</button>
+  <p class="reveal">典型的过拟合：模型记住了训练集的噪声。应对：加正则化或减小模型复杂度。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">岭回归与 Lasso 的主要区别？</p>
+  <button class="opt" data-ok="false">前者更快</button>
+  <button class="opt" data-ok="false">后者更准</button>
+  <button class="opt" data-ok="true">L1会删特征</button>
+  <button class="opt" data-ok="false">L2不会正则</button>
+  <p class="reveal">L1（Lasso）会把部分系数压到恰好 0，等于自动做特征选择；L2（岭）只把系数整体缩小。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>ISL 第 3 章</strong>（Linear Regression）：直觉化讲回归、共线性、模型诊断，每节有 Python 代码。<a href="https://www.statlearning.com/">statlearning.com 免费下载</a>。</p>
+  <p><strong>李航《统计学习方法》§1.4–1.5</strong>：模型评估与选择、正则化与交叉验证——把这一课的「过拟合/正则化」放回理论框架。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习后告诉我你的三个观察（尤其问题 3：为什么 λ 变大 train MSE 会涨？）。下一课进入<strong>逻辑回归</strong>——把「线性 + 三要素」从回归搬到分类，你会看到它就是神经网络的最后一层。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0002-模型与算法三要素.html">← 上一篇:模型 vs 算法：三要素一次讲透</a>
+  <a href="index.html">课程地图</a>
+  <a href="0004-逻辑回归从回归到分类.html">下一篇:逻辑回归：把线性模型搬到分类 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

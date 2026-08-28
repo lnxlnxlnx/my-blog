@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 16 课：CAN 入门：物理层与特点 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 16 课</nav>
+
+<h1>第 16 课：CAN 入门：物理层与特点</h1>
+<p class="subtitle">两根线读懂差分信号：CAN 是怎么做到"多主 + 抗干扰"的（瑞萨《CAN 入门教程》第 3~6 章）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>把 CAN 当成一条"会自己排队的总线"来认识。学完你能说清 CAN 是什么、它比 UART/SPI 强在哪（多主、仲裁、差分信号、错误恢复），能画出带 120Ω 终端电阻的三节点总线拓扑，并解释"为什么 CAN 要用差分信号"——这是后面读懂报文、调 bxCAN 外设的地基。</p>
+</div>
+
+<h2>1. CAN 是什么</h2>
+
+<p>CAN 是 <strong>Controller Area Network（控制器局域网）</strong>的缩写，是 ISO 国际标准化的串行通信协议（<span class="pg">PDF p.2</span>）。1986 年，德国博世公司为了解决汽车线束太多、又要高速可靠通信的问题，开发了它；之后通过 ISO11898 和 ISO11519 标准化，现在已经是欧洲汽车网络的标准协议，也广泛用在工业自动化、船舶、医疗设备等领域。</p>
+
+<p>一句话记住它：<strong>两根差分线，挂很多节点，谁有数据谁就能广播——总线上没有"主从"，只有"先后"</strong>。</p>
+
+<h2>2. 应用示例</h2>
+
+<p>教材第 3 章给了两个图（<span class="pg">PDF p.2~3</span>）：</p>
+
+<ul>
+<li><strong>车载网络构想（图 1）</strong>：一辆车被网关分成多个子网——动力/底盘用 500kbps 的高速 CAN，车身/信息部用 125kbps 的 CAN，再加上 LIN（19.2kbps）、MOST、FlexRay（5Mbps）各司其职。不同速率、不同用途的网络靠<strong>网关</strong>交换数据。</li>
+<li><strong>应用示例（图 2）</strong>：发动机控制、仪表集群、空调、车门（后视镜/门锁/电动车窗）、座椅、车顶（天窗）…… 十几个 ECU 全挂在同一根 CAN 总线上共享信息。</li>
+</ul>
+
+<p>到了工业领域，CAN 演变成你更熟悉的兄弟：<strong>DeviceNet、CANopen</strong>（工业设备）、SAE J1939（卡车/农用机械）、NMEA-2000（船舶）——协议栈不同，但底层都是这条 CAN 总线。</p>
+
+<h2>3. CAN 的八大特点</h2>
+
+<p>教材第 4 章总结了 CAN 协议的特点（<span class="pg">PDF p.5</span>），挑核心的说：</p>
+
+<table>
+<tr><th>特点</th><th>一句话</th></tr>
+<tr><td><strong>多主控制</strong></td><td>总线空闲时，<strong>任何</strong>单元都能开始发消息（CSMA/CA 方式），没有固定的主站</td></tr>
+<tr><td><strong>消息固定格式</strong></td><td>所有消息都按固定格式发送，优先级由 ID 决定，同时发送时逐位仲裁</td></tr>
+<tr><td><strong>系统柔软性</strong></td><td>节点没有"地址"，增减节点不影响其它节点的软硬件</td></tr>
+<tr><td><strong>通信速度可设</strong></td><td>按网络规模设定速度；但<strong>同一网络必须统一速度</strong></td></tr>
+<tr><td><strong>远程数据请求</strong></td><td>能发"遥控帧"主动向别的节点要数据</td></tr>
+<tr><td><strong>错误检测/通知/恢复</strong></td><td>任何节点能检测错误、立即通知全总线、发错了自动重发</td></tr>
+<tr><td><strong>故障封闭</strong></td><td>能区分"暂时噪声"和"持续故障"，把坏节点从总线上隔离出去</td></tr>
+<tr><td><strong>连接</strong></td><td>理论上节点数不限，实际受时间延迟与电气负载限制（降速能挂更多）</td></tr>
+</table>
+
+<h2>4. 通信状态与数据：显性 / 隐性</h2>
+
+<p>CAN 控制器靠<strong>两根线（CAN_H、CAN_L）之间的电位差</strong>判断总线电平（<span class="pg">PDF p.4, 15</span>）。总线电平只有两种：</p>
+
+<ul>
+<li><strong>显性电平（Dominant）</strong>：逻辑值 <strong>0</strong>，CAN_H 高、CAN_L 低，电位差约 2V——"显性"很霸道，<strong>只要有一个单元输出显性，总线上就是显性</strong></li>
+<li><strong>隐性电平（Recessive）</strong>：逻辑值 <strong>1</strong>，CAN_H 和 CAN_L 都在 2.5V 左右，电位差约 0V——"隐性"很随和，<strong>所有单元都输出隐性时总线才隐性</strong></li>
+</ul>
+
+<p>这就是"总线上的<strong>线-与（wired-AND）</strong>"：显性（0）覆盖隐性（1），0 比 1 更"强"。这个特性是后面讲仲裁的基础——记住它，第 17 课你会用到。</p>
+
+<h2>5. 总线拓扑与终端电阻</h2>
+
+<p>CAN 是<strong>多主广播式总线</strong>（<span class="pg">PDF p.4, 14~15</span>）：</p>
+
+<ul>
+<li>拓扑：<strong>双绞线 + 闭环总线</strong>，两端各接一个 <strong>120Ω 终端电阻</strong>（ISO11898 高速，阻值 85~130Ω 均可）</li>
+<li>终端电阻的作用：<strong>吸收信号到达线端的反射</strong>，不然波形振铃、误码率飙升</li>
+<li>速度与长度成反比：1Mbps 时最长 40m；降到 40kbps 能到 1km（<span class="pg">PDF p.14 图 8</span>）</li>
+<li>低速容错型 ISO11519-2 用<strong>开环总线 + 2.2kΩ 终端电阻</strong>，后面第 17 课再对比</li>
+</ul>
+
+<p>你的 F407 探索者板上已经有 CAN 收发器（如 TJA1050）和 120Ω 匹配电路，接上外部 CAN 总线时只要两端各有一个 120Ω 就行——板上一般都帮你放好了。</p>
+
+<h2>代码示例</h2>
+
+<p>下面两段小 C 代码，把"线-与"和"差分判断"这两个概念翻译成代码，帮你内化。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 模拟总线&quot;线-与&quot;：显性(0)覆盖隐性(1) */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">enum</span> {</span> RECESSIVE = <span style="color:#098658">1</span>, DOMINANT = <span style="color:#098658">0</span> } CAN_Level;
+
+CAN_Level <span style="color:#795E26">bus_wire_and</span><span style="color:#001080">(CAN_Level a, CAN_Level b)</span>
+{
+    <span style="color:#008000">/* 只要有一个是显性(0)，总线就是显性(0) */</span>
+    <span style="color:#0000FF">return</span> (CAN_Level)(a &amp; b);
+}
+
+<span style="color:#008000">/* 两个节点同时输出时，总线电平 = 二者电平的&quot;与&quot; */</span>
+CAN_Level level = bus_wire_and(DOMINANT, RECESSIVE);   <span style="color:#008000">/* 结果是 DOMINANT */</span>
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 用 CAN_H 与 CAN_L 的电位差判断总线电平（ISO11898 高速，单位 V） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">enum</span> {</span> BUS_RECESSIVE, BUS_DOMINANT } BusLevel;
+
+BusLevel <span style="color:#795E26">decode_can_level</span><span style="color:#001080">(<span style="color:#267F99">float</span> vh, <span style="color:#267F99">float</span> vl)</span>
+{
+    <span style="color:#267F99">float</span> diff = vh - vl;
+    <span style="color:#0000FF">if</span> (diff &gt; <span style="color:#098658">1.5f</span>) <span style="color:#0000FF">return</span> BUS_DOMINANT;   <span style="color:#008000">/* 差压明显 → 显性 */</span>
+    <span style="color:#0000FF">if</span> (diff &lt; <span style="color:#098658">0.05f</span>) <span style="color:#0000FF">return</span> BUS_RECESSIVE; <span style="color:#008000">/* 差压≈0 → 隐性 */</span>
+    <span style="color:#0000FF">return</span> BUS_RECESSIVE;                    <span style="color:#008000">/* 不确定时按隐性处理（fail-safe） */</span>
+}
+</pre>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>显性 = 0 = 霸道 = 优先；隐性 = 1 = 随和 = 包容</strong>。谁嗓门大（显性）总线就听谁的；大家都不说话（都隐性）总线才安静。</p>
+</div>
+
+<div class="warn">
+  <p>⚠️ 同一网络的<strong>所有节点必须统一波特率</strong>。哪怕只有一个节点速度不对，它也会不断输出错误信号，把整个网络的通信拖垮（教材 p.5"通信速度"一条）。不同网段之间倒可以用不同速度——这正好解释了图 1 里为什么一辆车要分 500k/125k 好几张网。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 16.1：画一张三节点 CAN 拓扑图</h3>
+  <p class="step">1️⃣ 纸上画 3 个节点（各含 CPU + CAN 控制器 + 收发器，收发器引两脚 CAN_H / CAN_L）。</p>
+  <p class="step">2️⃣ 用一条双绞线把 3 个节点的 CAN_H 连一起、CAN_L 连一起，并在<strong>总线两端</strong>各标一个 120Ω 终端电阻。</p>
+  <p class="step">3️⃣ 对照教材 p.4 图 3，检查：终端电阻是不是只在两端？节点是不是挂在中间而不是一端？</p>
+</div>
+
+<div class="practice">
+  <h3>练习 16.2：为什么用差分信号？</h3>
+  <p class="step">1️⃣ 假设电机启动瞬间给总线叠加上 1V 共模噪声（两根线上同时 +1V）。</p>
+  <p class="step">2️⃣ 推导：接收端读的是 CAN_H − CAN_L 的差。两根线同时加 1V，差变了吗？</p>
+  <p class="step">3️⃣ 对比单端信号（如 TTL 3.3V，0/1 靠绝对电压判断），说说为什么汽车环境里 CAN 更抗干扰。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. CAN 是哪个英文词的缩写？</p>
+  <p class="opt">A. Controller Area Network</p>
+  <p class="opt">B. Control Access Network</p>
+  <p class="opt">C. Common Area Network</p>
+  <details><summary>查看答案</summary><div class="answer">A。Controller Area Network，控制器局域网（PDF p.2）。</div></details>
+
+  <p class="q">Q2. 显性电平对应的逻辑值是多少？</p>
+  <p class="opt">A. 逻辑 1，随和包容</p>
+  <p class="opt">B. 逻辑 0，霸道优先</p>
+  <p class="opt">C. 逻辑 0，表示空闲</p>
+  <details><summary>查看答案</summary><div class="answer">B。显性电平逻辑值为 0，谁输出显性总线就是显性（PDF p.15）。</div></details>
+
+  <p class="q">Q3. 关于总线"线-与"，正确的说法是？</p>
+  <p class="opt">A. 全部显性时总线才显性</p>
+  <p class="opt">B. 一个显性就能让总线显性</p>
+  <p class="opt">C. 显性需超过半数的节点</p>
+  <details><summary>查看答案</summary><div class="answer">B。显性（0）覆盖隐性（1），只要有一个节点输出显性，总线电平就是显性（PDF p.15, 22）。</div></details>
+
+  <p class="q">Q4. 高速 CAN（ISO11898）终端电阻两端各是多少？</p>
+  <p class="opt">A. 两端各 120Ω，吸收信号反射</p>
+  <p class="opt">B. 两端各 2.2kΩ，限流保护</p>
+  <p class="opt">C. 只在中间接一个 120Ω</p>
+  <details><summary>查看答案</summary><div class="answer">A。ISO11898 高速 CAN 用闭环总线，两端各 120Ω 终端电阻抑制反射（PDF p.14）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 瑞萨《CAN 入门教程》第 3~6 章（PDF p.2~9）——本课全部依据</li>
+<li>📖 第 7 章 7.2 节（PDF p.13~16）——显性/隐性电平的电压数值表，做硬件排查时回来查</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 17 课——CAN 报文长什么样：标准帧/扩展帧位布局、遥控帧、错误帧，以及"谁先抢到总线"的仲裁规则。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0015-gif-and-lzw.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0017-can-frames.html">下一课：CAN 报文格式与仲裁 →</a>
+</nav>
+
+</div>
+</body>
+</html>

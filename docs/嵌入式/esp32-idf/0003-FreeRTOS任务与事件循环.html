@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0003 · FreeRTOS 任务与事件循环</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>FreeRTOS 任务与事件循环</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0003 · 预计 20 分钟</p>
+
+<p>STM32 裸机是"一个大循环 + 中断";ESP32 从开机起就有 FreeRTOS 在跑。这一课搞懂三件事:<strong>任务怎么建、任务间怎么传数据、事件循环是什么</strong>——这是读 xiaozhi 之前必须过的关。</p>
+
+<h2>知识点 1:任务(xTaskCreate)</h2>
+<pre lang="c" class="highlight"><span style="color: #00F">void</span> <span style="color: #795E26">task_blink</span>(<span style="color: #00F">void</span> *arg) {
+    <span style="color: #00F">while</span> (1) {
+        <span style="color: #795E26">gpio_set_level</span>(LED_GPIO, 1);
+        <span style="color: #795E26">vTaskDelay</span>(<span style="color: #795E26">pdMS_TO_TICKS</span>(<span style="color: #098658">500</span>));  <span style="color: #008000">// 让出 CPU,不是空转</span>
+        <span style="color: #795E26">gpio_set_level</span>(LED_GPIO, 0);
+        <span style="color: #795E26">vTaskDelay</span>(<span style="color: #795E26">pdMS_TO_TICKS</span>(<span style="color: #098658">500</span>));
+    }
+}
+<span style="color: #00F">void</span> <span style="color: #795E26">app_main</span>(<span style="color: #00F">void</span>) {
+    <span style="color: #795E26">xTaskCreate</span>(task_blink, <span style="color: #A31515">&quot;blink&quot;</span>, <span style="color: #098658">2048</span>, <span style="color: #00F">NULL</span>, <span style="color: #098658">5</span>, <span style="color: #00F">NULL</span>);
+}
+</pre>
+<p>和 STM32 的区别:每个任务像"独立的 while(1)",由调度器按优先级/时间片切换。<code>vTaskDelay</code> 是"睡觉让位",不是占 CPU 的延时。</p>
+
+<h2>知识点 2:任务间通信(队列)</h2>
+<p>裸机里中断改一个全局变量;FreeRTOS 里用<strong>队列</strong>——生产者和消费者解耦,还能在 ISR 里用 <code>xQueueSendFromISR</code>:</p>
+<pre lang="c" class="highlight"><span style="color: #795E26">QueueHandle_t</span> q = <span style="color: #795E26">xQueueCreate</span>(<span style="color: #098658">10</span>, <span style="color: #00F">sizeof</span>(<span style="color: #00F">int</span>));
+<span style="color: #795E26">xQueueSend</span>(q, <span style="color: #000">&amp;val</span>, <span style="color: #098658">0</span>);              <span style="color: #008000">// 任务里发</span>
+<span style="color: #795E26">xQueueReceive</span>(q, <span style="color: #000">&amp;val</span>, <span style="color: #795E26">portMAX_DELAY</span>);  <span style="color: #008000">// 阻塞等</span>
+</pre>
+
+<h2>知识点 3:事件循环(esp_event)</h2>
+<p>IDF 的"事件循环"是另一种解耦:谁注册监听,谁事后通知。Wi-Fi 连上、断线、OTA 完成……都是事件。xiaozhi 大量使用这个模式。</p>
+<pre lang="c" class="highlight"><span style="color: #008000">// 注册监听(启动时)</span>
+<span style="color: #795E26">esp_event_handler_register</span>(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, <span style="color: #00F">NULL</span>);
+<span style="color: #008000">// 事件来了,回调会被调用</span>
+<span style="color: #00F">static</span> <span style="color: #00F">void</span> <span style="color: #795E26">on_wifi_event</span>(<span style="color: #00F">void</span>* arg, esp_event_base_t base, <span style="color: #00F">int32_t</span> id, <span style="color: #00F">void</span>* data) {
+    <span style="color: #795E26">ESP_LOGI</span>(TAG, <span style="color: #A31515">&quot;wifi event id=%ld&quot;</span>, id);
+}
+</pre>
+
+<h2>动手</h2>
+<p>打开 <code>basic_routines/01_led</code> 的 <code>main.c</code>:<strong>数一数它建了几个任务、用没用队列、有没有事件循环</strong>。把你的发现写下来。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">vTaskDelay 和 HAL_Delay 的本质区别?</p>
+  <button class="opt" data-ok="true">让出CPU</button>
+  <button class="opt" data-ok="false">同样占CPU</button>
+  <button class="opt" data-ok="false">睡眠模式</button>
+  <p class="reveal">vTaskDelay 让出 CPU 给别的任务,裸机 HAL_Delay 是空转。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">Wi-Fi 连上后,应用层怎么得知?</p>
+  <button class="opt" data-ok="true">事件循环</button>
+  <button class="opt" data-ok="false">轮询状态</button>
+  <button class="opt" data-ok="false">串口中断</button>
+  <p class="reveal">esp_event 事件循环,注册回调即可。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《ESP-IDF FreeRTOS 说明》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/freertos.html">FreeRTOS 文档</a>):重点看 Task API 和 Queue API 两张表。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课回到外设:GPIO 驱动与日志——把 STM32 的 <code>HAL_GPIO</code> 彻底翻译成 IDF 的 <code>gpio_</code> 系列。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0002-组件与构建系统.html">← 上一篇:组件与构建</a>
+  <a href="index.html">课程地图</a>
+  <a href="0004-GPIO驱动与日志.html">下一篇:GPIO →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

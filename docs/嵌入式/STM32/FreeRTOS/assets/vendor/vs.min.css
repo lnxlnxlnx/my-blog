@@ -1,0 +1,70 @@
+/* ============================================================
+   VSCode Light+ 代码配色（完整色板）
+   对照 VSCode 默认浅色主题的语法着色：
+   注释 #008000 · 关键字 #0000FF · 字符串 #A31515 · 数字 #098658
+   类型 #267F99 · 函数 #795E26 · 参数/变量 #001080 · 属性 #0451A5
+   用法：在 style.css 之后引入本文件
+   ============================================================ */
+
+pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em;
+}
+code.hljs { padding: 3px 5px; }
+
+.hljs { color: #000000; background: #ffffff; }
+
+/* 注释 / 文档标签 / 引用 */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag { color: #008000; }
+
+/* 关键字 / 内置函数 / 标签 */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-tag { color: #0000ff; }
+
+/* 字符串 / 正则 / 链接 */
+.hljs-string,
+.hljs-regexp,
+.hljs-link { color: #a31515; }
+
+/* 数字 / 字面量 */
+.hljs-number,
+.hljs-literal { color: #098658; }
+
+/* 类型 / 类名 / 宏 */
+.hljs-type,
+.hljs-class,
+.hljs-meta { color: #267f99; }
+
+/* 函数名 / 节标题 */
+.hljs-title,
+.hljs-section { color: #795e26; }
+
+/* 函数参数 */
+.hljs-params { color: #001080; }
+
+/* 变量 / 模板变量 */
+.hljs-variable,
+.hljs-template-variable { color: #001080; }
+
+/* 属性 */
+.hljs-attr,
+.hljs-attribute { color: #0451a5; }
+
+/* 符号 / 列表符号 */
+.hljs-symbol,
+.hljs-bullet { color: #267f99; }
+
+/* 删除 / 增加（diff） */
+.hljs-deletion { color: #a31515; }
+.hljs-addition { color: #098658; }
+
+/* 强调 */
+.hljs-strong { font-weight: 700; }
+.hljs-emphasis { font-style: italic; }
+.hljs-link { text-decoration: underline; }

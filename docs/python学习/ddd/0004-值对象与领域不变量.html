@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0004 · 值对象与领域不变量</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>值对象与领域不变量</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0004 · 预计 25 分钟</p>
+
+<p>上一课预告了<strong>值对象(Value Object)</strong>:没身份、不可变、按内容相等的「值」。项目特别强调用值对象替换裸字符串/数字(<em>primitive obsession 基本类型执念</em>),让「非法状态不可表示」(make illegal states unrepresentable)。本课用 Python 讲透。</p>
+
+<h2>知识点 1:值对象长什么样</h2>
+<p>没 id、不可变、`==` 比较的是内容。用项目里的 Email / Address 做例子:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Email</span><span style="color: #000">:</span>                        <span style="color: #008000"># 值对象:包装一个&quot;邮箱&quot;</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">value</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #A31515">&quot;@&quot;</span> <span style="color: #AF00DB">not</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">value</span><span style="color: #000">:</span>        <span style="color: #008000"># 构造即校验</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;非法邮箱: {</span><span style="color: #001080">value</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_value</span> <span style="color: #000">=</span> <span style="color: #001080">value</span>
+    <span style="color: #AF00DB">@property</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">value</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_value</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__eq__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">other</span><span style="color: #000">):</span>        <span style="color: #008000"># 按内容相等,不看身份</span>
+        <span style="color: #00F">return</span> <span style="color: #0070C1">isinstance</span><span style="color: #000">(</span><span style="color: #001080">other</span><span style="color: #000">,</span> <span style="color: #001080">Email</span><span style="color: #000">)</span> <span style="color: #AF00DB">and</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_value</span> <span style="color: #000">==</span> <span style="color: #001080">other</span><span style="color: #000">.</span><span style="color: #001080">_value</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__hash__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #0070C1">hash</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_value</span><span style="color: #000">)</span>
+
+<span style="color: #001080">a</span> <span style="color: #000">=</span> <span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a@x.com&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">b</span> <span style="color: #000">=</span> <span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a@x.com&quot;</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">a</span> <span style="color: #000">==</span> <span style="color: #001080">b</span><span style="color: #000">)</span>        <span style="color: #008000"># True:内容一样就相等(值对象没有身份)</span>
+<span style="color: #008000"># a._value = &quot;...&quot;   # 不要:值对象应不可变(靠约定+不提供 setter)</span>
+</pre>
+<p>对比实体:值对象没有唯一 id,相等看内容。<a href="https://martinfowler.com/bliki/ValueObject.html">value object</a> 的经典定义。</p>
+
+<h2>知识点 2:为什么——把「校验」收进对象,取到的就合法</h2>
+<p>项目的话:如果每个参数的返回都是「合法值对象」,那么<strong>每个方法天然有输入输出校验</strong>,不用到处又 validate 一遍。把未经校验的裸字符串全线堵在门外:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">User</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">,</span> <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #001080">Email</span><span style="color: #000">):</span>   <span style="color: #008000"># 参数已是 Email 值对象</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">id</span> <span style="color: #000">=</span> <span style="color: #001080">user_id</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">email</span> <span style="color: #000">=</span> <span style="color: #001080">email</span>                            <span style="color: #008000"># 拿到的一定是合法邮箱</span>
+</pre>
+<p>因为<strong>只有能构造出 Email 才传得进来</strong>,非法邮箱在构造 Email 那一步就被拒了。这就是「非法状态不可表示」。</p>
+
+<h2>知识点 3:领域不变量(domain invariants)——永远为真的规则</h2>
+<p><strong>不变量</strong> = 该领域里总得为真的条件,由实体/聚合根强制。例子:钱包余额≥0、不能是负;订购数量必须是正整数;买的东西必须库存足够。上上节课的 Wallet.debit 里「余额不足抛错」就是不变量(<a href="https://en.wikipedia.org/wiki/Class_invariant">invariant</a>)。</p>
+
+<h2>知识点 4:用值对象做「领域原语」(domain primitive)</h2>
+<p>把业务里的单个基本值(邮箱、金额、距离)包成值对象,叫<em>领域原语</em>。它强制不变量、把行为集中一处、让代码用「业务词」而不是生硬 string/int(<a href="https://refactoring.guru/smells/primitive-obsession">primitive obsession</a>)。例:钱别用 int,用 Money:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Money</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">amount</span><span style="color: #000">:</span> <span style="color: #0070C1">int</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">amount</span> <span style="color: #000">&lt;</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+            <span style="color: #00F">raise</span> <span style="color: #CD3131">ValueError</span><span style="color: #000">(</span><span style="color: #A31515">&quot;金额不能为负&quot;</span><span style="color: #000">)</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_amount</span> <span style="color: #000">=</span> <span style="color: #001080">amount</span>
+    <span style="color: #AF00DB">@property</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">amount</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_amount</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">add</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">other</span><span style="color: #000">):</span>            <span style="color: #008000"># 业务操作也封装在这里</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">Money</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_amount</span> <span style="color: #000">+</span> <span style="color: #001080">other</span><span style="color: #000">.</span><span style="color: #001080">_amount</span><span style="color: #000">)</span>
+</pre>
+<p>这样「转账金额不能为负」这类规则被钉死在 Money 里,不会被各处散落代码绕过。</p>
+
+<h2>知识点 5:什么时候别过度</h2>
+<p>项目自己也提醒:<strong>不是每个 string/int 都值得包成类</strong>。给每个基本值建对象可能过度设计(尤其在 Python/TS 这类语言开销不小)。做法:仅为<strong>有规则或行为的那些值</strong>(邮箱格式、金额、账户号)建值对象,其余用普通类型 + 在领域外校验即可。判断:造了这个类是否减少处处重复的校验/带来明确语义?</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">值对象的相等性看什么?</p>
+  <button class="opt" data-ok="false">身份 id</button>
+  <button class="opt" data-ok="true">内容值</button>
+  <button class="opt" data-ok="false">内存地址</button>
+  <button class="opt" data-ok="false">创建顺序</button>
+  <p class="reveal">值对象没身份,相等看内容(结构相等);实体才看 id。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">值对象应当是?</p>
+  <button class="opt" data-ok="false">可变</button>
+  <button class="opt" data-ok="true">不可变</button>
+  <button class="opt" data-ok="false">可为空</button>
+  <button class="opt" data-ok="false">带身份</button>
+  <p class="reveal">值对象不可变、无身份、按内容相等;通常构造时就把校验做了。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">把邮箱那类基本值包成类,叫?</p>
+  <button class="opt" data-ok="false">实体原语</button>
+  <button class="opt" data-ok="true">领域原语</button>
+  <button class="opt" data-ok="false">控制器对象</button>
+  <button class="opt" data-ok="false">服务对象</button>
+  <p class="reveal">domain primitive:把有规则/行为的单值包成值对象,构造即校验。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">「余额不能为负」属于?</p>
+  <button class="opt" data-ok="false">临时约束</button>
+  <button class="opt" data-ok="true">领域不变量</button>
+  <button class="opt" data-ok="false">UI 校验</button>
+  <button class="opt" data-ok="false">优化目标</button>
+  <p class="reveal">invariant:该领域永远为真的规则,由实体/值对象强制,贯穿整个生命周期。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0004_值对象与领域不变量.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:实现 Email、Money 两个值对象(构造校验 + 按内容相等 + 不可变)</li>
+  <li><strong>练习 B</strong>:把 Order 的金额字段改用 Money;写 Wallet 用「余额不足抛错」保证不变量</li>
+  <li><strong>练习 C</strong>:判断题:下面哪些值该包成领域原语、哪些不值得;对照项目 address.value-object.ts</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Value Objects 与 Domain Invariants 两小节</strong>(含「把非法状态不可表示」),再看 <a href="https://martinfowler.com/bliki/ValueObject.html">Fowler ValueObject</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:值对象和实体你分得清了吗?下一课讲<strong>领域服务 Domain Service</strong>——当一段业务逻辑「放哪个实体都不合适」时怎么办。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-实体与聚合根.html">← 上一篇:实体 Entity 与聚合根 Aggregate</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-领域服务.html">下一篇:领域服务 Domain Service →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

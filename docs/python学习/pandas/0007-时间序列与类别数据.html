@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0007 · 时间序列与类别数据</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>时间序列与类别数据</h1>
+<p class="meta">Pandas 专题 · 课程 0007 · 预计 30 分钟 · 书 11/12 章 + hangsz 12/13</p>
+
+<p>两个专题收尾:<strong>时间序列</strong>(datetime64 索引、重采样、滑动)与<strong>类别数据</strong>(category dtype,省内存、分类统计)。对应书 [第11、12章](https://github.com/BrambleXu/pydata-notebook) 与 [hangsz 12、13](https://github.com/hangsz/pandas-tutorial)。</p>
+
+<h2>知识点 1:把字符串变 datetime——pd.to_datetime(书 11.1)</h2>
+<p>读入日期常是字符串,先用 <code>pd.to_datetime</code> 转:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #A31515">&quot;2024-01-01&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;2024-02-01&quot;</span><span style="color: #000">,</span> <span style="color: #00F">None</span><span style="color: #000">])</span>
+<span style="color: #001080">dt</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">)</span>          <span style="color: #008000"># -&gt; datetime64[ns];None 变 NaT</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">dtype</span><span style="color: #000">)</span>                 <span style="color: #008000"># datetime64[ns]</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">isnull</span><span style="color: #000">(</span><span style="color: #001080">dt</span><span style="color: #000">))</span>            <span style="color: #008000"># NaT 也算缺失</span>
+<span style="color: #008000"># 指定格式(性能好),应从各种格式来:</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">([</span><span style="color: #A31515">&quot;2024/03/05&quot;</span><span style="color: #000">],</span> <span style="color: #0070C1">format</span><span style="color: #000">=</span><span style="color: #A31515">&quot;%Y/%m/%d&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">([</span><span style="color: #A31515">&quot;2024:06:01&quot;</span><span style="color: #000">],</span> <span style="color: #001080">errors</span><span style="color: #000">=</span><span style="color: #A31515">&quot;coerce&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 解析不了变 NaT 不报错</span>
+<span style="color: #008000"># epoch 秒 → 时间</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">([</span><span style="color: #098658">1700000000</span><span style="color: #000">],</span> <span style="color: #001080">unit</span><span style="color: #000">=</span><span style="color: #A31515">&quot;s&quot;</span><span style="color: #000">)</span>
+</pre>
+<p>转到 datetime64 后,才能用 [年/月] 切片、重采样等时间操作。<code>errors="coerce"</code> 让坏数据变 NaT 而不是崩。</p>
+
+<h2>知识点 2:datetime64 索引——切片、loc、取组件(hangsz 13)</h2>
+<p>把 datetime 设为索引后,切片像字符串;<code>.dt</code> 取组日期成分:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">idx</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">([</span><span style="color: #A31515">&quot;2024-01-01&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;2024-01-02&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;2024-02-01&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">ts</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">],</span> <span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #001080">idx</span><span style="color: #000">)</span>
+<span style="color: #001080">ts</span><span style="color: #000">[</span><span style="color: #A31515">&quot;2024-01&quot;</span><span style="color: #000">]</span>            <span style="color: #008000"># 按&quot;月份&quot;切片(所有1月)</span>
+<span style="color: #001080">ts</span><span style="color: #000">[</span><span style="color: #A31515">&quot;2024-01-02&quot;</span><span style="color: #000">:]</span>        <span style="color: #008000"># 字符串切片</span>
+
+<span style="color: #008000"># 取日期成分:.dt 访问器</span>
+<span style="color: #001080">s2</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">(</span><span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">([</span><span style="color: #A31515">&quot;2024-01-01&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;2024-06-15&quot;</span><span style="color: #000">]))</span>
+<span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">year</span><span style="color: #000">;</span> <span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">month</span><span style="color: #000">;</span> <span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">day</span>        <span style="color: #008000"># 年/月/日</span>
+<span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">strftime</span><span style="color: #000">(</span><span style="color: #A31515">&quot;%Y-%m&quot;</span><span style="color: #000">)</span>                    <span style="color: #008000"># 格式化</span>
+</pre>
+<p><code>ts["2024-01"]</code> 这种按月切片非常优雅;取成分用 <code>.dt</code>(呼应 0004 里 .str/.cat 的约定)。</p>
+
+<h2>知识点 3:重采样与滑动——resample / rolling(高价值)</h2>
+<p>把高频数据汇总成低频(日→月)用 <code>resample</code>;滑动窗口用 <code>rolling</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">idx</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">date_range</span><span style="color: #000">(</span><span style="color: #A31515">&quot;2024-01-01&quot;</span><span style="color: #000">,</span> <span style="color: #001080">periods</span><span style="color: #000">=</span><span style="color: #098658">365</span><span style="color: #000">)</span>
+<span style="color: #001080">ts</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">365</span><span style="color: #000">),</span> <span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #001080">idx</span><span style="color: #000">)</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">resample</span><span style="color: #000">(</span><span style="color: #A31515">&quot;ME&quot;</span><span style="color: #000">).</span><span style="color: #001080">mean</span><span style="color: #000">()</span>        <span style="color: #008000"># 按月求均值(每月一个值)</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">resample</span><span style="color: #000">(</span><span style="color: #A31515">&quot;W&quot;</span><span style="color: #000">).</span><span style="color: #001080">sum</span><span style="color: #000">()</span>         <span style="color: #008000"># 按周求和</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">resample</span><span style="color: #000">(</span><span style="color: #A31515">&quot;D&quot;</span><span style="color: #000">).</span><span style="color: #001080">ffill</span><span style="color: #000">()</span>       <span style="color: #008000"># 重采样后前向填充</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">rolling</span><span style="color: #000">(</span><span style="color: #098658">7</span><span style="color: #000">).</span><span style="color: #001080">mean</span><span style="color: #000">()</span>           <span style="color: #008000"># 7天滑动均值(前面有NaN)</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">rolling</span><span style="color: #000">(</span><span style="color: #098658">7</span><span style="color: #000">).</span><span style="color: #001080">mean</span><span style="color: #000">().</span><span style="color: #001080">sum</span><span style="color: #000">()</span>     <span style="color: #008000"># 组合</span>
+</pre>
+<p>resample = 改变采样频率(降采样);rolling = 固定窗口滚动统计(滑动平均)。这是时序最常用的两个。日期范围 <code>pd.date_range(start, periods, freq)</code> 生成等距索引。</p>
+
+<h2>知识点 4:时间序列移动/差分——shift / diff(pct_change)</h2>
+<pre lang="python" class="highlight"><span style="color: #001080">ts</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">],</span> <span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">))</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">shift</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>          <span style="color: #008000"># 数据后移一格(前面 NaN),比较&quot;跟昨天差&quot;</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">diff</span><span style="color: #000">()</span>            <span style="color: #008000"># 一阶差分:今天-昨天</span>
+<span style="color: #001080">ts</span><span style="color: #000">.</span><span style="color: #001080">pct_change</span><span style="color: #000">()</span>      <span style="color: #008000"># 变化率:(今-昨)/昨</span>
+</pre>
+<p>shift/diff/pct_change 三个是"跟过去比"的工具,股票/时序分析天天用。</p>
+
+<h2>知识点 5:类别数据 category(hangsz 12 / 书 12.1)</h2>
+<p>重复值很多的列用 <code>category</code>,省内存还支持有序:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;c&quot;</span><span style="color: #000">]</span> <span style="color: #000">*</span> <span style="color: #098658">1000</span><span style="color: #000">)</span>
+<span style="color: #001080">s2</span> <span style="color: #000">=</span> <span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">astype</span><span style="color: #000">(</span><span style="color: #A31515">&quot;category&quot;</span><span style="color: #000">)</span>        <span style="color: #008000"># 类别 dtype</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">cat</span><span style="color: #000">.</span><span style="color: #001080">categories</span><span style="color: #000">)</span>         <span style="color: #008000"># Index([&#39;a&#39;,&#39;b&#39;,&#39;c&#39;])</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">cat</span><span style="color: #000">.</span><span style="color: #001080">codes</span><span style="color: #000">[:</span><span style="color: #098658">5</span><span style="color: #000">])</span>          <span style="color: #008000"># 每项对应编号</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s2</span><span style="color: #000">.</span><span style="color: #001080">memory_usage</span><span style="color: #000">())</span>         <span style="color: #008000"># 比 object 省内存</span>
+
+<span style="color: #008000"># 有序类别 + 分箱</span>
+<span style="color: #001080">ser</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">9</span><span style="color: #000">]).</span><span style="color: #001080">astype</span><span style="color: #000">(</span><span style="color: #A31515">&quot;category&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">p</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">qcut</span><span style="color: #000">(</span><span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">Series</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">20</span><span style="color: #000">)),</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #001080">labels</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;Q1&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;Q2&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;Q3&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;Q4&quot;</span><span style="color: #000">])</span>  <span style="color: #008000"># 等分</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">cat</span><span style="color: #000">.</span><span style="color: #001080">remove_unused_categories</span><span style="color: #000">()</span>  <span style="color: #008000"># 去掉没用到的类别</span>
+<span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">get_dummies</span><span style="color: #000">(</span><span style="color: #001080">s2</span><span style="color: #000">)</span>               <span style="color: #008000"># 类别→one-hot(0/1列)</span>
+</pre>
+<p>category = 只存"编号+类别表"省内存;支持排序、做 one-hot(<code>get_dummies</code>,书 7.2 也用过)。记忆:.cat 是它的访问器。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">把字符串日期转成时间类型用?</p>
+  <button class="opt" data-ok="false">pd.cut</button>
+  <button class="opt" data-ok="true">pd.to_datetime</button>
+  <button class="opt" data-ok="false">pd.timedelta</button>
+  <button class="opt" data-ok="false">astype(str)</button>
+  <p class="reveal">to_datetime 转 datetime64,之后才能切片/重采样/取成分。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">日数据汇成月均值用?</p>
+  <button class="opt" data-ok="false">rolling</button>
+  <button class="opt" data-ok="true">resample("ME").mean()</button>
+  <button class="opt" data-ok="false">shift</button>
+  <button class="opt" data-ok="false">diff</button>
+  <p class="reveal">resample 改变频率聚合;rolling 是固定滑动窗口。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">跟昨天比的变化率用?</p>
+  <button class="opt" data-ok="false">shift</button>
+  <button class="opt" data-ok="true">pct_change</button>
+  <button class="opt" data-ok="false">fillna</button>
+  <button class="opt" data-ok="false">cut</button>
+  <p class="reveal">diff=绝对差,pct_change=变化率,shift=平移。三者都是"跟过去比"。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">category dtype 的好处?</p>
+  <button class="opt" data-ok="false">转成数值</button>
+  <button class="opt" data-ok="true">省内存+有序</button>
+  <button class="opt" data-ok="false">必会乱码</button>
+  <button class="opt" data-ok="false">支持合并</button>
+  <p class="reveal">category 只存编号+类别表,重复列大幅省内存,可排序可 one-hot。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0007_时间序列与类别数据.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A(hangsz 13)</strong>:转 datetime、.dt 取成分、生成 date_range 并 resample 月/周均值</li>
+  <li><strong>练习 B(书 11)</strong>:shift/diff/pct_change;rolling(7) 滑动均值对比</li>
+  <li><strong>练习 C(hangsz 12)</strong>:把重复列表转 category 比较 memory_usage;qcut 分箱;get_dummies</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>书 [第11章](https://github.com/BrambleXu/pydata-notebook)、[第12章 12.1](https://github.com/BrambleXu/pydata-notebook);hangsz 笔记 [13 时间型](https://github.com/hangsz/pandas-tutorial)、[12 Category与离散化](https://github.com/hangsz/pandas-tutorial)。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:resample 和 rolling 用起来顺手吗?最后一课<strong>实战:书第14章三个数据集案例</strong>把它综合用起来。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0006-分组聚合groupby.html">← 上一篇:分组聚合 groupby</a>
+  <a href="index.html">课程地图</a>
+  <a href="0008-实战数据集案例.html">下一篇:实战:书第14章三案例 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

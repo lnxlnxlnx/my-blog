@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0016 · xiaozhi 音频流水线</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>xiaozhi 音频流水线</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0016 · 预计 25 分钟</p>
+
+<p>音频是 xiaozhi 的心脏。这课把它拆成两条流水线:<strong>上行(说)和下行(听)</strong>,并指出关键文件。你不需要改它,但要能对着代码讲清楚每一步。</p>
+
+<h2>知识点 1:下行播放——"服务器说,设备听"</h2>
+<pre lang="cpp" class="highlight"><span style="color: #008000">// application.cc 收到音频包 → 交给音频服务解码</span>
+<span style="color: #795E26">audio_service_.PushPacketToDecodeQueue</span>(packet);
+<span style="color: #008000">// audio_service.cc 里:Opus 解码 → PCM</span>
+<span style="color: #795E26">esp_opus_decode</span>(...);
+<span style="color: #008000">// 采样率不匹配时重采样 → 喂给喇叭(I2S/codec)</span>
+<span style="color: #795E26">output_resampler_</span>.process(...);
+</pre>
+<p>对照之前的知识:Opus 帧(60ms)→ 解码 → 重采样 → I2S → Codec → 喇叭。服务器发什么它就放什么——这就是为什么"换音色/换歌"全在服务器端做。</p>
+
+<h2>知识点 2:上行采集——"设备说,服务器听"</h2>
+<pre lang="text" class="highlight"><span style="color: #001080">麦克风 → Codec ADC → I2S →</span>
+<span style="color: #001080">AFE(回声消除/降噪/唤醒词) → Opus 编码 → WebSocket 发给服务器</span>
+</pre>
+<p>唤醒词"小智小智"在 <strong>AFE 本地</strong>检测(乐鑫 esp-sr),不依赖网络。认出唤醒词后才开始"录整句话"上传。</p>
+
+<h2>知识点 3:音频服务是"管道"不是"业务"</h2>
+<p><code>audio_service.cc</code> 只管:解码、重采样、推队列;具体"该不该播、播什么"由上层(application/状态机)决定。读它时抓住两个队列:<strong>解码队列(入)和播放队列(出)</strong>。</p>
+
+<h2>动手</h2>
+<p>打开 <code>main/audio/audio_service.cc</code>:<br>
+① 搜 <code>PushPacketToDecodeQueue</code> 和 <code>esp_opus_decode</code>,标出解码入口;<br>
+② 找 <code>output_resampler_</code> 的初始化参数(采样率 16k?24k?);<br>
+③ 打开 <code>main/application.cc</code> 搜"收到音频包"的处理函数,确认入队时机。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">唤醒词在哪检测?</p>
+  <button class="opt" data-ok="true">本地AFE</button>
+  <button class="opt" data-ok="false">服务器</button>
+  <button class="opt" data-ok="false">云端</button>
+  <p class="reveal">本地 esp-sr AFE,离线即时。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">下行音频链路最后一步是?</p>
+  <button class="opt" data-ok="true">I2S到喇叭</button>
+  <button class="opt" data-ok="false">Opus编码</button>
+  <button class="opt" data-ok="false">NVS存储</button>
+  <p class="reveal">重采样后经 I2S 送 Codec 到喇叭。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>xiaozhi 官方《音频驱动/板级音频文档》</strong>与 <a href="https://github.com/espressif/esp-adf">esp-adf</a> 的音频概念;还有仓库 <code>docs/</code> 里 audio 相关说明。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:网络与协议——WebSocket 怎么连、消息怎么封装、断线怎么重连。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0015-xiaozhi板级抽象.html">← 上一篇:板级抽象</a>
+  <a href="index.html">课程地图</a>
+  <a href="0017-xiaozhi网络与协议.html">下一篇:网络与协议 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 19 课：STM32 bxCAN 实战 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 19 课</nav>
+
+<h1>第 19 课：STM32 bxCAN 实战</h1>
+<p class="subtitle">让 F407 探索者真正开口说 CAN：HAL 初始化、滤波器、收发一封邮件（扩展课）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>把前三课的理论烧进单片机。学完你能在 STM32F407 探索者上配好 bxCAN（波特率、Normal/Loopback 模式），配出"只收 0x123"的掩码滤波器，用 <code>HAL_CAN_AddTxMessage</code> 发帧、用中断回调 <code>HAL_CAN_GetRxMessage</code> 收帧，并完成"回环自发自收"验证——这是第 20 课综合项目的地基。</p>
+</div>
+
+<h2>1. F407 bxCAN 外设简介</h2>
+
+<p>F407 的 <strong>bxCAN（Basic Extended CAN）</strong> 硬件资源（<span class="pg">参考手册 RM0090</span>）：</p>
+
+<ul>
+<li><strong>两个 CAN 控制器：CAN1 和 CAN2</strong>（bxCAN 为双 CAN 设计，共享 28 个滤波器组）</li>
+<li><strong>3 个发送邮箱</strong>：可以同时排队 3 帧待发</li>
+<li><strong>2 个接收 FIFO（FIFO0/FIFO1）</strong>：每个可深 3 帧，收到就进 FIFO，主程序慢慢取</li>
+<li><strong>14 个（单 CAN）或 28 个（双 CAN 共享）滤波器组</strong>：按 ID 决定哪些帧进 FIFO</li>
+<li><strong>需要外部收发器</strong>：bxCAN 只是控制器，输出的 TX/RX 是 TTL 逻辑电平；要经 <strong>TJA1050 等 CAN 收发器</strong>转成 CAN_H/CAN_L 差分信号才能上总线。好消息：探索者板载了 CAN 收发器，双机/接分析仪时直接用排针引出</li>
+</ul>
+
+<h2>2. HAL 初始化与波特率</h2>
+
+<p>先看工程事实：当前工程 <code>Core/Src</code> 下<strong>还没有 can.c</strong>（本课代码里我给了可直接使用的 HAL 初始化写法，你也可以用 CubeMX 使能 CAN1 生成 <code>MX_CAN1_Init()</code>，两者等价）。波特率公式沿用第 18 课：</p>
+
+<ul>
+<li>CAN 时钟 = <strong>APB1（F407 默认 42MHz）</strong></li>
+<li><strong>波特率 = 42MHz / (Prescaler × (1 + BS1 + BS2))</strong></li>
+<li>采样点 = (1 + BS1) / (1 + BS1 + BS2)，落在 75%~87.5% 附近最佳</li>
+<li><strong>Normal 模式</strong>：上总线，和其它节点通信；<strong>Loopback 模式</strong>：发送直接环回自己的接收，不上总线——单板调试神器</li>
+</ul>
+
+<div class="tip">
+  <p>💡 板载收发器 + Normal 模式 = 真上总线；没有第二台设备时，先切 <strong>Loopback</strong> 自发自收验证链路，再上电双机。探索者板载 CAN 收发器，波特率档位和 120Ω 匹配电阻都已经在 PCB 上帮你做好了。</p>
+</div>
+
+<h2>3. 接收滤波器</h2>
+
+<p>bxCAN 有一个"看门人"：<strong>滤波器</strong>。收到一帧后先过滤波器，匹配才进 FIFO。不配滤波器 = 一只耳聋的 CAN，什么帧都收不到。两种模式（<code>CAN_FilterTypeDef</code>）：</p>
+
+<ul>
+<li><strong>掩码模式（IDMASK）</strong>：掩码位为 1 的位必须与 ID 完全一致，为 0 的位不管——"1 必须同，0 随便"</li>
+<li><strong>列表模式（IDLIST）</strong>：必须与列表中的 ID 完全相等——精确点名</li>
+<li>本课用<strong>掩码模式 + 32 位滤波</strong>，只放行 0x123</li>
+</ul>
+
+<h2>4. 发送：把帧塞进邮箱</h2>
+
+<p>发送三步：① 填好 <code>CAN_TxHeaderTypeDef</code>（StdId/IDE/RTR/DLC）② 调 <code>HAL_CAN_AddTxMessage</code>，帧进邮箱自动发 ③ 返回值带出 <code>mailbox</code> 号。若邮箱全满，<code>HAL_CAN_AddTxMessage</code> 会返回 <code>HAL_BUSY</code>——要等 TME 位有空位再发。</p>
+
+<h2>5. 接收：中断回调拿帧</h2>
+
+<p>接收（中断模式）三步：① <code>HAL_CAN_ActivateNotification</code> 打开 FIFO0 消息挂起中断 ② 在弱回调 <code>HAL_CAN_RxFifo0MsgPendingCallback</code> 里取帧 ③ <code>HAL_CAN_GetRxMessage</code> 把帧从 FIFO0 拷进你的变量。回调里只做"快取 + 置标志"，真正的业务逻辑放主循环——这是 RTOS 任务 / 裸机 while 都通用的好习惯。</p>
+
+<div class="warn">
+  <p>⚠️ 两个最常见的"收不到"：<strong>① 忘了配滤波器或掩码写错；② 两端波特率不一致</strong>（现象：发送老是 ACK 错误、接收全是错误帧）。调前先用示波器/逻辑分析仪或 CAN 分析仪确认总线上真有帧，再怀疑软件。</p>
+</div>
+
+<h2>代码示例</h2>
+
+<p>下面 4 段代码组合起来就是一个能用的 CAN 驱动（API 均来自当前工程的 <code>stm32f4xx_hal_can.c/.h</code>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 示例 1：初始化（等价于 CubeMX 生成的 MX_CAN1_Init）
+ * APB1 = 42MHz，Prescaler=7，BS1=9，BS2=2 → 42M/(7×12) = 500kbps，采样点 ≈ 83% */</span>
+CAN_HandleTypeDef hcan1;
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">MX_CAN1_Init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    hcan1.Instance = CAN1;
+    hcan1.Init.Prescaler = <span style="color:#098658">7</span>;                    <span style="color:#008000">/* 42MHz / 7 = 6MHz → Tq ≈ 166ns */</span>
+    hcan1.Init.Mode = CAN_MODE_NORMAL;           <span style="color:#008000">/* 双机用 NORMAL；单板自测改 CAN_MODE_LOOPBACK */</span>
+    hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;      <span style="color:#008000">/* SJW = 1Tq */</span>
+    hcan1.Init.TimeSeg1 = CAN_BS1_9TQ;           <span style="color:#008000">/* PBS1 = 9Tq */</span>
+    hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;           <span style="color:#008000">/* PBS2 = 2Tq */</span>
+    hcan1.Init.TimeTriggeredMode = DISABLE;
+    hcan1.Init.AutoBusOff = DISABLE;             <span style="color:#008000">/* 总线关闭需软件介入处理 */</span>
+    hcan1.Init.AutoWakeUp = DISABLE;
+    hcan1.Init.ReceiveFifoLocked = DISABLE;
+    hcan1.Init.TransmitFifoPriority = DISABLE;
+    <span style="color:#0000FF">if</span> (HAL_CAN_Init(&amp;hcan1) != HAL_OK) {
+        Error_Handler();
+    }
+}
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 示例 2：滤波器（掩码模式，只放行 0x123）+ 启动 + 开中断 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">CAN1_Filter_Start</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CAN_FilterTypeDef sFilterConfig;
+
+    <span style="color:#008000">/* 32 位滤波：ID 左移 5 位，落在寄存器 STID[10:0] 对应位段 */</span>
+    sFilterConfig.FilterIdHigh     = (<span style="color:#267F99">uint32_t</span>)(<span style="color:#098658">0x123</span> &lt;&lt; <span style="color:#098658">5</span>); <span style="color:#008000">/* 期望 ID */</span>
+    sFilterConfig.FilterIdLow      = <span style="color:#098658">0x0000</span>;
+    sFilterConfig.FilterMaskIdHigh = (<span style="color:#267F99">uint32_t</span>)(<span style="color:#098658">0x7FF</span> &lt;&lt; <span style="color:#098658">5</span>); <span style="color:#008000">/* 掩码 1=必须匹配 */</span>
+    sFilterConfig.FilterMaskIdLow  = <span style="color:#098658">0x0000</span>;
+    sFilterConfig.FilterFIFOAssignment = CAN_FILTER_FIFO0;   <span style="color:#008000">/* 匹配帧进 FIFO0 */</span>
+    sFilterConfig.FilterBank       = <span style="color:#098658">0</span>;                      <span style="color:#008000">/* 用滤波器组 0 */</span>
+    sFilterConfig.FilterMode       = CAN_FILTERMODE_IDMASK;  <span style="color:#008000">/* 掩码模式 */</span>
+    sFilterConfig.FilterScale      = CAN_FILTERSCALE_32BIT;  <span style="color:#008000">/* 32 位滤波 */</span>
+    sFilterConfig.FilterActivation = ENABLE;
+    <span style="color:#0000FF">if</span> (HAL_CAN_ConfigFilter(&amp;hcan1, &amp;sFilterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+
+    <span style="color:#0000FF">if</span> (HAL_CAN_Start(&amp;hcan1) != HAL_OK) {                   <span style="color:#008000">/* 启动 CAN */</span>
+        Error_Handler();
+    }
+    <span style="color:#0000FF">if</span> (HAL_CAN_ActivateNotification(&amp;hcan1,
+            CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {        <span style="color:#008000">/* 开接收中断 */</span>
+        Error_Handler();
+    }
+}
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 示例 3：发送一个标准数据帧 */</span>
+HAL_StatusTypeDef <span style="color:#795E26">CAN1_Send</span><span style="color:#001080">(<span style="color:#267F99">uint16_t</span> std_id, <span style="color:#267F99">uint8_t</span> *data, <span style="color:#267F99">uint8_t</span> len)</span>
+{
+    CAN_TxHeaderTypeDef txHeader;
+    <span style="color:#267F99">uint32_t</span> mailbox = <span style="color:#098658">0</span>;
+
+    txHeader.StdId = std_id;               <span style="color:#008000">/* 标准 ID：0x000 ~ 0x7FF */</span>
+    txHeader.IDE   = CAN_ID_STD;           <span style="color:#008000">/* 标准帧 */</span>
+    txHeader.RTR   = CAN_RTR_DATA;         <span style="color:#008000">/* 数据帧 */</span>
+    txHeader.DLC   = len;                  <span style="color:#008000">/* 0~8 */</span>
+    txHeader.TransmitGlobalTime = DISABLE;
+
+    <span style="color:#0000FF">return</span> HAL_CAN_AddTxMessage(&amp;hcan1, &amp;txHeader, data, &amp;mailbox);
+}
+
+<span style="color:#008000">/* 使用：周期发一帧 0x123，数据 {0xAA, 0x55} */</span>
+<span style="color:#267F99">uint8_t</span> d[] = {<span style="color:#098658">0xAA</span>, <span style="color:#098658">0x55</span>};
+CAN1_Send(<span style="color:#098658">0x123</span>, d, <span style="color:#098658">2</span>);
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 示例 4：接收中断回调（弱函数，重写它） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">HAL_CAN_RxFifo0MsgPendingCallback</span><span style="color:#001080">(CAN_HandleTypeDef *hcan)</span>
+{
+    CAN_RxHeaderTypeDef rxHeader;
+    <span style="color:#267F99">uint8_t</span> rxData[<span style="color:#098658">8</span>];
+
+    <span style="color:#0000FF">if</span> (hcan-&gt;Instance == CAN1) {
+        HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &amp;rxHeader, rxData);
+        <span style="color:#0000FF">if</span> (rxHeader.StdId == <span style="color:#098658">0x123</span>) {
+            <span style="color:#008000">/* 收到 0x123 命令帧：rxData[0] 是命令码 */</span>
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;CAN cmd = 0x%02X, len = %u\r\n&quot;</span>, rxData[<span style="color:#098658">0</span>], rxHeader.DLC);
+        }
+    }
+}
+</pre>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 19.1（练习 A）：回环模式验证收发链路</h3>
+  <p class="step">1️⃣ 把 <code>Mode</code> 改为 <code>CAN_MODE_LOOPBACK</code>，配好滤波器（收 0x123）并 <code>HAL_CAN_Start</code> + 开中断。</p>
+  <p class="step">2️⃣ 主循环里每秒用 <code>CAN1_Send(0x123, data, 2)</code> 发一帧，串口打印回调收到的内容。</p>
+  <p class="step">3️⃣ 验收：串口每 1 秒打印一次 <code>CAN cmd = 0x..</code> 且数据一致——回环链路通了，说明波特率/滤波器/收发函数全部正确。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 19.2（练习 B）：双机通信（有第二块板或分析仪时）</h3>
+  <p class="step">1️⃣ 两端都切 <code>CAN_MODE_NORMAL</code>，统一 500kbps，共地（GND 相连）。</p>
+  <p class="step">2️⃣ ID 规划：A 板发 <strong>0x123 命令帧</strong>，B 板发 <strong>0x321 状态帧</strong>；各自滤波器只收对方 ID。</p>
+  <p class="step">3️⃣ 验收：A 板每发一帧，B 板串口打印出来；B 板回一帧 0x321，A 板打印出来。用掩码模式各收各的，验证互不干扰。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. F407 bxCAN 有几个发送邮箱？</p>
+  <p class="opt">A. 3 个，可同时排队 3 帧</p>
+  <p class="opt">B. 2 个，收发各一个</p>
+  <p class="opt">C. 8 个，按优先级排队</p>
+  <details><summary>查看答案</summary><div class="answer">A。bxCAN 有 3 个发送邮箱、2 个接收 FIFO（参考手册 RM0090）。</div></details>
+
+  <p class="q">Q2. 收不到任何消息，最常见的排查方向是？</p>
+  <p class="opt">A. 先查滤波器与波特率是否配对</p>
+  <p class="opt">B. 加大发送数据长度到 16 字节</p>
+  <p class="opt">C. 把滤波器全部改成列表模式</p>
+  <details><summary>查看答案</summary><div class="answer">A。滤波器忘配/掩码错、两端波特率不一致是"收不到"的两大元凶。</div></details>
+
+  <p class="q">Q3. Loopback（回环）模式的作用是？</p>
+  <p class="opt">A. 双机远距离长线通信</p>
+  <p class="opt">B. 单板自发自收，验证收发链路</p>
+  <p class="opt">C. 降低波特率以省电</p>
+  <details><summary>查看答案</summary><div class="answer">B。Loopback 发送直接环回接收，不上总线，适合单板自测。</div></details>
+
+  <p class="q">Q4. 接收中断回调里应该做什么？</p>
+  <p class="opt">A. 调用 GetRxMessage 快取帧并置标志</p>
+  <p class="opt">B. 播放 WAV 再回显到屏幕</p>
+  <p class="opt">C. 阻塞等待下一帧数据到达</p>
+  <details><summary>查看答案</summary><div class="answer">A。回调里只做快取 + 置标志，耗时业务放主循环/任务，避免阻塞中断。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 ST 参考手册 RM0090 第 25 章 bxCAN——外设寄存器与滤波器位段权威说明</li>
+<li>📖 当前工程 <code>Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c</code> 顶部注释——HAL 使用流程（Init→ConfigFilter→Start→AddTxMessage/GetRxMessage）</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 20 课——综合项目"CAN 多媒体节点"：用 0x123/0x124/0x125 三个命令遥控开发板播放 WAV、显示 BMP，并回传状态帧，把工具箱所有模块拧成一台机器。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0018-can-timing-errors.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0020-final-integration.html">下一课：综合项目 →</a>
+</nav>
+
+</div>
+</body>
+</html>

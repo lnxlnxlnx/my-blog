@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreeRTOS 实时操作系统 — 课程总览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="course-hero">
+  <h1>FreeRTOS 实时操作系统（原理 + 产品多任务化）</h1>
+  <p class="subtitle">STM32F407 探索者 · 主线教材：正点原子《FreeRTOS 开发指南 V1.12》（FreeRTOS V10.4.6）· 原理深入型</p>
+</div>
+
+<div class="goal">
+  <p><strong>课程使命：</strong>系统掌握 FreeRTOS 内核原理（调度、同步、通信、内存管理），并把 LVGL 产品界面多任务化。教材在 <a href="MISSION.md">MISSION.md</a>，配套资源在 <a href="RESOURCES.md">RESOURCES.md</a>。</p>
+</div>
+
+<h2>课程地图（17 课，五个阶段）</h2>
+<p>每课一个独立页面，含知识讲解 + 源码分析 + 自测 + 真机练习（练习在 FreeRTOS 分支工程上进行）。🟡 进行中 · ⬜ 未开始</p>
+
+<h3>阶段一：入门</h3>
+<ul class="lesson-list">
+  <li class="done"><span class="num">01</span> 初识 FreeRTOS<span class="stage"> · 第 1 章</span>
+    <div class="desc">RTOS 思维转变、为什么选 FreeRTOS、源码结构（8 个核心文件 + portable 桥梁）
+      <a href="lessons/0001-intro-to-freertos.html">→ 上课</a></div></li>
+
+  <li><span class="num">02</span> 移植与第一个任务<span class="stage"> · 第 2 章</span>
+    <div class="desc">移植流程、FreeRTOSConfig.h 初配、跑通第一个任务（PDF p.28）</div></li>
+</ul>
+
+<h3>阶段二：任务机制 · 原理深入</h3>
+<ul class="lesson-list">
+  <li><span class="num">03</span> 任务基础知识<span class="stage"> · 第 5 章</span>
+    <div class="desc">任务状态机、优先级、抢占式/时间片调度、TCB、任务栈（PDF p.82）</div></li>
+
+  <li><span class="num">04</span> 任务 API 实战<span class="stage"> · 第 6 章</span>
+    <div class="desc">创建/删除（动态+静态）、挂起/恢复，API 逐参数讲解（PDF p.90）</div></li>
+
+  <li><span class="num">05</span> 列表与列表项<span class="stage"> · 第 7 章</span>
+    <div class="desc">List/ListItem/MiniListItem 数据结构、插入删除算法——内核的"血管"（PDF p.110）</div></li>
+
+  <li><span class="num">06</span> 系统启动流程源码解析<span class="stage"> · 第 8 章</span>
+    <div class="desc">vTaskStartScheduler → 第一个任务 → xTaskCreate 逐函数分析、空闲任务（PDF p.129）</div></li>
+
+  <li><span class="num">07</span> 任务切换原理：PendSV<span class="stage"> · 第 9 章</span>
+    <div class="desc">PendSV 异常、vTaskSwitchContext、最高优先级任务选择、时间片调度实验（PDF p.168）</div></li>
+</ul>
+
+<h3>阶段三：同步与通信</h3>
+<ul class="lesson-list">
+  <li><span class="num">08</span> 队列<span class="stage"> · 第 13 章</span>
+    <div class="desc">队列结构体、创建/写入/读取、队列集、队列锁（PDF p.230）</div></li>
+
+  <li><span class="num">09</span> 信号量<span class="stage"> · 第 14 章</span>
+    <div class="desc">二值/计数/互斥/递归信号量、优先级翻转与互斥量解法（PDF p.284）</div></li>
+
+  <li><span class="num">10</span> 软件定时器<span class="stage"> · 第 15 章</span>
+    <div class="desc">定时器服务任务、命令队列、单次/周期模式、状态转换（PDF p.326）</div></li>
+
+  <li><span class="num">11</span> 事件标志组<span class="stage"> · 第 16 章</span>
+    <div class="desc">事件标志位、等待/设置 API、同步多个任务的"与/或"逻辑（PDF p.341）</div></li>
+
+  <li><span class="num">12</span> 任务通知<span class="stage"> · 第 17 章</span>
+    <div class="desc">任务通知机制、优势与限制、模拟信号量/邮箱/事件组（PDF p.353）</div></li>
+</ul>
+
+<h3>阶段四：系统机制</h3>
+<ul class="lesson-list">
+  <li><span class="num">13</span> 中断管理与临界区<span class="stage"> · 第 4 章</span>
+    <div class="desc">Cortex-M 中断优先级、PendSV/SysTick 配置、开关中断、临界区（PDF p.66）</div></li>
+
+  <li><span class="num">14</span> 时间管理<span class="stage"> · 第 12 章</span>
+    <div class="desc">系统时钟节拍、vTaskDelay / vTaskDelayUntil 的差异与选型（PDF p.211）</div></li>
+
+  <li><span class="num">15</span> 内存管理<span class="stage"> · 第 20 章</span>
+    <div class="desc">heap_1~5 五种分配算法逐一生理、选型对比（PDF p.411）</div></li>
+</ul>
+
+<h3>阶段五：进阶与综合</h3>
+<ul class="lesson-list">
+  <li><span class="num">16</span> 空闲任务与低功耗 Tickless<span class="stage"> · 第 18/19 章</span>
+    <div class="desc">空闲任务详解、钩子函数、Tickless 低功耗原理与配置（PDF p.394/403）</div></li>
+
+  <li><span class="num">17</span> 综合项目：LVGL × FreeRTOS 产品架构<span class="stage"> · 项目篇</span>
+    <div class="desc">GUI 任务 + 采集任务 + 存储任务的多任务产品架构，与 LVGL 课程衔接</div></li>
+</ul>
+
+<h2>配套参考</h2>
+<ul>
+  <li>📚 <a href="RESOURCES.md">资源清单</a> — PDF、官方书、API 手册、论坛</li>
+  <li>📄 术语表（待建）— RTOS 专有名词速查</li>
+</ul>
+
+<h2>学习进度</h2>
+<table>
+<tr><th>阶段</th><th>课时</th><th>状态</th></tr>
+<tr><td>入门</td><td>01 ~ 02</td><td>01 完成</td></tr>
+<tr><td>任务机制</td><td>03 ~ 07</td><td>未开始</td></tr>
+<tr><td>同步与通信</td><td>08 ~ 12</td><td>未开始</td></tr>
+<tr><td>系统机制</td><td>13 ~ 15</td><td>未开始</td></tr>
+<tr><td>进阶与综合</td><td>16 ~ 17</td><td>未开始</td></tr>
+</table>
+
+<p class="footer-note">学习记录见 <a href="learning-records/">learning-records/</a> · 有问题随时问 Agent 老师</p>
+
+</div>
+</body>
+</html>

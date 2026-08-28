@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L08 · 设备树入门 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L08 · 设备树入门：把硬件"描述"出来，而不是"写死"</h1>
+<p class="meta"><span class="tag">阶段 2</span> · 动手约 30 分钟（PC 端 + 板上只读）</p>
+<p class="lead">L05 你"写死了" GPIO 的地址和引脚。设备树描述的设备：把<b>"板子上接了哪些硬件，接在哪"</b>写成一个数据文件（.dts → .dtb），内核启动时读它，驱动按它在运行时拿资源。从此一个驱动能适配很多块板。</p>
+
+<h2>设备树到底解决什么</h2>
+<p>过去：每个板子都要写一堆"板级代码"告诉内核硬件配置，改板子=改内核源码。设备树把"硬件长什么样"和"驱动怎么驱动"<b>剥离开</b>：</p>
+<ul>
+<li><b>Node（节点）</b>：描述一个设备，用花括号定义，如 <code>led { ... }</code></li>
+<li><b>Property（属性）</b>：这个设备的具体参数：名字、地址、状态、中断等。</li>
+<li><b>compatible</b>："哦，这个节点应该由哪个驱动来管"——驱动 <code>of_match_table</code> 里写同样的字符串，就算配对成功。</li>
+</ul>
+<pre><code class="language-dts">/ {                       /* 根节点 */
+    leds {
+        compatible = "gpio-leds";        /* 指名由谁驱动 */
+        led0: led-red {
+            label = "red";
+            gpios = &lt;&amp;gpio1 3 GPIO_ACTIVE_LOW&gt;;  /* GPIO1_IO03 低电平点亮 */
+        };
+    };
+};</code></pre>
+
+<h2>dts → dtb → 内核的旅程</h2>
+<p><code>.dts</code>（文本）由 <code>dtc</code> 编译成 <code>.dtb</code>（二进制），u-boot 把 dtb 传给内核（还记得 L01 的那个 <code>0x83000000</code> 吗）。如果你已经在内核树里，改名字就行：</p>
+<pre><code class="language-bash"># 在内核源码树里
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- dtbs   # 编译所有 dts
+# 生成 arch/arm/boot/dts/imx6ull-alientek-emmc.dtb</code></pre>
+<p>内核里对应驱动用 <code>of_*</code> API 读出属性（如 <code>of_get_named_gpio</code>）来配置硬件。</p>
+
+<h2>在真实板子上验证设备树</h2>
+<p class="callout"><span class="t">板上只读</span> 设备树被内核解析后的信息，可以在 sysfs 里看到：<code>/sys/firmware/devicetree/base/</code> 就是 <code>/</code> 根节点的镜像。这是"XX 板子实际生效的设备树"的最直接证据。</p>
+
+<div class="exercise">
+<div class="t">练习 L08：看懂你板子的设备树</div>
+<ol>
+<li><b>PC 端</b>：在你手里的 4.1.15 内核源码里找到 <code>arch/arm/boot/dts/imx6ull-alientek-emmc.dts</code>，<code>grep -n gpio / 找到 led 和 key 节点</code>，看它的 compatible 和 properties。</li>
+<li><b>板上</b>：<code>ls /sys/firmware/devicetree/base/</code>，找到和 dts 根节点一致的目录结构。<code>cat /sys/firmware/devicetree/base/soc/.../compatible</code> 之类，对一对。</li>
+<li>在 dts 里把 <code>led-red</code> 节点的 <code>label</code> 改成你名字，<b>先不要烧</b>，只编译 dtb（<code>make dtbs</code>），确认编译通过。理解"改一行文本 → 新 dtb"。</li>
+<li>回答自己：这个 dts 里 <code>compatible = "gpio-leds"</code> 驱动在内核哪？（答案在下一步 L09/L10）</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>compatible 属性的作用？</summary><p class="a">声明"我这个节点应该由哪个驱动接管"。驱动里 <code>of_match_table</code> 写下相同字符串，与节点配对。它是"设备(节点) ↔ 驱动"的钥匙。</p></details>
+<details><summary>dts、dtc、dtb 分别是什么？</summary><p class="a">dts = 人类写的文本；dtc = 编译器；dtb = 编译出的二进制，给内核烧/传。类比 源码 .c → gcc → 可执行文件。</p></details>
+<details><summary>设备树是"运行时"还是"编译时"生效？</summary><p class="a">两种都有：dts/dtb 编译时确定；但解析发生在内核启动时，驱动运行时读出属性。所以改 dtb 不用重编驱动，重编内核源码也不用动板极电路。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① 设备树=硬件的"描述文件"，节点=设备、compatible=对接密码；② dts→dtb→内核→sysfs 链路；③ 你在板子的 /sys/firmware/devicetree 里"看到"了硬件。下一课把设备树连进自己的平台驱动，真正摆脱"写死地址"。</p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 43 章「Linux 设备树」</li>
+<li><a href="https://devicetree-specification.readthedocs.io/en/latest/">设备树规范官方文档</a>（权威语法）</li>
+<li>内部：<code>Documentation/devicetree/bindings/</code> ——每种官方驱动怎么描述硬件，范例很多</li>
+<li>本工作区 <a href="../reference/glossary.html">术语表</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。设备树术语多但不难，来来回回就节点/属性/compatible/中断/reg 这几个。看懂你的 dts 比看一百篇教程管用。</p>
+</body>
+</html>

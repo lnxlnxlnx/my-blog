@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LVGL 产品界面开发 — 课程总览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<div class="course-hero">
+  <h1>LVGL 产品界面开发</h1>
+  <p class="subtitle">基于 STM32F407 + 320×240 触摸屏 + LVGL v8.3.11 · 主线教材：正点原子《LVGL 开发指南 V1.5》</p>
+</div>
+
+<div class="goal">
+  <p><strong>课程使命：</strong>做出一套完整、可交付的产品界面——多页面导航、设置项、数据展示、交互动画。教材在 <a href="MISSION.md">MISSION.md</a>，配套资源在 <a href="RESOURCES.md">RESOURCES.md</a>。</p>
+</div>
+
+<h2>课程地图（12 课，三个阶段）</h2>
+<p>每课一个独立页面，约 30~60 分钟，含知识讲解 + 自测 + 真机练习。🟡 进行中 · ⬜ 未开始</p>
+
+<ul class="lesson-list">
+  <li class="done"><span class="num">01</span> 认识 LVGL 与运行模型<span class="stage"> · 基础篇</span>
+    <div class="desc">初始化流程、时基、任务引擎、lv_conf.h 裁剪 —— 它是怎么转起来的
+      <a href="lessons/0001-how-lvgl-runs.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">02</span> 对象系统与屏幕<span class="stage"> · 基础篇</span>
+    <div class="desc">lv_obj 树、父子关系、屏幕/图层、坐标/大小/对齐 —— 屏幕上万物皆对象（PDF 6.1~6.3）
+      <a href="lessons/0002-objects-and-screens.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">03</span> 样式系统<span class="stage"> · 基础篇</span>
+    <div class="desc">样式属性、部件组成/状态、样式叠加优先级 —— 给你的控件"化妆"（PDF 6.4）
+      <a href="lessons/0003-styles.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">04</span> 事件与交互<span class="stage"> · 基础篇</span>
+    <div class="desc">事件类型、回调、事件字段；触摸输入链路 —— 让界面"会响应"（PDF 6.8）
+      <a href="lessons/0004-events-and-interaction.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">05</span> 定时器与动画<span class="stage"> · 基础篇</span>
+    <div class="desc">动画路径/速度/时间线、LVGL 定时器 —— 让界面"活起来"（PDF 6.6~6.7）
+      <a href="lessons/0005-timers-and-animations.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">06</span> Flex 与 Grid 布局<span class="stage"> · 布局篇</span>
+    <div class="desc">一维/二维布局系统 —— 产品界面的骨架，告别手算坐标（PDF 48~49 章）
+      <a href="lessons/0006-flex-and-grid-layout.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">07</span> 基础控件<span class="stage"> · 部件篇</span>
+    <div class="desc">label / btn / btnmatrix / checkbox / switch —— 搭界面的"砖块"（PDF 12/13/15/18/22 章）
+      <a href="lessons/0007-basic-widgets.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">08</span> 数据展示控件<span class="stage"> · 部件篇</span>
+    <div class="desc">bar / slider / arc / meter / chart / led —— 仪表盘、进度、波形展示（PDF 10/11/21/26/30/32 章）
+      <a href="lessons/0008-data-widgets.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">09</span> 输入控件<span class="stage"> · 部件篇</span>
+    <div class="desc">textarea / dropdown / roller / keyboard / spinbox —— 表单与参数输入（PDF 16/20/24/29/35 章）
+      <a href="lessons/0009-input-widgets.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">10</span> 容器与导航<span class="stage"> · 部件篇</span>
+    <div class="desc">list / tabview / tileview / win / menu / msgbox / span —— 多页面应用的组织方式（PDF 31/33/34/37/38/39/41 章）
+      <a href="lessons/0010-containers-and-navigation.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">11</span> 图片与字库<span class="stage"> · 组件篇</span>
+    <div class="desc">img / imgbtn / animimg，BMP/PNG/JPEG/GIF 解码，C 字库与文件字库 —— 告别"裸控件"（PDF 8/17/28/40/42~45 章）
+      <a href="lessons/0011-images-and-fonts.html">→ 上课</a></div></li>
+
+  <li class="done"><span class="num">12</span> 综合项目：完整产品界面<span class="stage"> · 项目篇</span>
+    <div class="desc">多页面 + 设置 + 数据展示 + 动画的完整产品 UI，含工程组织与内存优化复盘
+      <a href="lessons/0012-final-project.html">→ 上课</a></div></li>
+</ul>
+
+<h2>配套参考</h2>
+<ul>
+  <li>📄 <a href="reference/glossary.html">术语表</a> — 全课程统一术语，速查</li>
+  <li>🔧 API 速查表（待建）— 常用对象/样式/事件/动画 API 一页查</li>
+  <li>📚 <a href="RESOURCES.md">资源清单</a> — PDF、官方文档、社区</li>
+</ul>
+
+<h2>学习进度</h2>
+<table>
+<tr><th>阶段</th><th>课时</th><th>状态</th></tr>
+<tr><td>基础篇</td><td>01 ~ 05</td><td>全部生成 ✅</td></tr>
+<tr><td>布局篇</td><td>06</td><td>已生成 ✅</td></tr>
+<tr><td>部件篇</td><td>07 ~ 10</td><td>已生成 ✅</td></tr>
+<tr><td>组件篇</td><td>11</td><td>已生成 ✅</td></tr>
+<tr><td>项目篇</td><td>12</td><td>已生成 ✅</td></tr>
+</table>
+
+<p class="footer-note">学习记录见 <a href="learning-records/">learning-records/</a> · 有问题随时问 Agent 老师</p>
+
+</div>
+</body>
+</html>

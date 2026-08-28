@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0010 · 数学与随机 math/random</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>数学与随机 math / random</h1>
+<p class="meta">Pythonic 代码 · 课程 0010 · 预计 20 分钟</p>
+
+<p>C 里有 <code>math.h</code> 的 sqrt/sin/pow,Python 的 <code>math</code> 模块功能更全(还能拿 π、e、无穷);<code>random</code> 模块做随机数、抽样、洗牌、seed 复现。本课把数值计算和模拟抽样讲透。</p>
+
+<h2>知识点 1:math 常用函数与常量</h2>
+<p>数值计算:开方、幂、取整、绝对值、对数、三角:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">math</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">sqrt</span><span style="color: #000">(</span><span style="color: #098658">9</span><span style="color: #000">)</span>          <span style="color: #008000"># 3.0 开方</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">pow</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">)</span>       <span style="color: #008000"># 1024.0 幂(等价 2**10)</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">floor</span><span style="color: #000">(</span><span style="color: #098658">3.7</span><span style="color: #000">)</span>       <span style="color: #008000"># 3 向下取整</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">ceil</span><span style="color: #000">(</span><span style="color: #098658">3.2</span><span style="color: #000">)</span>        <span style="color: #008000"># 4 向上取整</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">fabs</span><span style="color: #000">(-</span><span style="color: #098658">5</span><span style="color: #000">)</span>         <span style="color: #008000"># 5.0 绝对值</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">log</span><span style="color: #000">(</span><span style="color: #098658">100</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">)</span>     <span style="color: #008000"># 2.0 以 10 为底;math.log(e) 自然对数</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">pi</span>               <span style="color: #008000"># 3.14159...</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">e</span>                <span style="color: #008000"># 2.718...</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">inf</span>              <span style="color: #008000"># 无穷大</span>
+<span style="color: #001080">math</span><span style="color: #000">.</span><span style="color: #001080">nan</span>              <span style="color: #008000"># 非数字(NaN)</span>
+</pre>
+<p>要高斯分布误差函数 <code>math.erf</code>、伽马 <code>math.gamma</code> 也都有。记一个:<code>math.floor / ceil</code> 从「截断/进位」取整,别用 int()(int 是朝 0 截断)。</p>
+
+<h2>知识点 2:幂和取整的 Python 原生写法对比</h2>
+<p>很多 math 函数有更 Pythonic 的写法,先想运算符和内置函数:</p>
+<pre lang="python" class="highlight"><span style="color: #098658">2</span> <span style="color: #000">**</span> <span style="color: #098658">10</span>            <span style="color: #008000"># 1024 幂(比 math.pow 更常用)</span>
+
+<span style="color: #008000"># abs() 绝对值 → math.fabs() 只返回 float</span>
+<span style="color: #0070C1">abs</span><span style="color: #000">(-</span><span style="color: #098658">5</span><span style="color: #000">)</span>            <span style="color: #008000"># 5</span>
+
+<span style="color: #008000"># // 整除, % 取余(比 floor 更常用)</span>
+<span style="color: #098658">7</span> <span style="color: #000">//</span> <span style="color: #098658">2</span>             <span style="color: #008000"># 3 整除(向下)</span>
+<span style="color: #098658">7</span> <span style="color: #000">%</span> <span style="color: #098658">2</span>              <span style="color: #008000"># 1 取余</span>
+</pre>
+<p>规则:能用 <code>** / // / % / abs()</code> 就别绕 math;<code>math</code> 主要用于：三角函数、对数、指数、取整、无穷、以及科学函数。</p>
+
+<h2>知识点 3:random 基础——随机数、整数、浮点</h2>
+<p>生成随机数:整数用 <code>randint(a,b)</code>(含两端),浮点用 <code>random()</code>(0~1):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">random</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">randint</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">6</span><span style="color: #000">)</span>     <span style="color: #008000"># 1~6 之间的整数(像掷骰子,含 6)</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">()</span>          <span style="color: #008000"># 0.0 ~ 1.0 之间的浮点</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">uniform</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">)</span>    <span style="color: #008000"># 0~10 之间浮点(均匀)</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">choice</span><span style="color: #000">([</span><span style="color: #A31515">&quot;A&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;B&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;C&quot;</span><span style="color: #000">])</span>  <span style="color: #008000"># 随机挑一个</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">randrange</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">)</span>    <span style="color: #008000"># 0~10 步长 2 里挑(0,2,4,...)</span>
+</pre>
+<p><code>randint(1,6)</code> 是<strong>含两端</strong>(能掷到 6);<code>randrange</code> 是半开(不含上界)。</p>
+
+<h2>知识点 4:洗牌与抽样——shuffle / sample</h2>
+<p>整列洗牌用 <code>shuffle</code>(就地改);不放回/放回抽样用 <code>sample</code> / <code>choices</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">random</span>
+<span style="color: #001080">deck</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">]</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">shuffle</span><span style="color: #000">(</span><span style="color: #001080">deck</span><span style="color: #000">)</span>          <span style="color: #008000"># 就地洗牌,deck 顺序变了</span>
+
+<span style="color: #008000"># 抽样:不放回,抽 3 个</span>
+<span style="color: #001080">picks</span> <span style="color: #000">=</span> <span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">sample</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">),</span> <span style="color: #098658">3</span><span style="color: #000">)</span>   <span style="color: #008000"># [8, 1, 5] 等,不重复</span>
+
+<span style="color: #008000"># 放回抽样,可重复,还带权重</span>
+<span style="color: #001080">rolls</span> <span style="color: #000">=</span> <span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">choices</span><span style="color: #000">(</span><span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">7</span><span style="color: #000">),</span> <span style="color: #001080">k</span><span style="color: #000">=</span><span style="color: #098658">4</span><span style="color: #000">)</span>   <span style="color: #008000"># 掷 4 次骰子,可重复</span>
+</pre>
+<p>记忆:<code>shuffle</code> 就地洗;<code>sample</code> 不放回; <code>choices(k=n)</code> 放回带权重。需要随机子集就用 sample。</p>
+
+<h2>知识点 5:seed——让随机结果可复现</h2>
+<p>调试/测试时想让「随机」可复现,用 <code>random.seed(n)</code>:给定相同 seed,产生的随机序列完全一样。这对写可测试代码非常关键:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">random</span>
+<span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">seed</span><span style="color: #000">(</span><span style="color: #098658">42</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">randint</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">100</span><span style="color: #000">))</span>   <span style="color: #008000"># 每次 run(seed=42 后)都是一样的</span>
+</pre>
+<p>科学实验、AI 里常用 seed 复现结果。注意:不同版本 Python 的随机序列可能不同,别指望跨版本一致。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">1~6 掷骰子(含6)用?</p>
+  <button class="opt" data-ok="false">random()</button>
+  <button class="opt" data-ok="true">randint(1, 6)</button>
+  <button class="opt" data-ok="false">randrange(1, 6)</button>
+  <button class="opt" data-ok="false">choice</button>
+  <p class="reveal">randint(a,b) 含两端;randrange 不含上界。randint(1,6) 能掷到 6。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">把列表就地洗牌用?</p>
+  <button class="opt" data-ok="false">sample(lst, len)</button>
+  <button class="opt" data-ok="true">shuffle(lst)</button>
+  <button class="opt" data-ok="false">choices(lst)</button>
+  <button class="opt" data-ok="false">random.choice</button>
+  <p class="reveal">shuffle 就地洗牌;sample 返回新样本(不放回);choices 放回。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">7 // 2 和 7 % 2 分别?</p>
+  <button class="opt" data-ok="false">3 和 1</button>
+  <button class="opt" data-ok="true">3 和 1</button>
+  <button class="opt" data-ok="false">3.5 和 0</button>
+  <button class="opt" data-ok="false">3 和 1.0</button>
+  <p class="reveal">// 整除得 3, % 取余得 1(两空都是 3 和 1)。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">想要随机结果可复现,用?</p>
+  <button class="opt" data-ok="false">random.fixed()</button>
+  <button class="opt" data-ok="true">random.seed(n)</button>
+  <button class="opt" data-ok="false">random.lock()</button>
+  <button class="opt" data-ok="false">random.repeat()</button>
+  <p class="reveal">random.seed(n):固定种子后,随机序列可复现,测试/实验常用。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0010_数学与随机.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:用 math 求一个圆心距/面积;用 // 和 % 把秒数拆成 时分秒</li>
+  <li><strong>练习 B</strong>:random 掷骰子、洗牌、sample 抽 3 个、seed 复现</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段手写随机/数值计算代码</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/math.html">math 模块</a>」</strong>和「<a href="https://docs.python.org/zh-cn/3/library/random.html">random 模块</a>」:函数清单很长,先记本课这几个常用的,用到再查。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:shuffle 和 sample 区分清楚了吗?下一课讲<strong>文件与目录 os / shutil / json / csv</strong>——读写文件、操作目录、JSON/CSV 序列化。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0009-时间与日期.html">← 上一篇:时间与日期 datetime / time</a>
+  <a href="index.html">课程地图</a>
+  <a href="0011-文件与目录.html">下一篇:文件与目录 os / shutil / json / csv →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

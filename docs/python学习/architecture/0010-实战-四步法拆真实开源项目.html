@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0010 · 实战:四步法拆真实开源项目</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>实战:四步法拆真实开源项目</h1>
+<p class="meta">架构与设计模式 · 课程 0010(收官课)· 预计 25 分钟</p>
+
+<p>十课磨的剑,现在出鞘。我们用<strong>第一课的四步法</strong>,拆一个你天天用的真实项目——scikit-learn 的基类文件 <code>sklearn/base.py</code>。你会发现:里面全是这十课的模式,一个不落。</p>
+
+<h2>回顾:十课一张图</h2>
+<div class="grid">
+  <div class="card"><h3>读法(0001)</h3><p>三个尺度 · 四步读法</p></div>
+  <div class="card"><h3>地基(0002)</h3><p>接口与多态 ABC / Protocol</p></div>
+  <div class="card"><h3>招式(0003-07)</h3><p>策略 · 工厂 · 适配器/门面 · 观察者 · 模板/装饰器</p></div>
+  <div class="card"><h3>内功(0008-09)</h3><p>组合优于继承 · 依赖注入 · 分层 · 依赖方向</p></div>
+</div>
+<p>招式让「读得懂」,内功让「说得清、改得动」。现在把它们用在真项目上。</p>
+
+<h2>四步法拆 sklearn/base.py</h2>
+<p>文件在 <a href="https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/base.py">sklearn/base.py</a>(约 1100 行)。我们不逐行,只走四步。</p>
+
+<h3>第 1 步:找入口</h3>
+<p>入口不在文件里,而在<strong>用法</strong>上——每个模型都长一个样:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">sklearn.linear_model</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">LogisticRegression</span>
+
+<span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">LogisticRegression</span><span style="color: #000">()</span>        <span style="color: #008000"># 入口:构造,统一接口</span>
+<span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>                     <span style="color: #008000"># 入口:统一动作</span>
+<span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">predict</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">);</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">score</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span> <span style="color: #008000"># 万变不离四件套</span>
+</pre>
+<p>scikit-learn 的成功就靠这条「铁约定」:<strong>每个估计器都有 fit / predict / score,参数用 get_params / set_params 读写</strong>。这就是一个全生态共享的接口。</p>
+
+<h3>第 2 步:画依赖</h3>
+<p>BaseEstimator 不依赖任何具体模型——它给所有模型提供「默认行为」;<strong>依赖方向是模型 → BaseEstimator</strong>。具体模型怎么被复制?看 <code>clone()</code>——一个地地道道的<strong>工厂函数</strong>:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># sklearn/base.py 真实代码(节选)</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">clone</span><span style="color: #000">(</span><span style="color: #001080">estimator</span><span style="color: #000">,</span> <span style="color: #000">*,</span> <span style="color: #001080">safe</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">):</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;Construct a new unfitted estimator with the same parameters.&quot;&quot;&quot;</span>
+    <span style="color: #001080">estimator_type</span> <span style="color: #000">=</span> <span style="color: #0070C1">type</span><span style="color: #000">(</span><span style="color: #001080">estimator</span><span style="color: #000">)</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">estimator_type</span> <span style="color: #AF00DB">is</span> <span style="color: #0070C1">dict</span><span style="color: #000">:</span>
+        <span style="color: #00F">return</span> <span style="color: #000">{</span><span style="color: #001080">k</span><span style="color: #000">:</span> <span style="color: #001080">clone</span><span style="color: #000">(</span><span style="color: #001080">v</span><span style="color: #000">,</span> <span style="color: #001080">safe</span><span style="color: #000">=</span><span style="color: #001080">safe</span><span style="color: #000">)</span> <span style="color: #00F">for</span> <span style="color: #001080">k</span><span style="color: #000">,</span> <span style="color: #001080">v</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">estimator</span><span style="color: #000">.</span><span style="color: #001080">items</span><span style="color: #000">()}</span>
+    <span style="color: #000">...</span>
+    <span style="color: #001080">klass</span> <span style="color: #000">=</span> <span style="color: #001080">estimator</span><span style="color: #000">.</span><span style="color: #001080">__class__</span>                    <span style="color: #008000"># 靠 get_params 约定</span>
+    <span style="color: #001080">new_object_params</span> <span style="color: #000">=</span> <span style="color: #001080">estimator</span><span style="color: #000">.</span><span style="color: #001080">get_params</span><span style="color: #000">(</span><span style="color: #001080">deep</span><span style="color: #000">=</span><span style="color: #00F">False</span><span style="color: #000">)</span>
+    <span style="color: #000">...</span>
+    <span style="color: #001080">new_object</span> <span style="color: #000">=</span> <span style="color: #001080">klass</span><span style="color: #000">(**</span><span style="color: #001080">new_object_params</span><span style="color: #000">)</span>        <span style="color: #008000"># 重新造一个,不复制训练结果</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">new_object</span>
+</pre>
+<p><code>clone</code> 认得「参数约定」(get_params),按名字重造对象——<strong>工厂模式 + 注册表思想</strong>,网格搜索 GridSearchCV 就靠它复制出无数份模型。</p>
+
+<h3>第 3 步:找抽象</h3>
+<p>BaseEstimator 本身不强迫继承,但约定处处是「抽象」。看两个最妙的:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># sklearn/base.py · TransformerMixin:模板方法</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">TransformerMixin</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fit_transform</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">=</span><span style="color: #00F">None</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">fit_params</span><span style="color: #000">):</span>
+        <span style="color: #008000"># 骨架:先 fit 再 transform,顺序定死</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">y</span> <span style="color: #AF00DB">is</span> <span style="color: #00F">None</span><span style="color: #000">:</span>
+            <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">fit_params</span><span style="color: #000">).</span><span style="color: #001080">transform</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">)</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">fit_params</span><span style="color: #000">).</span><span style="color: #001080">transform</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">)</span>
+</pre>
+<pre lang="python" class="highlight"><span style="color: #008000"># sklearn/base.py · _fit_context:装饰器(还带着 functools.wraps 保真)</span>
+<span style="color: #AF00DB">@functools</span><span style="color: #000">.</span><span style="color: #001080">wraps</span><span style="color: #000">(</span><span style="color: #001080">fit_method</span><span style="color: #000">)</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">wrapper</span><span style="color: #000">(</span><span style="color: #001080">estimator</span><span style="color: #000">,</span> <span style="color: #000">*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">):</span>
+    <span style="color: #000">...</span>
+    <span style="color: #00F">with</span> <span style="color: #001080">config_context</span><span style="color: #000">(...),</span> <span style="color: #001080">callback_management_context</span><span style="color: #000">(</span><span style="color: #001080">estimator</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">fit_method</span><span style="color: #000">(</span><span style="color: #001080">estimator</span><span style="color: #000">,</span> <span style="color: #000">*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">)</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">wrapper</span>
+</pre>
+<p>看到了吗——<strong>模板方法</strong>(fit_transform 定骨架)、<strong>装饰器</strong>(_fit_context 包 fit 方法)都是你学过的。而 ClassifierMixin/RegressorMixin 这类 <strong>Mixin</strong>,就是把行为切碎、按需<strong>组合</strong>进类的「组合优于继承」实战。</p>
+
+<h3>第 4 步:看实现</h3>
+<p>要看具体实现,就找实现了约定的类,比如 <code>sklearn/linear_model/_logistic.py</code> 的 LogisticRegression。你现在读它的姿势:</p>
+<ol>
+  <li>只看 <code>__init__</code>(参数有哪些)→ 可被 clone / get_params 认领</li>
+  <li>只看 <code>fit / predict</code>(怎么工作)→ 业务细节在 <code>_solve</code>/<code>_loss</code> 之类的方法里</li>
+  <li>其余统统跳过</li>
+</ol>
+<p>这就是第一课说的「只在你需要改的地方深入」。十课之后,你已经具备这套姿势了。</p>
+
+<h2>行动清单:把「读得懂」变成「参与合作」</h2>
+<p>参与复杂项目合作的真实路径,就在 GitHub 上(GitHub 就是最大的社区):</p>
+<ol>
+  <li><strong>从文档开始</strong>:找到你过敏捷的库(scikit-learn / pytorch),读它的 <code>CONTRIBUTING.md</code> / <code>Developer Guide</code></li>
+  <li><strong>从「好啃」的 issue 开始</strong>:标签 <code>good first issue</code>、<code>documentation</code>、<code>help wanted</code>——改文档也是合法规格贡献</li>
+  <li><strong>先读测试,再读实现</strong>:测试教你怎么用,实现教你怎么写</li>
+  <li><strong>提交前先看别人的 PR</strong>:维护者 review 的内容,就是大项目「规范」的活教材</li>
+  <li><strong>小步提交</strong>:一次 PR 只做一件事,描述里说清「为什么」</li>
+</ol>
+<p>你已经具备读懂它们的所有词汇——差的只是动手一次。</p>
+
+<h2>测一测(收官·识别模式)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">添加策略时该做什么?</p>
+  <button class="opt" data-ok="false">再去改源上下文</button>
+  <button class="opt" data-ok="false">把旧代码全删掉</button>
+  <button class="opt" data-ok="false">复制代码来复用</button>
+  <button class="opt" data-ok="true">新增类不改调用</button>
+  <p class="reveal">开闭原则:对扩展开放、对修改关闭——加策略 = 新增一个类注册进去,调用方不动。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">看到 make_xxx 是什么?</p>
+  <button class="opt" data-ok="false">策略模式的过程</button>
+  <button class="opt" data-ok="false">观察者的回调处</button>
+  <button class="opt" data-ok="false">模板方法的骨架</button>
+  <button class="opt" data-ok="true">工厂模式的入口</button>
+  <p class="reveal">make_/create_/build_ 开头的函数基本都是工厂:集中创建、按名取对象、可替换、可测。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">接口对不上用什么?</p>
+  <button class="opt" data-ok="false">派个观察者监听</button>
+  <button class="opt" data-ok="false">用门面简化入口</button>
+  <button class="opt" data-ok="false">装饰器增强功能</button>
+  <button class="opt" data-ok="true">适配器进行包装</button>
+  <p class="reveal">适配器 = 中间翻译层,把别人的接口翻译成你的接口;门面则是把复杂藏起来的简单入口。</p>
+</div>
+
+<h2>最终练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0010_实战拆真实项目.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:按四步法把 sklearn/base.py 的三处模式(模板方法/工厂/装饰器)在代码里标出来</li>
+  <li><strong>练习 B</strong>:选一个你想贡献的库,读 CONTRIBUTING.md,写一个 30 天的「从读代码到提 PR」行动计划</li>
+  <li><strong>练习 C</strong>:给自己留下一份「模式速查」——把十课学到的模式用自己的话各写一句话</li>
+</ul>
+
+<h2>推荐阅读(接下来一个月)</h2>
+<blockquote>
+  <p><strong>Cosmic Python</strong>(<a href="https://www.cosmicpython.com/">免费</a>):现在可以正式读了,前两章 + 目录扫一遍。</p>
+  <p><strong>AOSA:指读一书</strong>(<a href="https://aosabook.org/en/">免费</a>):挑「matplotlib」或「Git」一章,模仿本课的四步法拆一遍,写完你的拆解稿。</p>
+  <p><strong>scikit-learn Developer Guide</strong>(<a href="https://scikit-learn.org/stable/developers/index.html">官方</a>):第一节「rolling your own estimator」,亲手写一个满足 sklearn 约定的小模型。</p>
+</blockquote>
+
+<h2>这一课的临别赠言</h2>
+<p>十课学完,你掌握的是一套<strong>词汇表</strong>:能替代码里的「那个函数」「那个类」说出名字,也能替「为什么这样写」讲出原理。记住——<strong>读代码永远先看形状,再看血肉;改代码永远先问依赖方向。</strong>去给一个真实项目提人生第一个 PR 吧。回来找我聊你拆的东西。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0009-分层架构与依赖方向.html">← 上一篇:分层架构与依赖方向</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">下一篇:课程地图(收尾) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

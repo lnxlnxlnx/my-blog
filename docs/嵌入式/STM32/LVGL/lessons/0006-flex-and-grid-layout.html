@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 6 课：Flex 与 Grid 布局 — LVGL 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 6 课</nav>
+
+<h1>第 6 课：Flex 与 Grid 布局</h1>
+<p class="subtitle">告别手算坐标：一维 Flex 摆"行与列"，二维 Grid 搭"表格"，产品界面的骨架</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>学完你能①给容器开启 Flex，熟练摆主轴/交叉轴、对齐、grow 和间隙；②用 Grid 描述符数组 + <code>lv_obj_set_grid_cell</code> 搭出整齐的网格；③一眼判断"这屏该用 Flex 还是 Grid"。课程最后做出"顶部导航栏 + 3×3 数字键盘"。</p>
+</div>
+
+<h2>1. 为什么需要布局：手算坐标的痛</h2>
+
+<p>前几课我们建控件都用 <code>lv_obj_align</code> 一个个人工摆放。对象少还行，一旦上十个：改一个按钮的位置，下面的全要跟着挪；换个字体宽度变了，整行都歪。这就是"手算坐标"的痛。</p>
+
+<p>LVGL 从 V8 开始引入 CSS 同款的 Flex 和 Grid 布局（PDF 48.1 <span class="pg">PDF p.497</span>）：你只管<strong>告诉容器"怎么排"</strong>，子对象自动各就各位，容器尺寸一变，全家跟着重新排。</p>
+
+<ul>
+<li><strong>Flex（一维）</strong>：一次只处理一行或一列，擅长"导航栏、按钮组、列表行"</li>
+<li><strong>Grid（二维）</strong>：同时处理行和列，擅长"键盘、仪表盘、宫格菜单"</li>
+</ul>
+
+<p>好消息：你工程 <code>EXTERNAL/LVGL/lv_conf.h</code> 里 <code>LV_USE_FLEX</code> 和 <code>LV_USE_GRID</code> 都已是 1（608/611 行），直接能用，无需改配置。</p>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>Flex = 一维排布（行或列），Grid = 二维表格</strong>。CSS 上这两套规则的思路和 LVGL 完全同构，写过网页的人五分钟上手。</p>
+</div>
+
+<h2>2. Flex 基础：主轴、交叉轴与 flow</h2>
+
+<p>Flex 的容器里有两根轴线（PDF 48.2.2 <span class="pg">PDF p.497</span>）：<strong>主轴</strong>是对象放置的方向，<strong>交叉轴</strong>垂直于主轴。启用 Flex 有两种等价写法（PDF 48.2.3 <span class="pg">PDF p.500</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 方式一：lv_obj_set_flex_flow 一步到位（推荐，最常用） */</span>
+<span style="color:#267F99">lv_obj_t</span> * nav = lv_obj_create(lv_scr_act());
+lv_obj_set_size(nav, <span style="color:#098658">280</span>, <span style="color:#098658">40</span>);
+lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_ROW);   <span style="color:#008000">/* 主轴=行，不换行 */</span>
+
+<span style="color:#008000">/* 方式二：显式开布局，flow 用样式设置 */</span>
+<span style="color:#267F99">lv_obj_t</span> * nav2 = lv_obj_create(lv_scr_act());
+lv_obj_set_layout(nav2, LV_LAYOUT_FLEX);       <span style="color:#008000">/* 开启 Flex 布局 */</span>
+lv_obj_set_style_flex_flow(nav2, LV_FLEX_FLOW_ROW_WRAP, <span style="color:#098658">0</span>);</pre>
+
+<p>主轴方向由 <code>LV_FLEX_FLOW_*</code> 决定，共 8 种（PDF 48.2.2 <span class="pg">PDF p.497</span>）：</p>
+
+<table>
+<tr><th>配置项</th><th>效果</th></tr>
+<tr><td><code>LV_FLEX_FLOW_ROW</code></td><td>排成一行，不换行（超宽会出现滚动条）</td></tr>
+<tr><td><code>LV_FLEX_FLOW_ROW_WRAP</code></td><td>排成一行，放不下自动换行</td></tr>
+<tr><td><code>LV_FLEX_FLOW_ROW_REVERSE</code></td><td>一行，顺序反转（右往左）</td></tr>
+<tr><td><code>LV_FLEX_FLOW_ROW_WRAP_REVERSE</code></td><td>一行+换行+反转</td></tr>
+<tr><td><code>LV_FLEX_FLOW_COLUMN</code></td><td>排成一列，不换列</td></tr>
+<tr><td><code>LV_FLEX_FLOW_COLUMN_WRAP</code></td><td>排成一列，放不下自动换列</td></tr>
+<tr><td><code>LV_FLEX_FLOW_COLUMN_REVERSE</code></td><td>一列，顺序反转</td></tr>
+<tr><td><code>LV_FLEX_FLOW_COLUMN_WRAP_REVERSE</code></td><td>一列+换列+反转</td></tr>
+</table>
+
+<p>注意：子对象超出容器范围时，系统会自动启用滚动条（PDF 48.2.2 <span class="pg">PDF p.498</span>）——这反而是个便利，不用手动配滚动。</p>
+
+<h2>3. Flex 对齐、grow 与间隙</h2>
+
+<p>对齐是 Flex 的精华，一个函数管三处（PDF 48.2.4 <span class="pg">PDF p.502</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">lv_obj_set_flex_align(cont, main_place, cross_place, track_cross_place);</pre>
+
+<table>
+<tr><th>形参</th><th>含义</th><th>可用配置</th></tr>
+<tr><td><code>main_place</code></td><td>主轴上的对齐/空间分配</td><td>START / END / CENTER / SPACE_EVENLY / SPACE_AROUND / SPACE_BETWEEN</td></tr>
+<tr><td><code>cross_place</code></td><td>交叉轴对齐（子对象高低不一时最有用）</td><td>START / END / CENTER / 以及上面三种 SPACE</td></tr>
+<tr><td><code>track_cross_place</code></td><td>多条轨道（换行后）整体在交叉轴的位置</td><td>只能 START / END / CENTER</td></tr>
+</table>
+
+<p><code>SPACE_BETWEEN</code> 是"两端顶满、中间均分"，做"标题左 + 按钮右"的导航行神器；<code>SPACE_EVENLY</code> 是"所有空隙相等"。还有个增长利器 <code>lv_obj_set_flex_grow(obj, n)</code>（PDF 48.2.5 <span class="pg">PDF p.503</span>）：给子对象一个正整数，它会把主轴剩余空间按比例吃掉——比如 400px 剩余空间分给三个对象，grow 设为 1、1、2，则宽 100、100、200。grow 为 0 表示不参与分配。</p>
+
+<p>子对象之间要留缝，用间隙（PDF 48.2.7 <span class="pg">PDF p.504</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 行间距 10px，列间距 6px（在容器上设置） */</span>
+lv_obj_set_style_pad_row(cont, <span style="color:#098658">10</span>, <span style="color:#098658">0</span>);
+lv_obj_set_style_pad_column(cont, <span style="color:#098658">6</span>, <span style="color:#098658">0</span>);</pre>
+
+<h2>4. Grid：轨道与描述符数组</h2>
+
+<p>Grid 是二维的：先在容器上声明"行轨道、列轨道"，再把子对象放进指定单元格（PDF 49.1 <span class="pg">PDF p.505</span>）。轨道用描述符数组描述，最后一个元素必须是 <code>LV_GRID_TEMPLATE_LAST</code>：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 列：3 列，每列 1 份剩余空间（等分） */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_coord_t</span> col_dsc[] = { LV_GRID_FR(<span style="color:#098658">1</span>), LV_GRID_FR(<span style="color:#098658">1</span>), LV_GRID_FR(<span style="color:#098658">1</span>),
+                                LV_GRID_TEMPLATE_LAST };
+<span style="color:#008000">/* 行：3 行，每行 60px */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_coord_t</span> row_dsc[] = { <span style="color:#098658">60</span>, <span style="color:#098658">60</span>, <span style="color:#098658">60</span>, LV_GRID_TEMPLATE_LAST };
+
+<span style="color:#267F99">lv_obj_t</span> * cont = lv_obj_create(lv_scr_act());
+lv_obj_set_size(cont, <span style="color:#098658">280</span>, <span style="color:#098658">220</span>);
+lv_obj_center(cont);
+
+<span style="color:#008000">/* 把轨道描述符挂到容器样式上 */</span>
+lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, <span style="color:#098658">0</span>);
+lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, <span style="color:#098658">0</span>);
+
+<span style="color:#008000">/* 开启 Grid 布局（Flex/Grid 二选一，不能同时） */</span>
+lv_obj_set_layout(cont, LV_LAYOUT_GRID);</pre>
+
+<p>轨道大小除了写死像素，还有两个特殊值（PDF 49.2.3 <span class="pg">PDF p.505</span>）：</p>
+
+<ul>
+<li><code>LV_GRID_CONTENT</code>：轨道宽度 = 该列/行上最宽/最高的子对象</li>
+<li><code>LV_GRID_FR(x)</code>：按份数瓜分剩余空间，数字越大占得越多</li>
+</ul>
+
+<h2>5. Grid：把对象放进单元格</h2>
+
+<p>Grid 不像 Flex 那样自动流动——<strong>子对象不会自动进网格</strong>，必须显式告诉它"你在哪一格"（PDF 49.2.4 <span class="pg">PDF p.506</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">lv_obj_set_grid_cell(child,
+                     LV_GRID_ALIGN_STRETCH,  <span style="color:#008000">/* 列内对齐 */</span>
+                     col_pos,                 <span style="color:#008000">/* 列索引（从 0 开始） */</span>
+                     col_span,                <span style="color:#008000">/* 跨几列 */</span>
+                     LV_GRID_ALIGN_STRETCH,   <span style="color:#008000">/* 行内对齐 */</span>
+                     row_pos,                 <span style="color:#008000">/* 行索引 */</span>
+                     row_span);               <span style="color:#008000">/* 跨几行 */</span></pre>
+
+<p>列/行索引都从 0 开始：<code>col_pos=0, row_pos=0</code> 是第一格，<code>col_pos=2, row_pos=1</code> 是第二行最右。对齐配置有 <code>LV_GRID_ALIGN_START</code>（左上默认）、<code>LV_GRID_ALIGN_CENTER</code>（居中）、<code>LV_GRID_ALIGN_END</code>（右下）和 <code>LV_GRID_ALIGN_STRETCH</code>（拉满整格，最常用）。容器整体对齐用 <code>lv_obj_set_grid_align(cont, column_align, row_align)</code>，间隙同样用 <code>pad_row</code> / <code>pad_column</code>（PDF 49.2.5~49.2.7 <span class="pg">PDF p.507</span>）。</p>
+
+<div class="warn">
+  <p>⚠️ 两个高频翻车点：① <strong>忘了 <code>lv_obj_set_grid_cell</code></strong>——没指定单元格的子对象默认全挤在 (0,0) 那一格，叠成一坨；② <strong>同一个容器上既设 Flex 又设 Grid</strong>——布局是二选一，后设置的覆盖先设置的，界面会"突然变样"。</p>
+</div>
+
+<h2>代码示例 1：Flex 顶部导航栏</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">nav_bar_create</span><span style="color:#001080">(<span style="color:#267F99">lv_obj_t</span> * parent)</span>
+{
+    <span style="color:#008000">/* 导航容器：占满屏宽，高 44 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * nav = lv_obj_create(parent);
+    lv_obj_set_size(nav, LV_PCT(<span style="color:#098658">100</span>), <span style="color:#098658">44</span>);
+    lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_ROW);   <span style="color:#008000">/* 一行排开 */</span>
+    lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_CENTER,
+                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(nav, <span style="color:#098658">8</span>, <span style="color:#098658">0</span>);        <span style="color:#008000">/* 按钮之间留 8px */</span>
+
+    <span style="color:#008000">/* 左侧&quot;返回&quot;按钮：占剩余空间 1 份 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * back = lv_btn_create(nav);
+    lv_obj_set_flex_grow(back, <span style="color:#098658">1</span>);
+    <span style="color:#267F99">lv_obj_t</span> * back_lb = lv_label_create(back);
+    lv_label_set_text(back_lb, <span style="color:#A31515">&quot;&lt;&quot;</span>);
+    lv_obj_center(back_lb);
+
+    <span style="color:#008000">/* 中间标题：占 2 份，比按钮更宽 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * title = lv_btn_create(nav);
+    lv_obj_set_flex_grow(title, <span style="color:#098658">2</span>);
+    lv_obj_set_style_bg_color(title, lv_color_hex(<span style="color:#098658">0x1f4e8c</span>), LV_PART_MAIN);
+    <span style="color:#267F99">lv_obj_t</span> * title_lb = lv_label_create(title);
+    lv_label_set_text(title_lb, <span style="color:#A31515">&quot;主页&quot;</span>);
+    lv_obj_center(title_lb);
+
+    <span style="color:#008000">/* 右侧&quot;设置&quot;按钮：占 1 份 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * <span style="color:#795E26">set</span> = lv_btn_create(nav);
+    lv_obj_set_flex_grow(<span style="color:#795E26">set</span>, <span style="color:#098658">1</span>);
+    <span style="color:#267F99">lv_obj_t</span> * set_lb = lv_label_create(<span style="color:#795E26">set</span>);
+    lv_label_set_text(set_lb, <span style="color:#A31515">&quot;设置&quot;</span>);
+    lv_obj_center(set_lb);
+}</pre>
+
+<h2>代码示例 2：Grid 3×3 数字键盘</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">lv_obj_t</span> * display_label;
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">key_event_cb</span><span style="color:#001080">(<span style="color:#267F99">lv_event_t</span> * e)</span>
+{
+    <span style="color:#267F99">lv_obj_t</span> * btn = lv_event_get_target(e);
+    <span style="color:#267F99">const</span> <span style="color:#267F99">char</span> * txt = lv_label_get_text(lv_obj_get_child(btn, <span style="color:#098658">0</span>));
+    <span style="color:#008000">/* 把按下的数字追加显示 */</span>
+    lv_label_set_text_fmt(display_label, <span style="color:#A31515">&quot;%s%s&quot;</span>,
+                          lv_label_get_text(display_label), txt);
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">keypad_create</span><span style="color:#001080">(<span style="color:#267F99">lv_obj_t</span> * parent)</span>
+{
+    <span style="color:#008000">/* 顶部显示区 */</span>
+    display_label = lv_label_create(parent);
+    lv_obj_set_width(display_label, <span style="color:#098658">200</span>);
+    lv_obj_set_style_text_font(display_label, &amp;lv_font_montserrat_14, LV_PART_MAIN);
+    lv_label_set_text(display_label, <span style="color:#A31515">&quot;&quot;</span>);
+    lv_obj_align(display_label, LV_ALIGN_TOP_MID, <span style="color:#098658">0</span>, <span style="color:#098658">10</span>);
+
+    <span style="color:#008000">/* 键盘容器：3 列等分，4 行固定高 */</span>
+    <span style="color:#267F99">static</span> <span style="color:#267F99">lv_coord_t</span> col_dsc[] = { LV_GRID_FR(<span style="color:#098658">1</span>), LV_GRID_FR(<span style="color:#098658">1</span>), LV_GRID_FR(<span style="color:#098658">1</span>),
+                                    LV_GRID_TEMPLATE_LAST };
+    <span style="color:#267F99">static</span> <span style="color:#267F99">lv_coord_t</span> row_dsc[] = { <span style="color:#098658">50</span>, <span style="color:#098658">50</span>, <span style="color:#098658">50</span>, <span style="color:#098658">50</span>, LV_GRID_TEMPLATE_LAST };
+
+    <span style="color:#267F99">lv_obj_t</span> * kb = lv_obj_create(parent);
+    lv_obj_set_size(kb, <span style="color:#098658">200</span>, <span style="color:#098658">220</span>);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, <span style="color:#098658">0</span>, <span style="color:#098658">-10</span>);
+    lv_obj_set_style_grid_column_dsc_array(kb, col_dsc, <span style="color:#098658">0</span>);
+    lv_obj_set_style_grid_row_dsc_array(kb, row_dsc, <span style="color:#098658">0</span>);
+    lv_obj_set_style_pad_row(kb, <span style="color:#098658">6</span>, <span style="color:#098658">0</span>);        <span style="color:#008000">/* 行间隙 */</span>
+    lv_obj_set_style_pad_column(kb, <span style="color:#098658">6</span>, <span style="color:#098658">0</span>);     <span style="color:#008000">/* 列间隙 */</span>
+    lv_obj_set_layout(kb, LV_LAYOUT_GRID);
+
+    <span style="color:#008000">/* 0~9 + 清除，共 11 个键，最后一格留给&quot;删除&quot; */</span>
+    <span style="color:#267F99">const</span> <span style="color:#267F99">char</span> * keys[] = { <span style="color:#A31515">&quot;1&quot;</span>, <span style="color:#A31515">&quot;2&quot;</span>, <span style="color:#A31515">&quot;3&quot;</span>,
+                            <span style="color:#A31515">&quot;4&quot;</span>, <span style="color:#A31515">&quot;5&quot;</span>, <span style="color:#A31515">&quot;6&quot;</span>,
+                            <span style="color:#A31515">&quot;7&quot;</span>, <span style="color:#A31515">&quot;8&quot;</span>, <span style="color:#A31515">&quot;9&quot;</span>,
+                            <span style="color:#A31515">&quot;0&quot;</span>, <span style="color:#A31515">&quot;&lt;&quot;</span>, <span style="color:#A31515">&quot;C&quot;</span> };
+
+    <span style="color:#267F99">uint32_t</span> i;
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">12</span>; i++) {
+        <span style="color:#267F99">lv_obj_t</span> * btn = lv_btn_create(kb);
+        <span style="color:#008000">/* 放进 (i % 3, i / 3) 单元格，STRETCH 拉满 */</span>
+        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % <span style="color:#098658">3</span>, <span style="color:#098658">1</span>,
+                                  LV_GRID_ALIGN_STRETCH, i / <span style="color:#098658">3</span>, <span style="color:#098658">1</span>);
+        <span style="color:#267F99">lv_obj_t</span> * lb = lv_label_create(btn);
+        lv_label_set_text(lb, keys[i]);
+        lv_obj_center(lb);
+        lv_obj_add_event_cb(btn, key_event_cb, LV_EVENT_CLICKED, <span style="color:#098658">NULL</span>);
+    }
+}</pre>
+
+<p>小提示：<code>lv_label_get_text</code> 取子标签文本、<code>lv_obj_get_child(btn, 0)</code> 拿按钮里的第一个子对象——这是"从事件里拿按钮文字"的惯用套路。</p>
+
+<h2>动手练习（约 25 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 6.1：Flex 顶部导航栏（真机）</h3>
+  <p class="step">1️⃣ 照代码示例 1 建一个导航栏：返回按钮（grow=1）+ 标题（grow=2）+ 设置按钮（grow=1），烧录看效果。</p>
+  <p class="step">2️⃣ 把 <code>lv_obj_set_flex_align</code> 的 main_place 依次换成 <code>SPACE_BETWEEN</code>、<code>SPACE_EVENLY</code>、<code>END</code>，逐个烧录观察：grow 和 SPACE 系列谁优先？为什么？（提示：grow 会把剩余空间吃光，SPACE 就没有可分的空间了）</p>
+  <p class="step">3️⃣ 思考题：把容器宽度从 <code>LV_PCT(100)</code> 改成固定 200px，标题按钮会发生什么？试试再验证。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 6.2：Grid 数字键盘（真机）</h3>
+  <p class="step">1️⃣ 照代码示例 2 搭键盘，确认 12 个键各自落在正确的格子里（"C" 应该在右下角）。</p>
+  <p class="step">2️⃣ 改动三处看效果：a) 把列描述符改成 <code>{LV_GRID_FR(1), LV_GRID_FR(2), LV_GRID_FR(1), LAST}</code>——中间列变宽，键盘变成"大额头"；b) 把某一格的 align 从 STRETCH 改成 CENTER，看按钮变成"小方块居中"；c) 把 <code>pad_column</code> 调成 20，观察键之间缝隙变大。</p>
+  <p class="step">3️⃣ 给 "C" 键加逻辑：按下时清空显示（提示：在回调里判断文本是不是 "C"）。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. Flex 和 Grid 的本质区别是？</p>
+  <p class="opt">A. Flex 快，Grid 慢，性能差异大</p>
+  <p class="opt">B. Flex 是一维排布，Grid 是二维表格</p>
+  <p class="opt">C. Flex 只能横排，Grid 只能竖排</p>
+  <details><summary>查看答案</summary><div class="answer">B。Flex 一次只处理一个维度（行或列），Grid 同时处理行列（PDF p.497）。</div></details>
+
+  <p class="q">Q2. 想让 Flex 子对象按 1:2:1 瓜分剩余宽度，用哪个函数？</p>
+  <p class="opt">A. lv_obj_set_flex_align 三个对象各传不同值</p>
+  <p class="opt">B. lv_obj_set_flex_grow 分别传 1、2、1</p>
+  <p class="opt">C. lv_obj_set_style_pad_column 传不同值</p>
+  <details><summary>查看答案</summary><div class="answer">B。grow 按比例分配剩余空间（PDF p.503）；pad 只调间隙。</div></details>
+
+  <p class="q">Q3. Grid 里忘了调用 lv_obj_set_grid_cell 的子对象会怎样？</p>
+  <p class="opt">A. 自动按顺序流入下一个空单元格</p>
+  <p class="opt">B. 被布局忽略，留在屏幕左上角</p>
+  <p class="opt">C. 全部叠在 (0,0) 第一个单元格里</p>
+  <details><summary>查看答案</summary><div class="answer">C。Grid 不自动放子对象，默认位置都是 (0,0)，会叠成一坨（PDF p.506）。</div></details>
+
+  <p class="q">Q4. 描述符数组 {100, LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST} 表示什么？</p>
+  <p class="opt">A. 两列：第一列 100px，第二列占满剩余</p>
+  <p class="opt">B. 一列：宽 100px 并自动缩放适配</p>
+  <p class="opt">C. 两列：各占 50px 和 100px</p>
+  <details><summary>查看答案</summary><div class="answer">A。三个元素（含 LAST 结束符）即两列轨道，FR(1) 吃剩余空间（PDF p.505）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《LVGL 开发指南 V1.5》第四十八章（Flex，PDF p.497~504）和第四十九章（Grid，PDF p.505~508）——本课全部依据</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/layouts/flex.html">LVGL 官方文档 Flex（v8.3）</a>——Flex flow / Flex align / Flex grow 三节，附交互示例</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/layouts/grid.html">LVGL 官方文档 Grid（v8.3）</a>——Grid descriptors / Grid items 两节，讲清 FR 与 span</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：<a href="0007-basic-widgets.html">第 7 课：基础控件</a>——label、btn、btnmatrix、checkbox、switch 五块"砖"，搭一个设置页雏形。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0005-timers-and-animations.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0007-basic-widgets.html">下一课：基础控件 →</a>
+</nav>
+
+
+
+</div>
+</body>
+</html>

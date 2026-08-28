@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 12 课：真机实战：WAV 播放器 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 12 课</nav>
+
+<h1>第 12 课：真机实战：WAV 播放器</h1>
+<p class="subtitle">不新增硬件，把工程现成的 DAC 波形机制改造成一台 SD 卡点唱机（工程扩展课）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>第 11 课你认识了 WAV 的 RIFF 结构，这一课动手把它播出来。核心思路一句话：<strong>复用工程里的 DAC + TIM6 + DMA 波形播放机制，把"数学波表"换成"SD 卡里的 PCM 数据"</strong>。学完你能：解析 WAV 头、按采样率配置定时器、把 8/16 位 PCM 转成 12 位 DAC 缓冲、用 DMA 双缓冲实现流畅播放，并做出播放/暂停/停止控制。（预计 45~50 分钟）</p>
+</div>
+
+<h2>1. 设计总览：从 SD 卡到喇叭要过几道门</h2>
+
+<p>整个链路就三步，和工程已有的波形功能几乎一一对应：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># SD 卡侧 (FATFS)</span>
+x.wav ──f_open/f_read──► PCM 字节流 (8 位 或 16 位, 小端)
+
+<span style="color:#008000"># 转换: PCM ──► 12 位无符号 DMA 样本</span>
+8 位:  sample &lt;&lt; 4            <span style="color:#008000">// 0..255 → 0..4080</span>
+16 位: (sample &gt;&gt; 4) + 2048   <span style="color:#008000">// ±32767 → 0..4095</span>
+
+<span style="color:#008000"># 播放: DAC + TIM6 + DMA  (和 wave_lib 完全同款)</span>
+g_wav_buf[] ──DMA1_Stream5──► DAC1 CH1 (PA4)
+TIM6 TRGO 触发, 更新频率 = 采样率 ──► 每个样本播一次</pre>
+
+<p>对比一下就会发现，我们只是把 <code>wave_lib.c</code> 里"生成 1024 点数学波形"这一步，换成了"从 SD 卡读 PCM 并转格式"。其余硬件链路一根线都不用动。</p>
+
+<h2>2. 复用工程的 DAC 波形机制（先读 BSP\wave_lib.c）</h2>
+
+<p>打开 <code>BSP/WAVE_LIB/wave_lib.c</code>，你会看到这套现成机制，四个关键事实（务必核对，后面代码全靠它）：</p>
+
+<table>
+<tr><th>事实</th><th>证据（源码位置）</th></tr>
+<tr><td>DAC 用 <strong>通道 1，引脚 PA4</strong></td><td><code>Core/Src/dac.c</code>：<code>DAC_TRIGGER_T6_TRGO</code>，PA4 = DAC_OUT1</td></tr>
+<tr><td><strong>TIM6 触发采样</strong>，不是软件轮询</td><td>dac.c 里 DAC 触发源 = TIM6 TRGO</td></tr>
+<tr><td>DMA 是 <strong>字宽（32 位）循环模式</strong></td><td>dac.c：<code>DMA1_Stream5 / Channel7</code>，<code>DMA_CIRCULAR</code>，word 对齐</td></tr>
+<tr><td>样本格式 <strong>12 位右对齐</strong></td><td><code>wave_lib.c</code>：<code>HAL_DAC_Start_DMA(..., DAC_ALIGN_12B_R)</code>，缓冲是 <code>uint32_t g_wave_cur[1024]</code></td></tr>
+</table>
+
+<p>再看 <code>Wave_SetFreq()</code> 的频率逻辑（<span class="pg">wave_lib.c:76</span>）：TIM6 时钟 72MHz，更新频率 = 72M / ((PSC+1)×(ARR+1))。它把更新频率设成 <code>hz × 1024</code>，缓冲正好 1024 点，所以 <strong>每 1024 个样本转一圈 = 一个完整波形周期</strong>，输出波形频率就是 <code>hz</code>。</p>
+
+<p>🎯 这给我们的启发：<strong>播放 WAV 时把 TIM6 更新频率直接设成采样率</strong>（每触发一次播一个样本），DMA 循环跑完一整圈的时间 = 缓冲长度 ÷ 采样率，就是这段声音的真实时长。</p>
+
+<div class="tip">
+  <p>💡 <strong>DMA 双缓冲的"免费午餐"：</strong>DMA 循环模式自带 Half Transfer（半区完成）和 Transfer Complete（整圈完成）两个中断点。你只要在这两个中断里往"下一半"缓冲塞数据，播放就不中断——这就是教科书里的 <strong>双缓冲（double buffering）</strong>，工程不用改 DMA 配置就天然支持。</p>
+</div>
+
+<h2>3. 代码①：解析 WAV 头部（找 fmt 和 data）</h2>
+
+<p>第 11 课讲过 RIFF 的 chunk 结构，这里按规矩逐块扫描——因为 <code>fmt</code> 和 <code>data</code> 中间可能夹着 <code>LIST</code>、<code>fact</code> 等可选块，靠"固定偏移"读很容易翻车。注意 <code>fmt</code> 可能带扩展（size 大于 16 字节），要跳过：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 1) WAV 头解析: RIFF / fmt / data ===== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">pragma</span> pack(1)</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint16_t</span> format;    <span style="color:#008000">/* 1 = PCM 线性编码 */</span>
+    <span style="color:#267F99">uint16_t</span> channels;  <span style="color:#008000">/* 1 = 单声道, 2 = 立体声 */</span>
+    <span style="color:#267F99">uint32_t</span> rate;      <span style="color:#008000">/* 采样率: 8000 / 22050 / 44100 ... */</span>
+    <span style="color:#267F99">uint32_t</span> byte_rate; <span style="color:#008000">/* 每秒字节数 = rate * block_align */</span>
+    <span style="color:#267F99">uint16_t</span> block_align;
+    <span style="color:#267F99">uint16_t</span> bits;      <span style="color:#008000">/* 8 位 / 16 位 */</span>
+} WavFmt;
+<span style="color:#267F99">#<span style="color:#0000FF">pragma</span> pack()</span>
+
+<span style="color:#267F99">static</span> FIL g_file;           <span style="color:#008000">/* FATFS 文件对象 */</span>
+<span style="color:#267F99">static</span> WavFmt g_fmt;
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> g_data_left; <span style="color:#008000">/* data 块还剩多少字节没播 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint8_t</span>  g_playing;   <span style="color:#008000">/* 播放中标志 */</span>
+
+<span style="color:#008000">/* 打开 WAV, 成功后文件指针停在 data 数据区开头 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> <span style="color:#795E26">wav_open</span><span style="color:#001080">(<span style="color:#267F99">const</span> <span style="color:#267F99">char</span> *path)</span>
+{
+    BYTE hdr[<span style="color:#098658">12</span>], ck[<span style="color:#098658">8</span>];
+    UINT br;
+
+    <span style="color:#0000FF">if</span> (f_open(&amp;g_file, path, FA_READ) != FR_OK) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+    <span style="color:#0000FF">if</span> (f_read(&amp;g_file, hdr, <span style="color:#098658">12</span>, &amp;br) != FR_OK || br != <span style="color:#098658">12</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+    <span style="color:#0000FF">if</span> (<span style="color:#795E26">memcmp</span>(hdr, <span style="color:#A31515">&quot;RIFF&quot;</span>, <span style="color:#098658">4</span>) != <span style="color:#098658">0</span> || <span style="color:#795E26">memcmp</span>(hdr + <span style="color:#098658">8</span>, <span style="color:#A31515">&quot;WAVE&quot;</span>, <span style="color:#098658">4</span>) != <span style="color:#098658">0</span>)
+        <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;   <span style="color:#008000">/* 不是 RIFF/WAVE 文件 */</span>
+
+    <span style="color:#0000FF">for</span> (;;) {   <span style="color:#008000">/* 逐块扫描: fmt 和 data 之间可能有 LIST/fact 等块 */</span>
+        <span style="color:#0000FF">if</span> (f_read(&amp;g_file, ck, <span style="color:#098658">8</span>, &amp;br) != FR_OK || br != <span style="color:#098658">8</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+        <span style="color:#267F99">uint32_t</span> sz = (<span style="color:#267F99">uint32_t</span>)ck[<span style="color:#098658">4</span>]        | ((<span style="color:#267F99">uint32_t</span>)ck[<span style="color:#098658">5</span>] &lt;&lt; <span style="color:#098658">8</span>) |
+                      ((<span style="color:#267F99">uint32_t</span>)ck[<span style="color:#098658">6</span>] &lt;&lt; <span style="color:#098658">16</span>) | ((<span style="color:#267F99">uint32_t</span>)ck[<span style="color:#098658">7</span>] &lt;&lt; <span style="color:#098658">24</span>);
+        <span style="color:#0000FF">if</span> (<span style="color:#795E26">memcmp</span>(ck, <span style="color:#A31515">&quot;fmt &quot;</span>, <span style="color:#098658">4</span>) == <span style="color:#098658">0</span>) {
+            <span style="color:#0000FF">if</span> (sz &lt; <span style="color:#098658">16</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+            <span style="color:#0000FF">if</span> (f_read(&amp;g_file, &amp;g_fmt, <span style="color:#098658">16</span>, &amp;br) != FR_OK || br != <span style="color:#098658">16</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+            <span style="color:#0000FF">if</span> (sz &gt; <span style="color:#098658">16</span>) f_lseek(&amp;g_file, f_tell(&amp;g_file) + (sz - <span style="color:#098658">16</span>)); <span style="color:#008000">/* 跳扩展 */</span>
+        } <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (<span style="color:#795E26">memcmp</span>(ck, <span style="color:#A31515">&quot;data&quot;</span>, <span style="color:#098658">4</span>) == <span style="color:#098658">0</span>) {
+            g_data_left = sz;
+            <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;   <span style="color:#008000">/* 文件指针正好停在声音数据开头 */</span>
+        } <span style="color:#0000FF">else</span> {
+            f_lseek(&amp;g_file, f_tell(&amp;g_file) + sz);   <span style="color:#008000">/* 跳过未知块 */</span>
+        }
+    }
+}</pre>
+
+<p>小端序是 WAV 的硬规矩：<code>sz</code> 的低字节在前，所以拼装顺序是 <code>ck[4] | ck[5]&lt;&lt;8 | ck[6]&lt;&lt;16 | ck[7]&lt;&lt;24</code>，别写反。</p>
+
+<h2>4. 代码②：按采样率配置定时器</h2>
+
+<p>把 <code>wave_lib.c</code> 的 PSC/ARR 动态计算照抄一份，唯一的区别是目标频率直接等于 <code>nSamplesPerSec</code>（而不是 hz×1024）。这样每个 TIM6 更新事件正好触发一次 DAC 采样：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 2) 采样率 → TIM6 分频 (沿用 wave_lib 的动态 PSC/ARR 思路) ===== */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">wav_set_rate</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> fs)</span>
+{
+    <span style="color:#008000">/* TIM6 时钟 72MHz, 更新频率 = 72M / ((PSC+1)*(ARR+1)) */</span>
+    <span style="color:#267F99">uint32_t</span> div = <span style="color:#098658">72000000</span> / fs;
+    <span style="color:#0000FF">if</span> (div &lt; <span style="color:#098658">1</span>) div = <span style="color:#098658">1</span>;
+
+    <span style="color:#267F99">uint32_t</span> psc_div = (div + <span style="color:#098658">65535</span>) / <span style="color:#098658">65536</span>;  <span style="color:#008000">/* 让 ARR 不超 16 位上限 */</span>
+    <span style="color:#0000FF">if</span> (psc_div &lt; <span style="color:#098658">1</span>) psc_div = <span style="color:#098658">1</span>;
+
+    <span style="color:#267F99">uint32_t</span> psc = psc_div - <span style="color:#098658">1</span>;
+    <span style="color:#267F99">uint32_t</span> arr = div / psc_div;
+    <span style="color:#0000FF">if</span> (arr &gt; <span style="color:#098658">1</span>) arr--; <span style="color:#0000FF">else</span> arr = <span style="color:#098658">0</span>;
+
+    __HAL_TIM_SET_PRESCALER(&amp;htim6, psc);
+    __HAL_TIM_SET_AUTORELOAD(&amp;htim6, arr);
+}</pre>
+
+<p>验证一下：8kHz 时 <code>div = 72M/8000 = 9000</code>，<code>psc=0, arr=8999</code>，更新频率正好 8kHz；44.1kHz 时 <code>div = 1632</code>，也精确落在 16 位范围内。</p>
+
+<h2>5. 代码③：PCM → 12 位缓冲 + 双缓冲填充</h2>
+
+<p>DAC 只认 12 位无符号整数，所以无论文件是 8 位还是 16 位，都要先换算（见第 1 节公式）。这一节把"读 SD 卡 + 换算 + 填半区"打包成一个函数，两个 DMA 回调各填一个半区：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 3) PCM → 12 位 DAC 缓冲 + 双缓冲填充 ===== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> WAV_BUF_SAMPLES  2048              <span style="color:#008000">/* DMA 总样本数 (uint32) */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> WAV_BUF_HALF     (WAV_BUF_SAMPLES / 2)</span>
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> g_wav_buf[WAV_BUF_SAMPLES]; <span style="color:#008000">/* DMA 源: 12 位右对齐 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint8_t</span>  g_pcm[WAV_BUF_HALF * <span style="color:#098658">2</span>];    <span style="color:#008000">/* PCM 中转区 */</span>
+
+<span style="color:#008000">/* 从 SD 卡读一段 PCM, 转成 12 位样本填进第 half 个半区 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> <span style="color:#795E26">wav_fill_half</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> half)</span>
+{
+    <span style="color:#0000FF">if</span> (g_data_left == <span style="color:#098658">0</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;         <span style="color:#008000">/* 播完了 */</span>
+
+    <span style="color:#267F99">uint32_t</span> need = (g_fmt.bits == <span style="color:#098658">8</span>) ? WAV_BUF_HALF : WAV_BUF_HALF * <span style="color:#098658">2</span>;
+    <span style="color:#0000FF">if</span> (need &gt; g_data_left) need = g_data_left;
+
+    UINT br;
+    <span style="color:#0000FF">if</span> (f_read(&amp;g_file, g_pcm, need, &amp;br) != FR_OK) <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+    g_data_left -= br;
+
+    <span style="color:#267F99">uint32_t</span> *dst = g_wav_buf + half * WAV_BUF_HALF;
+    <span style="color:#267F99">uint32_t</span> n = (g_fmt.bits == <span style="color:#098658">8</span>) ? br : br / <span style="color:#098658">2</span>;
+
+    <span style="color:#0000FF">for</span> (<span style="color:#267F99">uint32_t</span> i = <span style="color:#098658">0</span>; i &lt; n; i++) {
+        <span style="color:#0000FF">if</span> (g_fmt.bits == <span style="color:#098658">8</span>) {
+            dst[i] = (<span style="color:#267F99">uint32_t</span>)(g_pcm[i] &lt;&lt; <span style="color:#098658">4</span>);   <span style="color:#008000">/* 8 位: 0..255 → 0..4080 */</span>
+        } <span style="color:#0000FF">else</span> {
+            <span style="color:#267F99">int16_t</span> v = (<span style="color:#267F99">int16_t</span>)((g_pcm[i*<span style="color:#098658">2</span>+<span style="color:#098658">1</span>] &lt;&lt; <span style="color:#098658">8</span>) | g_pcm[i*<span style="color:#098658">2</span>]);
+            dst[i] = (<span style="color:#267F99">uint32_t</span>)((v &gt;&gt; <span style="color:#098658">4</span>) + <span style="color:#098658">2048</span>);  <span style="color:#008000">/* 16 位: ±32767 → 0..4095 */</span>
+        }
+    }
+    <span style="color:#008000">/* 不足半区时用最后一个样本填满, 防止循环回绕出爆音 */</span>
+    <span style="color:#0000FF">if</span> (n &gt; <span style="color:#098658">0</span>) {
+        <span style="color:#267F99">uint32_t</span> last = dst[n - <span style="color:#098658">1</span>];
+        <span style="color:#0000FF">for</span> (<span style="color:#267F99">uint32_t</span> i = n; i &lt; WAV_BUF_HALF; i++) dst[i] = last;
+    }
+    <span style="color:#0000FF">return</span> br;
+}</pre>
+
+<div class="tip">
+  <p>💡 <strong>8 位 vs 16 位的换算口诀：</strong>8 位无符号往左挪 4 位（255→4080），16 位有符号往右挪 4 位再加 2048 偏置（把 -32768..32767 整个平移到 0..4095 上）。两个方向都能恰好填满 12 位，一个"浪费"高 4 位、一个"利用"高 4 位——本质都是把波形搬进 DAC 的满量程。</p>
+</div>
+
+<h2>6. 代码④：播放控制 + DMA 回调</h2>
+
+<p>最后一步把前面的零件组装起来。注意回调是 HAL 的 <code>__weak</code> 空函数，工程里直接重写同名函数即可（和工程覆写 <code>BSP_SD_Init</code> 一个套路）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 4) 播放 / 暂停 / 停止 + DMA 回调 ===== */</span>
+<span style="color:#267F99">int</span> <span style="color:#795E26">Wav_Play</span><span style="color:#001080">(<span style="color:#267F99">const</span> <span style="color:#267F99">char</span> *path)</span>
+{
+    <span style="color:#0000FF">if</span> (wav_open(path) != <span style="color:#098658">0</span>) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+    <span style="color:#0000FF">if</span> (g_fmt.format != <span style="color:#098658">1</span> || (g_fmt.bits != <span style="color:#098658">8</span> &amp;&amp; g_fmt.bits != <span style="color:#098658">16</span>)) <span style="color:#0000FF">return</span> <span style="color:#098658">-2</span>;
+
+    wav_set_rate(g_fmt.rate);       <span style="color:#008000">/* 定时器频率 = 采样率 */</span>
+    wav_fill_half(<span style="color:#098658">0</span>);               <span style="color:#008000">/* 先预填两个半区再启动 */</span>
+    wav_fill_half(<span style="color:#098658">1</span>);
+
+    g_playing = <span style="color:#098658">1</span>;
+    HAL_DAC_Start_DMA(&amp;hdac, DAC_CHANNEL_1, g_wav_buf,
+                      WAV_BUF_SAMPLES, DAC_ALIGN_12B_R);
+    HAL_TIM_Base_Start(&amp;htim6);
+    <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">Wav_Pause</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>  { g_playing = <span style="color:#098658">0</span>; HAL_TIM_Base_Stop(&amp;htim6); }
+<span style="color:#267F99">void</span> <span style="color:#795E26">Wav_Resume</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span> { g_playing = <span style="color:#098658">1</span>; HAL_TIM_Base_Start(&amp;htim6); }
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">Wav_Stop</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    g_playing = <span style="color:#098658">0</span>;
+    HAL_TIM_Base_Stop(&amp;htim6);
+    HAL_DAC_Stop_DMA(&amp;hdac, DAC_CHANNEL_1);
+    <span style="color:#0000FF">if</span> (g_file.fs) f_close(&amp;g_file);   <span style="color:#008000">/* 释放文件句柄 */</span>
+}
+
+<span style="color:#008000">/* DMA 循环: 半区0 放完 → HalfCplt, 半区1 放完 → Cplt */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">HAL_DAC_ConvHalfCpltCallbackCh1</span><span style="color:#001080">(DAC_HandleTypeDef *hdac)</span>
+{
+    (<span style="color:#267F99">void</span>)hdac;
+    <span style="color:#0000FF">if</span> (g_playing) wav_fill_half(<span style="color:#098658">0</span>);   <span style="color:#008000">/* 后台补半区0 */</span>
+}
+<span style="color:#267F99">void</span> <span style="color:#795E26">HAL_DAC_ConvCpltCallbackCh1</span><span style="color:#001080">(DAC_HandleTypeDef *hdac)</span>
+{
+    (<span style="color:#267F99">void</span>)hdac;
+    <span style="color:#0000FF">if</span> (g_playing) wav_fill_half(<span style="color:#098658">1</span>);   <span style="color:#008000">/* 后台补半区1 */</span>
+}</pre>
+
+<p>双缓冲的时间账要算清楚（<span class="pg">工程 RAM 预算</span>）：<code>g_wav_buf</code> 2048×4 = 8KB，加上 <code>g_pcm</code> 2KB，共 10KB，对 F407 的 192KB RAM 很轻松。44.1kHz 时半区 1024 个样本 ≈ 23ms，SDIO 4 线读 2KB 通常几毫秒——窗口充裕。</p>
+
+<div class="warn">
+  <p>⚠️ <strong>在 DMA 中断里直接 f_read 是"够用就好"的做法：</strong>中断里做文件系统调用有风险（可重入、优先级、阻塞时长）。严谨的做法是在回调里只置一个"该填数据"的 flag，在主循环或 FreeRTOS 任务里填充。本课示例为了最短路径选择直接调用，你上真机如果遇到爆音/卡顿，第一件事就是把它挪到任务里。另外本代码按<strong>单声道</strong>写：立体声请先做左右声道平均再填缓冲，否则一个样本帧的 4 字节会被拆错位。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 12.1：让 F407 唱出第一个 WAV</h3>
+  <p class="step">1️⃣ 用 Audacity / 在线工具 / Python 生成一个 8kHz、8 位、单声道的 WAV（比如 1 秒 440Hz 正弦波），复制到 SD 卡根目录。</p>
+  <p class="step">2️⃣ 在工程里加 <code>wav_player.c/h</code>，把本课 4 段代码组装好，<code>main()</code> 里先 <code>SD_Mount()</code> 再 <code>Wav_Play("0:/test.wav")</code>。</p>
+  <p class="step">3️⃣ 用示波器或耳机听 PA4 输出，确认音高、时长都对。把采样率从 8k 换成 22.05k 再生成一次，验证播放速度是否随之变化。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 12.2：串口打印 WAV 参数</h3>
+  <p class="step">1️⃣ 在 <code>wav_open()</code> 成功后加一行 <code>printf</code>，把 <code>format/channels/rate/bits/data_size</code> 全打出来。</p>
+  <p class="step">2️⃣ 用十六进制工具（HxD 或 VS Code Hex 插件）手动解析同一文件，验证程序读到的值和文件字节对得上（小端序！）。</p>
+  <p class="step">3️⃣ 思考：如果采样率 44100、16 位、立体声、时长 3 分钟，data 块该多大？用 <code>byte_rate</code> 验证一下你的估算。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 工程里 Wave_SetFreq(hz) 把 TIM6 更新频率设成 hz×1024，意味着什么？</p>
+  <p class="opt">A. 每 1024 次转换输出一个完整波形周期，波形频率 = hz</p>
+  <p class="opt">B. 采样率被固定成 1024Hz，和波形内容无关</p>
+  <p class="opt">C. 1024 是 DAC 的位数，与频率毫无关系</p>
+  <p class="opt">D. TIM6 每 1024 微秒才触发一次采样</p>
+  <details><summary>查看答案</summary><div class="answer">A。缓冲 1024 点、TIM6 频率 = hz×1024，所以一圈 = 1/hz 秒，波形频率 = hz（wave_lib.c:76）。</div></details>
+
+  <p class="q">Q2. 播放 WAV 时，TIM6 的更新频率应该设成多少？</p>
+  <p class="opt">A. 固定 1024Hz，与文件无关</p>
+  <p class="opt">B. 固定 72MHz 定时器时钟</p>
+  <p class="opt">C. 等于 WAV 头的采样率 nSamplesPerSec</p>
+  <p class="opt">D. 等于声道数乘以采样率</p>
+  <details><summary>查看答案</summary><div class="answer">C。每触发一次播一个样本，更新频率必须等于采样率，声音才不走样。</div></details>
+
+  <p class="q">Q3. 16 位有符号 PCM 要喂给 12 位无符号 DAC，正确做法是？</p>
+  <p class="opt">A. 直接赋值，自动丢弃低 4 位即可</p>
+  <p class="opt">B. 右移 4 位后再加 2048 偏置</p>
+  <p class="opt">C. 左移 4 位后取绝对值</p>
+  <p class="opt">D. 除以 16 四舍五入就够了</p>
+  <details><summary>查看答案</summary><div class="answer">B。±32767 → (v&gt;&gt;4)+2048 → 0..4095，覆盖 12 位满量程。</div></details>
+
+  <p class="q">Q4. 双缓冲（HalfCplt/Cplt 回调后台补数据）解决的核心问题是？</p>
+  <p class="opt">A. 把采样率上限提高一倍</p>
+  <p class="opt">B. 避免 SD 卡读取阻塞导致播放断流</p>
+  <p class="opt">C. 让程序更省 RAM 内存</p>
+  <p class="opt">D. 让 WAV 支持立体声播放</p>
+  <details><summary>查看答案</summary><div class="answer">B。一边播一边往另一半塞数据，播放与读卡并行，不卡顿。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 《WAV 文件格式分析与应用》全文——第 11 课教材，本课 WAV 结构依据（fmt/data 子块、PCM 采样布局）</li>
+<li>🔧 工程源码：<code>BSP/WAVE_LIB/wave_lib.c</code>、<code>Core/Src/dac.c</code>、<code>Core/Src/tim.c</code>——本课全部复用对象</li>
+<li>🎵 Audacity / sox——生成测试 WAV 的免费工具</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 13 课——从 WAV 走进 JPEG 世界，先搞懂 DCT 与量化这两个有损压缩的心脏。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0011-riff-and-wav.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0013-jpeg-principles-dct.html">下一课：JPEG 原理：DCT 与量化 →</a>
+</nav>
+
+</div>
+</body>
+</html>

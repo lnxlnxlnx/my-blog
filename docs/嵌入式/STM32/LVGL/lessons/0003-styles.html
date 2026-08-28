@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 3 课：样式系统 — LVGL 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 3 课</nav>
+
+<h1>第 3 课：样式系统</h1>
+<p class="subtitle">让方块变好看：lv_style_t、部件组成、状态、本地样式 vs 全局样式、样式叠加</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课的界面还是灰扑扑的方块，这一课给它们"穿衣服"。学完你能用普通样式（共用）和本地样式（针对）两种方式美化对象，理解部件分"部分"、样式分"状态"，并做出"按下变色的按钮"和"圆角卡片"。</p>
+</div>
+
+<h2>1. 样式是什么（6.4 总览）</h2>
+
+<p>样式（Style）就是对象的外观：背景、边框、阴影、文字颜色、圆角……LVGL 的样式系统深受 CSS 启发（PDF 6.4 节 <span class="pg">PDF p.89</span>），它有 7 个特点，记住这 4 条最常用的：</p>
+
+<ul>
+<li>样式用 <code>lv_style_t</code> 变量保存，一个样式里可以打包多种属性（背景色、边框宽、阴影色……）</li>
+<li>同一个样式可以被<strong>任意多个对象共用</strong>——这就是"普通样式"的威力</li>
+<li>样式可以<strong>级联</strong>：一个对象可以叠加多个样式；多个样式都设置了同一属性时，<strong>最后设置的生效</strong></li>
+<li>没设置的属性可以从<strong>父对象继承</strong>（比如文本颜色）</li>
+</ul>
+
+<p>另外两条先记住结论：样式可以指定"某个部分 + 某个状态"才生效（下面两节细讲）；本地样式的优先级比普通样式高。</p>
+
+<h2>2. 两种设置方法：普通样式与本地样式（6.4.1）</h2>
+
+<h3>2.1 普通样式：一套"样式套装"到处用</h3>
+
+<p>适合界面里大量"长得一样"的控件。流程是：定义变量 → 初始化 → 设置属性 → 添加到对象（PDF 6.4.1 <span class="pg">PDF p.89</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">lv_style_t</span> style_btn;                                  <span style="color:#008000">/* 1. 定义样式变量（建议 static 或全局） */</span>
+lv_style_init(&amp;style_btn);                                    <span style="color:#008000">/* 2. 初始化样式 */</span>
+lv_style_set_bg_color(&amp;style_btn, lv_color_hex(<span style="color:#098658">0x115588</span>));    <span style="color:#008000">/* 3. 设置背景色 */</span>
+lv_style_set_bg_opa(&amp;style_btn, LV_OPA_50);                   <span style="color:#008000">/* 设置背景透明度 50% */</span>
+lv_style_set_border_width(&amp;style_btn, <span style="color:#098658">2</span>);                     <span style="color:#008000">/* 设置边框宽度 */</span>
+lv_style_set_border_color(&amp;style_btn, lv_color_black());      <span style="color:#008000">/* 设置边框颜色 */</span>
+
+<span style="color:#008000">/* 4. 添加到对象：两个按钮共用一套样式 */</span>
+<span style="color:#267F99">lv_obj_t</span> * obj1 = lv_obj_create(lv_scr_act());
+lv_obj_add_style(obj1, &amp;style_btn, LV_STATE_DEFAULT);
+
+<span style="color:#267F99">lv_obj_t</span> * obj2 = lv_obj_create(lv_scr_act());
+lv_obj_add_style(obj2, &amp;style_btn, LV_STATE_DEFAULT);</pre>
+
+<h3>2.2 本地样式：直接往对象身上贴</h3>
+
+<p>适合"这个控件长得特殊"的场景，设置简单、针对性强，函数格式是 <code>lv_obj_set_style_xxx</code>：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> * obj = lv_obj_create(lv_scr_act());
+<span style="color:#008000">/* 第三个参数是&quot;状态及部分选择器&quot;，这里指默认状态下生效 */</span>
+lv_obj_set_style_bg_color(obj, lv_color_red(), LV_STATE_DEFAULT);</pre>
+
+<div class="tip">
+  <p>💡 记忆口诀：<strong>普通样式 lv_style_set_xxx 先定义后共享；本地样式 lv_obj_set_style_xxx 直接贴。</strong>两者属性名几乎一一对应，记住关键词（bg_color、border_width、radius、shadow_width……）就能互相翻译。</p>
+</div>
+
+<h2>3. 部件组成：一个控件拆成几块（6.4.2）</h2>
+
+<p>复杂部件可以拆成多个"部分（Part）"，每个部分单独设置样式（PDF 6.4.2 <span class="pg">PDF p.90</span>）。完整的部分枚举：</p>
+
+<table>
+<tr><th>枚举</th><th>含义</th><th>典型部件</th></tr>
+<tr><td><code>LV_PART_MAIN</code></td><td>主体（背景矩形）</td><td>所有部件</td></tr>
+<tr><td><code>LV_PART_SCROLLBAR</code></td><td>滚动条</td><td>可滚动容器</td></tr>
+<tr><td><code>LV_PART_INDICATOR</code></td><td>指示器（已填充部分）</td><td>进度条、滑块</td></tr>
+<tr><td><code>LV_PART_KNOB</code></td><td>旋钮</td><td>滑块</td></tr>
+<tr><td><code>LV_PART_SELECTED</code></td><td>选中框</td><td>文本选择</td></tr>
+<tr><td><code>LV_PART_ITEMS</code></td><td>相同成分（单元格）</td><td>表格、矩阵</td></tr>
+<tr><td><code>LV_PART_TICKS</code></td><td>刻度</td><td>仪表、标尺</td></tr>
+<tr><td><code>LV_PART_CURSOR</code></td><td>光标</td><td>文本区域</td></tr>
+</table>
+
+<p>拿滑块举例：它拆成主体背景（MAIN）、指示器（INDICATOR）、旋钮（KNOB）三块。想单独给指示器上色：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> * slider = lv_slider_create(lv_scr_act());
+<span style="color:#008000">/* 注意第三个参数换成了 LV_PART_INDICATOR —— 只改指示器，其余部分不动 */</span>
+lv_obj_set_style_bg_color(slider, lv_color_hex(<span style="color:#098658">0xff0000</span>), LV_PART_INDICATOR);</pre>
+
+<h2>4. 状态：样式什么时候生效（6.4.3）</h2>
+
+<p>状态（State）描述对象的"处境"：按着、选中、聚焦、禁用……（PDF 6.4.3 <span class="pg">PDF p.91</span>）。完整的状态表：</p>
+
+<table>
+<tr><th>状态</th><th>含义</th></tr>
+<tr><td><code>LV_STATE_DEFAULT</code></td><td>正常状态（兜底，几乎必设）</td></tr>
+<tr><td><code>LV_STATE_CHECKED</code></td><td>切换/选中（开关、勾选框）</td></tr>
+<tr><td><code>LV_STATE_FOCUSED</code></td><td>被触摸/键盘聚焦</td></tr>
+<tr><td><code>LV_STATE_FOCUS_KEY</code></td><td>被键盘/编码器聚焦</td></tr>
+<tr><td><code>LV_STATE_EDITED</code></td><td>被编码器编辑中</td></tr>
+<tr><td><code>LV_STATE_PRESSED</code></td><td>正在被按下</td></tr>
+<tr><td><code>LV_STATE_SCROLLED</code></td><td>正在滚动</td></tr>
+<tr><td><code>LV_STATE_DISABLED</code></td><td>禁用（不响应交互）</td></tr>
+</table>
+
+<p>状态有两大用途：一是<strong>指定样式在哪个状态下生效</strong>（"按下变红"就是给 PRESSED 状态单独设颜色）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">lv_obj_t</span> * btn = lv_btn_create(lv_scr_act());
+lv_obj_set_style_bg_color(btn, lv_color_hex(<span style="color:#098658">0x2196F3</span>), LV_STATE_DEFAULT);  <span style="color:#008000">/* 平时蓝色 */</span>
+lv_obj_set_style_bg_color(btn, lv_color_hex(<span style="color:#098658">0xff0000</span>), LV_STATE_PRESSED);  <span style="color:#008000">/* 按下变红 */</span></pre>
+
+<p>二是手动添加/清除状态（配合选中、禁用逻辑）：<code>lv_obj_add_state(obj, LV_STATE_CHECKED)</code> / <code>lv_obj_clear_state(obj, LV_STATE_CHECKED)</code>。</p>
+
+<div class="warn">
+  <p>⚠️ <strong>样式"不生效"的头号原因</strong>：selector（第三个参数）写错。忘了写 <code>LV_STATE_DEFAULT</code> 兜底、或者只给 PRESSED 设了色而 DEFAULT 没设，都会看到"样式没反应"。排查时先问：这个样式挂在哪个部分、哪个状态下？</p>
+</div>
+
+<h2>5. 常用样式属性速览（6.4.4）</h2>
+
+<p>完整属性有几十个（PDF 6.4.4 <span class="pg">PDF p.92~108</span>），日常开发高频的是这几组，函数名 = <code>lv_obj_set_style_</code> 或 <code>lv_style_set_</code> + 属性名：</p>
+
+<table>
+<tr><th>分组</th><th>常用属性</th><th>说明</th></tr>
+<tr><td>背景</td><td><code>bg_color</code> <code>bg_opa</code><br><code>bg_grad_color</code> <code>bg_grad_dir</code></td><td>背景色、透明度；渐变（方向 LV_GRAD_DIR_HOR/VER）</td></tr>
+<tr><td>边框</td><td><code>border_width</code> <code>border_color</code><br><code>border_opa</code> <code>border_side</code></td><td>边框在主体之外；可只画一侧</td></tr>
+<tr><td>阴影</td><td><code>shadow_width</code> <code>shadow_color</code><br><code>shadow_ofs_x</code> <code>shadow_ofs_y</code> <code>shadow_opa</code></td><td>阴影在轮廓之外，像"悬浮"效果</td></tr>
+<tr><td>填充</td><td><code>pad_top/bottom/left/right</code></td><td>父对象内侧留白，把子对象往里推</td></tr>
+<tr><td>圆角</td><td><code>radius</code></td><td>0 直角，数值越大越圆；超大值=胶囊</td></tr>
+<tr><td>文本</td><td><code>text_color</code> <code>text_font</code> <code>text_opa</code></td><td>文字颜色、字体、透明度</td></tr>
+<tr><td>变换</td><td><code>translate_x</code> <code>translate_y</code><br><code>transform_width</code> <code>transform_zoom</code> <code>transform_angle</code></td><td>按下时位移/变宽/缩放/旋转的"动效"，常用于 PRESSED 状态</td></tr>
+</table>
+
+<p>颜色用 <code>lv_color_hex(0xRRGGBB)</code> 或调色板 <code>lv_palette_main(LV_PALETTE_BLUE)</code>；透明度用 <code>LV_OPA_10</code>~<code>LV_OPA_100</code> 或 0~255 整数。</p>
+
+<h2>代码示例 1：按钮按下变色（完整版）</h2>
+
+<p>把本课知识串成一个完整按钮：默认蓝色、按下变红、附带按压缩放动效。注意 PRESSED 状态还有 <code>translate_y</code>——按下时按钮"陷下去"2 像素，手感立刻高级：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 普通样式：按钮套装 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_style_t</span> style_btn_def;
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_style_t</span> style_btn_pressed;
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_demo_btn_style</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 默认状态样式：蓝色圆角按钮 */</span>
+    lv_style_init(&amp;style_btn_def);
+    lv_style_set_bg_color(&amp;style_btn_def, lv_color_hex(<span style="color:#098658">0x2196F3</span>));
+    lv_style_set_bg_opa(&amp;style_btn_def, LV_OPA_100);
+    lv_style_set_radius(&amp;style_btn_def, <span style="color:#098658">8</span>);              <span style="color:#008000">/* 圆角 8px */</span>
+    lv_style_set_border_width(&amp;style_btn_def, <span style="color:#098658">2</span>);
+    lv_style_set_border_color(&amp;style_btn_def, lv_color_hex(<span style="color:#098658">0x0D47A1</span>));
+    lv_style_set_shadow_width(&amp;style_btn_def, <span style="color:#098658">6</span>);        <span style="color:#008000">/* 阴影 */</span>
+    lv_style_set_shadow_color(&amp;style_btn_def, lv_color_hex(<span style="color:#098658">0x0D47A1</span>));
+    lv_style_set_shadow_ofs_y(&amp;style_btn_def, <span style="color:#098658">3</span>);
+
+    <span style="color:#008000">/* 按下状态样式：变红 + 往下沉 2px（只覆盖需要的属性） */</span>
+    lv_style_init(&amp;style_btn_pressed);
+    lv_style_set_bg_color(&amp;style_btn_pressed, lv_color_hex(<span style="color:#098658">0xF44336</span>));
+    lv_style_set_translate_y(&amp;style_btn_pressed, <span style="color:#098658">2</span>);
+
+    <span style="color:#008000">/* 创建按钮并挂样式 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * btn = lv_btn_create(lv_scr_act());
+    lv_obj_add_style(btn, &amp;style_btn_def, LV_STATE_DEFAULT);
+    lv_obj_add_style(btn, &amp;style_btn_pressed, LV_STATE_PRESSED);
+
+    lv_obj_align(btn, LV_ALIGN_CENTER, <span style="color:#098658">0</span>, <span style="color:#098658">0</span>);
+    lv_obj_set_size(btn, <span style="color:#098658">160</span>, <span style="color:#098658">60</span>);
+
+    <span style="color:#008000">/* 按钮上放个文字标签（第 5 课会细讲 label） */</span>
+    <span style="color:#267F99">lv_obj_t</span> * label = lv_label_create(btn);
+    lv_label_set_text(label, <span style="color:#A31515">&quot;点我&quot;</span>);
+    lv_obj_center(label);
+}
+
+<span style="color:#008000">/* 观察：按住不放变红并下沉，松开恢复蓝色 —— 这就是&quot;状态驱动样式&quot; */</span></pre>
+
+<h2>代码示例 2：圆角卡片（普通样式 + 本地样式混合）</h2>
+
+<p>卡片是仪表盘/列表页的常客：白底、圆角、细边框、柔和阴影。这里演示"普通样式管公共部分，本地样式管个性部分"：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 卡片通用样式：所有卡片共用 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">lv_style_t</span> style_card;
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lvgl_demo_card</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    lv_style_init(&amp;style_card);
+    lv_style_set_bg_color(&amp;style_card, lv_color_hex(<span style="color:#098658">0xFFFFFF</span>));
+    lv_style_set_radius(&amp;style_card, <span style="color:#098658">12</span>);                     <span style="color:#008000">/* 大圆角 */</span>
+    lv_style_set_border_width(&amp;style_card, <span style="color:#098658">1</span>);
+    lv_style_set_border_color(&amp;style_card, lv_color_hex(<span style="color:#098658">0xE0E0E0</span>));
+    lv_style_set_shadow_width(&amp;style_card, <span style="color:#098658">10</span>);               <span style="color:#008000">/* 柔和阴影 */</span>
+    lv_style_set_shadow_ofs_x(&amp;style_card, <span style="color:#098658">2</span>);
+    lv_style_set_shadow_ofs_y(&amp;style_card, <span style="color:#098658">4</span>);
+    lv_style_set_shadow_opa(&amp;style_card, LV_OPA_30);
+    lv_style_set_pad_all(&amp;style_card, <span style="color:#098658">12</span>);                    <span style="color:#008000">/* 内边距，子对象被往里推 */</span>
+
+    <span style="color:#008000">/* 卡片 1：普通卡片，纯公共样式 */</span>
+    <span style="color:#267F99">lv_obj_t</span> * card1 = lv_obj_create(lv_scr_act());
+    lv_obj_add_style(card1, &amp;style_card, LV_STATE_DEFAULT);
+    lv_obj_set_size(card1, <span style="color:#098658">200</span>, <span style="color:#098658">80</span>);
+    lv_obj_align(card1, LV_ALIGN_TOP_MID, <span style="color:#098658">0</span>, <span style="color:#098658">20</span>);
+
+    <span style="color:#008000">/* 卡片 2：普通样式打底 + 本地样式个性化（换个背景色和圆角） */</span>
+    <span style="color:#267F99">lv_obj_t</span> * card2 = lv_obj_create(lv_scr_act());
+    lv_obj_add_style(card2, &amp;style_card, LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(card2, lv_color_hex(<span style="color:#098658">0xE3F2FD</span>), LV_STATE_DEFAULT); <span style="color:#008000">/* 本地样式覆盖 */</span>
+    lv_obj_set_style_radius(card2, <span style="color:#098658">6</span>, LV_STATE_DEFAULT);
+    lv_obj_set_size(card2, <span style="color:#098658">200</span>, <span style="color:#098658">80</span>);
+    lv_obj_align(card2, LV_ALIGN_BOTTOM_MID, <span style="color:#098658">0</span>, <span style="color:#098658">-20</span>);
+
+    <span style="color:#008000">/* 卡片 2 里放一个子对象：验证 pad_all 把子对象推进去 12px */</span>
+    <span style="color:#267F99">lv_obj_t</span> * child = lv_obj_create(card2);
+    lv_obj_set_size(child, <span style="color:#098658">60</span>, <span style="color:#098658">30</span>);
+    lv_obj_set_pos(child, <span style="color:#098658">0</span>, <span style="color:#098658">0</span>);   <span style="color:#008000">/* 坐标 (0,0)，但因为 pad，实际显示在 (12,12) */</span>
+}
+
+<span style="color:#008000">/* 观察：card2 的背景色和圆角被本地样式&quot;覆盖&quot;，但边框、阴影仍来自公共样式 */</span></pre>
+
+<div class="tip">
+  <p>💡 样式叠加的真相：多个样式 + 本地样式叠在同一对象上时，<strong>本地样式优先级最高，其次是后添加的样式</strong>。card2 就是"公共样式打底 + 本地样式微调"，这是真实项目最常用的组合拳。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 3.1：按钮按下变色（完整版）</h3>
+  <p class="step">1️⃣ 按代码示例 1 写出完整的按钮样式函数，烧录观察：默认蓝色、按下红色、松开复原。</p>
+  <p class="step">2️⃣ 把按下的样式改成"红色 + transform_width 变大 10px"，观察按下时按钮"涨大"的效果；再试试 <code>transform_zoom</code>（注意 256 表示不缩放）。</p>
+  <p class="step">3️⃣ 给按钮加第三个状态：<code>LV_STATE_CHECKED</code> 设成绿色。用 <code>lv_obj_add_state(btn, LV_STATE_CHECKED)</code> 手动加上这个状态，观察颜色变化——状态是"可以叠加"的。</p>
+  <p class="step">4️⃣ 思考：为什么 checked 的绿色能盖住默认的蓝色？它俩同时存在时哪个优先级高？（提示：状态有先后顺序，PRESSED &gt; CHECKED &gt; DEFAULT）</p>
+</div>
+
+<div class="practice">
+  <h3>练习 3.2：圆角卡片</h3>
+  <p class="step">1️⃣ 按代码示例 2 搭两张卡片，验证"公共样式 + 本地样式覆盖"。</p>
+  <p class="step">2️⃣ 把 <code>style_card</code> 的 <code>radius</code> 从 12 改成 40 再烧录，观察卡片变"胶囊"；给卡片 1 也加 <code>lv_obj_set_style_radius(card1, 0, ...)</code> 看本地样式怎么覆盖公共样式。</p>
+  <p class="step">3️⃣ 给卡片加渐变背景：<code>bg_grad_color</code> + <code>bg_grad_dir</code>（LV_GRAD_DIR_HOR/VER），再试 <code>bg_grad_stop</code> 改变渐变起点，观察渐变形状变化。</p>
+  <p class="step">4️⃣ 挑战：用 <code>lv_style_set_border_side(&style_card, LV_BORDER_SIDE_BOTTOM)</code> 只画底边框，配合阴影做一个"底部高亮条"风格的卡片。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 两个按钮要共用同一套样式，正确做法是？</p>
+  <p class="opt">A. 两个按钮各写一份本地样式</p>
+  <p class="opt">B. 定义一个 lv_style_t，lv_obj_add_style 都挂它</p>
+  <p class="opt">C. 把样式宏定义在头文件里</p>
+  <details><summary>查看答案</summary><div class="answer">B。普通样式（lv_style_t）天生就是"共享套装"，一份样式挂任意多个对象（PDF p.89）。</div></details>
+
+  <p class="q">Q2. 滑块只想把"已填充部分"变红，selector 参数该写？</p>
+  <p class="opt">A. LV_STATE_PRESSED</p>
+  <p class="opt">B. LV_PART_MAIN</p>
+  <p class="opt">C. LV_PART_INDICATOR</p>
+  <details><summary>查看答案</summary><div class="answer">C。LV_PART_INDICATOR 是滑块的指示器部分；LV_PART_MAIN 是整体背景。</div></details>
+
+  <p class="q">Q3. "按下变红"效果应该怎么写？</p>
+  <p class="opt">A. 背景色设到 LV_STATE_DEFAULT 状态</p>
+  <p class="opt">B. 背景色设到 LV_STATE_PRESSED 状态</p>
+  <p class="opt">C. 背景色设到 LV_PART_SCROLLBAR 部分</p>
+  <details><summary>查看答案</summary><div class="answer">B。PRESSED 状态只在按下时激活，松开自动恢复默认样式（PDF p.91）。</div></details>
+
+  <p class="q">Q4. 一个对象同时挂了两个样式，都设置了 bg_color，最终显示？</p>
+  <p class="opt">A. 先添加的那个样式生效</p>
+  <p class="opt">B. 后添加的那个样式生效</p>
+  <p class="opt">C. 两种颜色混合显示</p>
+  <details><summary>查看答案</summary><div class="answer">B。样式可以级联，同一属性由最后设置的生效（PDF p.89）；本地样式又优先于普通样式。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《LVGL 开发指南 V1.5》第 6.4 节（样式属性，<span class="pg">PDF p.89~108</span>）——样式设置方法、组成部分、状态、全部样式属性的图例</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/overview/style.html">LVGL 官方文档：Style（v8.3）</a>——样式的 CSS 类比与完整属性清单</li>
+<li>🌐 <a href="https://docs.lvgl.io/8.3/overview/style-props.html">LVGL 官方文档：Style properties（v8.3）</a>——每个属性的单位、默认值、适用部分，写样式时的速查表</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：<a href="0004-events-and-interaction.html">第 4 课：事件与交互</a>——让界面"活"起来：点按钮有反应，按滑块有变化。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0002-objects-and-screens.html">← 上一课：对象系统</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0004-events-and-interaction.html">下一课：事件与交互 →</a>
+</nav>
+
+
+
+</div>
+</body>
+</html>

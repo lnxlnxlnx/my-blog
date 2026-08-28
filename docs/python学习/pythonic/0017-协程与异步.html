@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0017 · 协程与异步 asyncio</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>协程与异步 asyncio</h1>
+<p class="meta">Pythonic 代码 · 课程 0017 · 预计 25 分钟</p>
+
+<p>你学过多线程(0014)知道「IO 等待能并发」。但线程有开销、有锁。<strong>异步(asyncio)</strong> 用<strong>协程(coroutine)</strong>在<strong>单线程内</strong>实现并发:一个任务在「等 IO」时把控制权让出去,另一个任务接着跑,像一张很多人的合作表。本课讲清 asyncio 的思维与基本用法。</p>
+
+<h2>先校正一个常见误解</h2>
+<p>异步<strong>不是</strong>多线程,它是<strong>单线程事件循环</strong>。好处:没有锁、没有线程切换开销、能开海量「连接」。代价:你的 IO 必须用「异步版本」的函数(不能直接套同步的 time.sleep / requests.get)。这也是「yield/生成器」在上一课打的基础——协程就是这个思想的正式化。</p>
+
+<h2>知识点 1:async / await——协程函数</h2>
+<p><code>async def</code> 定义协程函数;调用它<strong>不执行函数体</strong>,而是返回一个协程对象;真正跑要靠事件循环。<code>await</code> 等一个异步操作完成,同时把控制权让回事件循环:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">asyncio</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">hello</span><span style="color: #000">():</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;开始&quot;</span><span style="color: #000">)</span>
+    <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>     <span style="color: #008000"># 等 1 秒(异步版 sleep,期间让出控制权)</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;结束&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #008000"># 要真正运行,用 asyncio.run</span>
+<span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">hello</span><span style="color: #000">())</span>           <span style="color: #008000"># 开始 ... (1秒) ... 结束</span>
+</pre>
+<p>要点:<code>await</code> 只能在 <code>async def</code> 里用;<code>asyncio.sleep</code> 是异步版 sleep。想跑一个协程用 <code>asyncio.run(...)</code>。</p>
+
+<h2>知识点 2:并发跑一堆任务——asyncio.gather</h2>
+<p>像线程池 <code>Executor.map</code> 一样,<code>asyncio.gather</code> 并发地跑多个协程并收集结果:<code>gather</code> 时间 ≈ 最慢的一个,而不是相加。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">asyncio</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fetch</span><span style="color: #000">(</span><span style="color: #001080">i</span><span style="color: #000">):</span>
+    <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>     <span style="color: #008000"># 假装网络请求</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">i</span> <span style="color: #000">*</span> <span style="color: #098658">10</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">main</span><span style="color: #000">():</span>
+    <span style="color: #001080">results</span> <span style="color: #000">=</span> <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">gather</span><span style="color: #000">(</span><span style="color: #001080">fetch</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">),</span> <span style="color: #001080">fetch</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">),</span> <span style="color: #001080">fetch</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">))</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">results</span><span style="color: #000">)</span>             <span style="color: #008000"># [10, 20, 30] —— 3 个各等 1 秒,1 秒完成</span>
+
+<span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">main</span><span style="color: #000">())</span>
+</pre>
+<p><code>gather(*coros)</code> 并发等全部完成、按顺序返回结果。三个 sleep 1 秒的并发 ≈ 1 秒,不是 3 秒。</p>
+
+<h2>知识点 3:更 Pythonic 的并发——asyncio 版 HttpClient</h2>
+<p>真实网络请求要「异步版」的 HTTP 库。标准库 <code>urllib</code> 是同步的;第三方 <code>aiohttp</code> 才是异步版本(已经帮你装了)。并发抓多个 URL:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">asyncio</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">aiohttp</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">get</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">):</span>
+    <span style="color: #00F">async</span> <span style="color: #00F">with</span> <span style="color: #001080">aiohttp</span><span style="color: #000">.</span><span style="color: #001080">ClientSession</span><span style="color: #000">()</span> <span style="color: #00F">as</span> <span style="color: #001080">s</span><span style="color: #000">:</span>
+        <span style="color: #00F">async</span> <span style="color: #00F">with</span> <span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">r</span><span style="color: #000">:</span>
+            <span style="color: #00F">return</span> <span style="color: #001080">r</span><span style="color: #000">.</span><span style="color: #001080">status</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">main</span><span style="color: #000">():</span>
+    <span style="color: #001080">urls</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;https://httpbin.org/get&quot;</span> <span style="color: #00F">for</span> <span style="color: #001080">_</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)]</span>
+    <span style="color: #001080">statuses</span> <span style="color: #000">=</span> <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">gather</span><span style="color: #000">(*(</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #001080">u</span><span style="color: #000">)</span> <span style="color: #00F">for</span> <span style="color: #001080">u</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">urls</span><span style="color: #000">))</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">statuses</span><span style="color: #000">)</span>            <span style="color: #008000"># [200, 200, 200, 200, 200]</span>
+
+<span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">main</span><span style="color: #000">())</span>
+</pre>
+<p>注意 <code>async with</code> 是「异步上下文管理器」,对应同步的 <code>with</code>。一句话区分:<code>requests</code>=同步、<code>aiohttp</code>=异步,想并发抓取用 aiohttp + asyncio。</p>
+
+<h2>知识点 4:超时与并行数量控制(基础用法)</h2>
+<p>异步记得设超时免得挂死;并发太多也用 <code>asyncio.Semaphore</code> 限制同时数量:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">asyncio</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">slow</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">):</span>
+    <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">)</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">x</span>
+
+<span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">main</span><span style="color: #000">():</span>
+    <span style="color: #008000"># 超时:超过 0.5 秒就抛 TimeoutError</span>
+    <span style="color: #00F">try</span><span style="color: #000">:</span>
+        <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">wait_for</span><span style="color: #000">(</span><span style="color: #001080">slow</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">),</span> <span style="color: #001080">timeout</span><span style="color: #000">=</span><span style="color: #098658">0.5</span><span style="color: #000">)</span>
+    <span style="color: #00F">except</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">TimeoutError</span><span style="color: #000">:</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;超时了&quot;</span><span style="color: #000">)</span>
+
+    <span style="color: #008000"># 同时最多 2 个</span>
+    <span style="color: #001080">sem</span> <span style="color: #000">=</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">Semaphore</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">)</span>
+    <span style="color: #00F">async</span> <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">limited</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">):</span>
+        <span style="color: #00F">async</span> <span style="color: #00F">with</span> <span style="color: #001080">sem</span><span style="color: #000">:</span>
+            <span style="color: #00F">return</span> <span style="color: #00F">await</span> <span style="color: #001080">slow</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">)</span>
+    <span style="color: #001080">rs</span> <span style="color: #000">=</span> <span style="color: #00F">await</span> <span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">gather</span><span style="color: #000">(*(</span><span style="color: #001080">limited</span><span style="color: #000">(</span><span style="color: #001080">i</span><span style="color: #000">)</span> <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">)))</span>
+
+<span style="color: #001080">asyncio</span><span style="color: #000">.</span><span style="color: #001080">run</span><span style="color: #000">(</span><span style="color: #001080">main</span><span style="color: #000">())</span>
+</pre>
+<p><code>wait_for(coro, timeout)</code> 限时;<code>Semaphore(n)</code> 限并发数。这两招加上 gather 就能处理绝大多数基础异步 IO 需求。</p>
+
+<h2>知识点 5:何时用异步、何时别用</h2>
+<ul>
+  <li><strong>适合</strong>:大量网络/数据库/IO 等待、长连接、Web 服务(能扛海量并发连接)</li>
+  <li><strong>不适合</strong>:纯计算(和 GIL 一样不会并行)、代码到处都是同步阻塞调用(混着会很别扭)</li>
+  <li>从「同步 repo 改造」第一步:把 time.sleep、requests.get 换成 asyncio.sleep、aiohttp</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">asyncio 并发靠什么实现?</p>
+  <button class="opt" data-ok="true">单线程事件循环</button>
+  <button class="opt" data-ok="false">多线程抢占</button>
+  <button class="opt" data-ok="false">多进程调度</button>
+  <button class="opt" data-ok="false">锁机制</button>
+  <p class="reveal">asyncio 是单线程事件循环,靠协程在等待时让出控制权实现并发。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">定义协程函数用哪个关键字?</p>
+  <button class="opt" data-ok="false">def plain</button>
+  <button class="opt" data-ok="true">async def</button>
+  <button class="opt" data-ok="false">yield def</button>
+  <button class="opt" data-ok="false">gen def</button>
+  <p class="reveal">async def 定义协程;await 在里面等异步操作。def 是普通函数。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">并发跑一堆协程并收集结果,用?</p>
+  <button class="opt" data-ok="false">asyncio.run 多次</button>
+  <button class="opt" data-ok="true">asyncio.gather</button>
+  <button class="opt" data-ok="false">threading.join</button>
+  <button class="opt" data-ok="false">Process.map</button>
+  <p class="reveal">gather(*coros) 并发等全部完成并按序收集结果,像 Executor.map。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">异步版本 HTTP 库是?</p>
+  <button class="opt" data-ok="false">requests</button>
+  <button class="opt" data-ok="true">aiohttp</button>
+  <button class="opt" data-ok="false">urllib</button>
+  <button class="opt" data-ok="false">httplib</button>
+  <p class="reveal">requests/urllib 同步;aiohttp 异步,配合 asyncio 并发抓取。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0017_协程与异步.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写一个 async 函数;用 asyncio.run 跑;观察 asyncio.sleep 让出控制权</li>
+  <li><strong>练习 B</strong>:用 asyncio.gather 并发跑 3 个 sleep 任务,对比耗时;加 wait_for 超时</li>
+  <li><strong>练习 C</strong>:用 aiohttp 并发抓几个 URL(需联网);梳理一个「并发 vs 多线程 vs 异步」对照表</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方教程「<a href="https://docs.python.org/zh-cn/3/library/asyncio.html">asyncio</a>」</strong>的「协程与任务」一节,和 <strong>aiohttp 官方文档(<a href="https://docs.aiohttp.org/en/stable/">英文</a>)</strong>的快速上手。异步第一次接触难免绕,先跑通 gather 的例子再谈深入。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:async with 和 gather 用起来顺吗?下一课进入<strong>元编程</strong>——那些「写代码的代码」,比如装饰器工厂、动态生成属性、类加工。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0016-生成器与迭代协议.html">← 上一篇:生成器与迭代协议</a>
+  <a href="index.html">课程地图</a>
+  <a href="0018-元编程.html">下一篇:元编程:写代码的代码 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

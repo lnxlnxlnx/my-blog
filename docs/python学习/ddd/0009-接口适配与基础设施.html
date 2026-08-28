@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0009 · 接口适配与基础设施</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>接口适配层与基础设施层</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0009 · 预计 25 分钟</p>
+
+<p>最外两层的收尾:① <strong>接口适配层(Interface Adapters)</strong>——接收/回应用户的<strong>控制器(controller)</strong>与数据传输对象 <strong>DTO</strong>;② <strong>基础设施层(Infrastructure)</strong>——<strong>仓储(repository)实现</strong>、持久化模型、外部适配器。本课把这两层拼完,你的六边形就完整了。</p>
+
+<h2>知识点 1:控制器——入口,把请求转成命令/查询</h2>
+<p>控制器是接收外部输入的地方(HTTP 路由、CLI、事件都用它)。它<strong>不做业务</strong>,只做三件事:解析输入、转成命令/查询、交给应用服务,再把结果包成响应:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UserController</span><span style="color: #000">:</span>                       <span style="color: #008000"># 接口适配层</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">bus</span><span style="color: #000">:</span> <span style="color: #001080">CommandBus</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">bus</span> <span style="color: #000">=</span> <span style="color: #001080">bus</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">create_user</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">request</span><span style="color: #000">):</span>
+        <span style="color: #001080">email</span> <span style="color: #000">=</span> <span style="color: #001080">request</span><span style="color: #000">[</span><span style="color: #A31515">&quot;email&quot;</span><span style="color: #000">]</span>            <span style="color: #008000"># 解析</span>
+        <span style="color: #001080">cmd</span> <span style="color: #000">=</span> <span style="color: #001080">CreateUserCommand</span><span style="color: #000">(</span><span style="color: #001080">email</span><span style="color: #000">=</span><span style="color: #001080">email</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">=</span><span style="color: #001080">request</span><span style="color: #000">[</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">])</span>  <span style="color: #008000"># 转命令</span>
+        <span style="color: #001080">user_id</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">bus</span><span style="color: #000">.</span><span style="color: #001080">execute</span><span style="color: #000">(</span><span style="color: #001080">cmd</span><span style="color: #000">)</span>     <span style="color: #008000"># 交给应用层</span>
+        <span style="color: #00F">return</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">:</span> <span style="color: #001080">user_id</span><span style="color: #000">}</span>              <span style="color: #008000"># 返回响应</span>
+</pre>
+<p>控制器不该懂领域规则,它只是"翻译官"——把外部世界翻译成命令/查询,再把结果翻回去。业务逻辑一点不在这层。</p>
+
+<h2>知识点 2:DTO——跨边界的"传输壳"</h2>
+<p>DTO(Data Transfer Object)是<strong>明确为传输而设的数据对象</strong>,别把实体/值对象直接丢出边界(会泄漏领域内部)。分两种:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 请求 DTO:进来的输入壳</span>
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">CreateUserRequestDTO</span><span style="color: #000">:</span>
+    <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">name</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+
+<span style="color: #008000"># 响应 DTO:出去的输出壳(不暴露内部 id/wallet 等)</span>
+<span style="color: #AF00DB">@dataclass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UserResponseDTO</span><span style="color: #000">:</span>
+    <span style="color: #0070C1">id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+    <span style="color: #001080">email</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span>
+</pre>
+<p>重要原则:值对象/实体<strong>不要放进 DTO/事件/数据库模型</strong>——跨传输前先序列化成基本类型(项目明确警告,回顾 0004)。DTO 是边界的"快递盒",领域对象是"货物",出去前要打包。</p>
+
+<h2>知识点 3:仓储 Repository——端口还是实现?</h2>
+<p>仓库分两层角色:<strong>端口</strong>(领域层声明的接口,0008 讲过)和<strong>实现</strong>(基础设施层)。数据映射发生在实现处:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 端口(在应用/领域层)</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UserRepository</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">)</span> <span style="color: #000">-&gt;</span> <span style="color: #00F">None</span><span style="color: #000">:</span> <span style="color: #000">...</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">find_by_id</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">)</span> <span style="color: #000">-&gt;</span> <span style="color: #A31515">&quot;User | None&quot;</span><span style="color: #000">:</span> <span style="color: #000">...</span>
+
+<span style="color: #008000"># 实现(在基础设施层):负责 领域对象 ↔ 持久化行 的转换</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SqlUserRepository</span><span style="color: #000">(</span><span style="color: #001080">UserRepository</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">find_by_id</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">):</span>
+        <span style="color: #001080">row</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">db</span><span style="color: #000">.</span><span style="color: #001080">query_one</span><span style="color: #000">(</span><span style="color: #A31515">&quot;SELECT * FROM users WHERE id = ?&quot;</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">)</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">row</span> <span style="color: #AF00DB">is</span> <span style="color: #00F">None</span><span style="color: #000">:</span> <span style="color: #00F">return</span> <span style="color: #00F">None</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">User</span><span style="color: #000">(</span><span style="color: #0070C1">id</span><span style="color: #000">=</span><span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">],</span> <span style="color: #001080">email</span><span style="color: #000">=</span><span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;email&quot;</span><span style="color: #000">]))</span>   <span style="color: #008000"># 行→领域</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">db</span><span style="color: #000">.</span><span style="color: #001080">execute</span><span style="color: #000">(</span><span style="color: #A31515">&quot;INSERT ... &quot;</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">id</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">email</span><span style="color: #000">.</span><span style="color: #001080">value</span><span style="color: #000">)</span>  <span style="color: #008000"># 领域→行</span>
+</pre>
+<p>仓储的唯一职责本来是"按聚合根存取";注意查询(读)可绕过仓储直查库(0007),这是项目的取舍。别把仓储变成"万能数据访问层"。</p>
+
+<h2>知识点 4:持久化模型 vs 领域模型</h2>
+<p>数据库的表结构(持久化模型)和领域模型<strong>不必相同</strong>。项目建议:领域实体按"业务逻辑建模",持久化时再映射到 DB schema;不要让领域去向数据库妥协。说白了——<em>领域数据该为业务建模,不是为表建模</em>(<a href="https://martinfowler.com/bliki/AnemicDomainModel.html">对比贫血模型</a>)。</p>
+
+<h2>知识点 5:基础设施里还装什么</h2>
+<p>除仓储实现外,基础设施层还放:外部 API 客户端、消息队列发送方、发邮件、日志落地等"适配器"。它们都是端口的实现,依赖注入进应用/领域层。至此六边形完整闭环:控制器→应用服务→领域,数据经由端口/适配器进出,依赖始终向内。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">控制器该不该含业务规则?</p>
+  <button class="opt" data-ok="false">应该</button>
+  <button class="opt" data-ok="true">不该</button>
+  <button class="opt" data-ok="false">看心情</button>
+  <button class="opt" data-ok="false">全是规则</button>
+  <p class="reveal">控制器只做翻译:解析输入→转命令/查询→交应用层,不含业务规则。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">DTO 里能不能直接放实体?</p>
+  <button class="opt" data-ok="false">可以</button>
+  <button class="opt" data-ok="true">应该序列化</button>
+  <button class="opt" data-ok="false">只能放实体</button>
+  <button class="opt" data-ok="false">随便放</button>
+  <p class="reveal">跨传输/序列化前先把领域对象转基本类型,别裸漏实体/值对象出边界。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">领域对象 ↔ 数据库行 的转换在哪?</p>
+  <button class="opt" data-ok="false">控制器</button>
+  <button class="opt" data-ok="true">仓储实现</button>
+  <button class="opt" data-ok="false">事件总线</button>
+  <button class="opt" data-ok="false">值对象</button>
+  <p class="reveal">仓储实现(基础设施层)负责领域对象与持久化行互转。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">领域模型与 DB 表结构?</p>
+  <button class="opt" data-ok="false">必须相同</button>
+  <button class="opt" data-ok="true">不必相同</button>
+  <button class="opt" data-ok="false">领域迁就表</button>
+  <button class="opt" data-ok="false">从不映射</button>
+  <p class="reveal">领域实体按业务建模,持久化时映射到 DB,不必与表结构相同。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0009_接口适配与基础设施.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写 UserController(解析→命令→bus)+ 请求/响应 DTO</li>
+  <li><strong>练习 B</strong>:写 SqlUserRepository 实现 save/find_by_id,含领域↔行映射</li>
+  <li><strong>练习 C</strong>:把练习 0008 的 Fake repo 换成你的 Sql repo,写一个带假 DB 的测试</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Interface Adapters(Controllers/DTOs)</strong> 与 <strong>Infrastructure layer(Repositories/Persistence)</strong> 两小节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:六边形那几层你串起来了吗?最后一课<strong>实战拆项目 + 何时别过度设计</strong>,我们把你整个 repo(或这个项目)当靶子拆一遍。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0008-端口适配器与依赖注入.html">← 上一篇:端口 Ports 与适配器 + 依赖注入</a>
+  <a href="index.html">课程地图</a>
+  <a href="0010-实战拆项目与何时别过度设计.html">下一篇:实战拆项目与何时别过度设计 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

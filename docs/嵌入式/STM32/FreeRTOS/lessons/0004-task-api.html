@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 4 课：任务 API 实战 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 4 课</nav>
+
+<h1>第 4 课：任务 API 实战</h1>
+<p class="subtitle">xTaskCreate、vTaskDelete、xTaskCreateStatic、vTaskSuspend/vTaskResume 全套上手</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>把第 3 课的概念落到代码。学完你能不看手册写出动态创建/删除、静态创建、挂起/恢复任务的完整代码，并清楚每个 API 的参数、返回值、配置开关（INCLUDE_xxx）和内存责任归属——尤其是"谁的内存谁来释放"这条铁律。两个真机实验：按键删任务、按键挂起/恢复任务。</p>
+</div>
+
+<h2>1. xTaskCreate：动态创建任务</h2>
+
+<p>最常用的创建方式：TCB 和任务栈都由 FreeRTOS 从堆（heap_4）里自动分配（PDF 第 6.1 节 <span class="pg">PDF p.90</span>）。前提：FreeRTOSConfig.h 里 <code>configSUPPORT_DYNAMIC_ALLOCATION</code> = 1（默认开），工程里加了 heap_x.c。创建成功后任务<strong>立刻进入就绪态</strong>，由调度器决定何时运行。</p>
+
+<p>六个形参逐一拆解：</p>
+
+<table>
+<tr><th>形参</th><th>含义</th><th>要点</th></tr>
+<tr><td><code>pxTaskCode</code></td><td>任务函数指针</td><td>形如 <code>void task(void *pvParameters)</code></td></tr>
+<tr><td><code>pcName</code></td><td>任务名</td><td>最长 configMAX_TASK_NAME_LEN 字符，仅调试用</td></tr>
+<tr><td><code>usStackDepth</code></td><td>任务栈大小</td><td>单位<strong>字</strong>！不是字节</td></tr>
+<tr><td><code>pvParameters</code></td><td>传给任务函数的参数</td><td>不用就传 NULL</td></tr>
+<tr><td><code>uxPriority</code></td><td>任务优先级</td><td>范围 0~(configMAX_PRIORITIES-1)</td></tr>
+<tr><td><code>pxCreatedTask</code></td><td>任务句柄指针</td><td>成功后写入句柄（本质是 TCB 指针），后续删除/挂起都靠它</td></tr>
+</table>
+
+<p>返回值：<code>pdPASS</code>（创建成功）；<code>errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY</code>（堆内存不足，创建失败）。<strong>好习惯：创建后检查返回值。</strong></p>
+
+<h2>2. vTaskDelete：删除任务与内存回收</h2>
+
+<p>删除任务 = 把它从就绪/阻塞/挂起/事件列表中移除（PDF 第 6.1 节 <span class="pg">PDF p.92</span>）。使用前提：<code>INCLUDE_vTaskDelete</code> = 1。</p>
+
+<ul>
+<li>🧹 <strong>内核分配的内存由空闲任务回收</strong>：被删任务的 TCB 和任务栈是内核从堆里分配的，删除后由空闲任务负责释放（不是立刻释放，而是标记后等空闲任务处理）。</li>
+<li>💸 <strong>用户自己的内存自己管</strong>：任务里用 pvPortMalloc 申请的、或静态定义的资源，删除前必须自己释放，否则内存泄漏。</li>
+<li>🪞 <strong>删除自己</strong>：传 NULL 或自己的句柄都可以。正点原子例程里 start_task 创建完其他任务后 <code>vTaskDelete(StartTask_Handler)</code> 自我删除，就是标准用法。</li>
+<li>🛡️ <strong>句柄置 NULL 是好习惯</strong>：防止对已删除任务再次操作（重复删除会触发断言）。</li>
+</ul>
+
+<h2>3. xTaskCreateStatic：静态创建任务</h2>
+
+<p>TCB 和任务栈的内存<strong>由用户提供</strong>（PDF 第 6.1 节 <span class="pg">PDF p.91</span>）。使用前提：<code>configSUPPORT_STATIC_ALLOCATION</code> = 1。静态创建不依赖堆，适合确定性要求高的场景（比如安全关键、不允许运行时分配失败的场合）。</p>
+
+<ul>
+<li>比动态创建多两个参数：<code>puxStackBuffer</code>（用户定义的 <code>StackType_t</code> 数组，即任务栈）和 <code>pxTaskBuffer</code>（用户定义的 <code>StaticTask_t</code> 变量，即 TCB 内存）。</li>
+<li>返回值：NULL = 内存没给够/创建失败；其他值 = 任务句柄。</li>
+<li>⚠️ 开启静态分配后，<strong>空闲任务和定时器服务任务（若启用）的内存也要用户提供</strong>：必须实现回调 <code>vApplicationGetIdleTaskMemory()</code> 和 <code>vApplicationGetTimerTaskMemory()</code>（PDF p.98~99）。</li>
+</ul>
+
+<h2>4. vTaskSuspend / vTaskResume：挂起与恢复</h2>
+
+<p>挂起 = 无论优先级多高都不再参与调度，直到被恢复（PDF 第 6.4 节 <span class="pg">PDF p.103~104</span>）。使用前提：<code>INCLUDE_vTaskSuspend</code> = 1。</p>
+
+<ul>
+<li><code>vTaskSuspend(handle)</code>：挂起指定任务；传 NULL 挂起自己（<strong>注意：任务不能恢复自己，只能靠别人恢复</strong>）。</li>
+<li><code>vTaskResume(handle)</code>：在<strong>任务中</strong>恢复挂起的任务。</li>
+<li><code>xTaskResumeFromISR(handle)</code>：在<strong>中断中</strong>恢复任务，返回 pdTRUE 表示需要任务切换（调用方应触发一次上下文切换）。</li>
+<li>🔑 <strong>挂起不嵌套</strong>：不管 vTaskSuspend 调几次，vTaskResume 一次就够。恢复后的任务回到挂起前的状态列表（就绪或阻塞），而不是直接运行。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 挂起态和阻塞态最大的区别：阻塞有"自动醒"的机制（延时超时、事件到达），挂起<strong>没有</strong>——被挂起的任务只能由 vTaskResume 系列函数叫醒。如果某任务被挂起后没人恢复它，它就永远"消失"了，这在产品上表现为"功能神秘失效"。</p>
+</div>
+
+<h2>5. 实验一：动态创建与删除（按键控制）</h2>
+
+<p>教材实验思路（PDF 第 6.2 节 <span class="pg">PDF p.93~96</span>）：task1/task2 各自周期性刷新 LCD 区域并计数，task3 扫描按键——KEY0 删除 task1，KEY1 删除 task2。删除后对应区域停止刷新，数字定格。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* task3：扫描按键，动态删除 task1 / task2 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task3</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint8_t</span> key = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">switch</span> (key)
+        {
+            <span style="color:#0000FF">case</span> KEY0_PRES:   <span style="color:#008000">/* 删除任务 1 */</span>
+                <span style="color:#0000FF">if</span> (Task1Task_Handler != <span style="color:#098658">NULL</span>)
+                {
+                    vTaskDelete(Task1Task_Handler);
+                    Task1Task_Handler = <span style="color:#098658">NULL</span>;   <span style="color:#008000">/* 防止重复删除 */</span>
+                }
+                <span style="color:#0000FF">break</span>;
+
+            <span style="color:#0000FF">case</span> KEY1_PRES:   <span style="color:#008000">/* 删除任务 2 */</span>
+                <span style="color:#0000FF">if</span> (Task2Task_Handler != <span style="color:#098658">NULL</span>)
+                {
+                    vTaskDelete(Task2Task_Handler);
+                    Task2Task_Handler = <span style="color:#098658">NULL</span>;
+                }
+                <span style="color:#0000FF">break</span>;
+
+            <span style="color:#0000FF">default</span>:
+                <span style="color:#0000FF">break</span>;
+        }
+        vTaskDelay(<span style="color:#098658">10</span>);
+    }
+}
+</pre>
+
+<p>创建端在 start_task 里，和上一课移植实验完全一样：临界区内三个 xTaskCreate + 删除自己。区别只在 task1/task2 的任务体换成区域刷屏计数。</p>
+
+<h2>6. 实验二：静态创建 + 挂起与恢复</h2>
+
+<h3>6.1 静态创建（PDF 第 6.3 节 <span class="pg">PDF p.98~102</span>）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 静态创建：任务栈和 TCB 都由用户提供 */</span>
+
+<span style="color:#008000">/* 任务栈和任务控制块（全局或 static） */</span>
+<span style="color:#267F99">static</span> StackType_t   Task1TaskStack[TASK1_STK_SIZE];
+<span style="color:#267F99">static</span> StaticTask_t  Task1TaskTCB;
+
+<span style="color:#008000">/* 静态方式下，空闲任务内存也要用户提供 */</span>
+<span style="color:#267F99">static</span> StackType_t   IdleTaskStack[configMINIMAL_STACK_SIZE];
+<span style="color:#267F99">static</span> StaticTask_t  IdleTaskTCB;
+
+<span style="color:#008000">/* FreeRTOS 启动调度器时回调：交出空闲任务的内存 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">vApplicationGetIdleTaskMemory</span><span style="color:#001080">(StaticTask_t **ppxIdleTaskTCBBuffer,
+                                   StackType_t   **ppxIdleTaskStackBuffer,
+                                   <span style="color:#267F99">uint32_t</span>       *pulIdleTaskStackSize)</span>
+{
+    *ppxIdleTaskTCBBuffer   = &amp;IdleTaskTCB;
+    *ppxIdleTaskStackBuffer = IdleTaskStack;
+    *pulIdleTaskStackSize   = configMINIMAL_STACK_SIZE;
+}
+
+<span style="color:#008000">/* 静态创建任务 */</span>
+Task1Task_Handler = xTaskCreateStatic(
+    (TaskFunction_t)task1,          <span style="color:#008000">/* 任务函数 */</span>
+    (<span style="color:#267F99">const</span> <span style="color:#267F99">char</span> *)<span style="color:#A31515">&quot;task1&quot;</span>,          <span style="color:#008000">/* 任务名 */</span>
+    (<span style="color:#267F99">uint32_t</span>)TASK1_STK_SIZE,       <span style="color:#008000">/* 栈大小（字） */</span>
+    (<span style="color:#267F99">void</span> *)<span style="color:#098658">NULL</span>,                   <span style="color:#008000">/* 任务参数 */</span>
+    (UBaseType_t)TASK1_PRIO,        <span style="color:#008000">/* 优先级 */</span>
+    (StackType_t *)Task1TaskStack,  <span style="color:#008000">/* 用户提供的任务栈 */</span>
+    (StaticTask_t *)&amp;Task1TaskTCB); <span style="color:#008000">/* 用户提供的任务控制块 */</span>
+
+<span style="color:#0000FF">if</span> (Task1Task_Handler == <span style="color:#098658">NULL</span>)      <span style="color:#008000">/* 创建失败 */</span>
+{
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;static create task1 failed\r\n&quot;</span>);
+}
+</pre>
+
+<h3>6.2 挂起与恢复（PDF 第 6.5 节 <span class="pg">PDF p.104~108</span>）</h3>
+
+<p>同一个实验框架，task3 换成：KEY0 挂起 task1、KEY1 恢复 task1。task2 保持运行作为"对照组"——验证挂起只影响被挂起的任务。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* task3：按键挂起/恢复 task1 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task3</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint8_t</span> key = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">switch</span> (key)
+        {
+            <span style="color:#0000FF">case</span> KEY0_PRES:                 <span style="color:#008000">/* 挂起任务 1 */</span>
+                vTaskSuspend(Task1Task_Handler);
+                <span style="color:#0000FF">break</span>;
+
+            <span style="color:#0000FF">case</span> KEY1_PRES:                 <span style="color:#008000">/* 恢复任务 1 */</span>
+                vTaskResume(Task1Task_Handler);
+                <span style="color:#0000FF">break</span>;
+
+            <span style="color:#0000FF">default</span>:
+                <span style="color:#0000FF">break</span>;
+        }
+        vTaskDelay(<span style="color:#098658">10</span>);
+    }
+}
+
+<span style="color:#008000">/* 现象：KEY0 后 Task1 区域刷新与计数全部定格，Task2 区域照常；
+ * KEY1 后 Task1 从定格处继续 —— 挂起期间任务&quot;时间暂停&quot;了 */</span>
+</pre>
+
+<div class="tip">
+  <p>💡 动态 vs 静态怎么选？动态简单灵活（正点原子推荐日常用），静态适合"启动时一次性创建、运行时零分配"的确定性场景。判断标准就一句：你的系统能不能接受运行时内存分配失败？不能 → 静态。</p>
+</div>
+
+<h2>动手练习（约 40 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 4.1：动态创建删除实验（含任务自我删除）</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里建三个任务：task_work（LED0 每 500 tick 翻转并计数打印）、task_monitor（KEY0 按下就 <code>vTaskDelete(task_work 句柄)</code> 并置 NULL）、task_idle_demo（KEY1 按下则 <code>vTaskDelete(NULL)</code> 自我删除，删除前打印"我要自杀了"）。</p>
+  <p class="step">2️⃣ 试试在 task_work 里 pvPortMalloc 一块内存不释放就删任务，观察内存变化（可以反复创建/删除循环 100 次，配合后续内存管理课验证泄漏）。</p>
+  <p class="step"><strong>观察什么：</strong>删除 task_work 后 LED0 停闪、计数停止——任务确实被移除；自我删除的任务"静默消失"；重复按 KEY0 不崩溃（因为句柄已置 NULL）。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 4.2：挂起/恢复实验</h3>
+  <p class="step">1️⃣ 创建三个任务：task_a（优先级 3，LED0 每 500 tick 翻转，串口打印 "A"）、task_b（优先级 2，LED1 每 500 tick 翻转，打印 "B"）、task_ctrl（优先级 1，扫描 KEY0=挂起 task_a，KEY1=恢复 task_a，KEY2=恢复被挂起的高优先级任务观察调度）。</p>
+  <p class="step">2️⃣ 挂起 task_a 期间，再把 task_b 的 vTaskDelay 改成 2000，观察打印节奏。</p>
+  <p class="step"><strong>观察什么：</strong>KEY0 后 "A" 消失、LED0 定格，但 "B" 完全不受影响；KEY1 后 task_a 从暂停处继续。把 task_a 优先级改成 1 再重复实验，思考：挂起是不是"与优先级无关的强制暂停"？（是！挂起不看优先级，这也是它与抢占的本质区别）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. xTaskCreate 在堆内存不足时返回什么？</p>
+  <p class="opt">A. pdPASS</p>
+  <p class="opt">B. errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY</p>
+  <p class="opt">C. NULL 空指针</p>
+  <details><summary>查看答案</summary><div class="answer">B。动态创建失败返回 errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY；返回 NULL 的是静态创建 xTaskCreateStatic（PDF p.90~91）。</div></details>
+
+  <p class="q">Q2. 动态创建的任务被 vTaskDelete 后，TCB 和栈由谁回收？</p>
+  <p class="opt">A. 调用 vTaskDelete 的任务自己</p>
+  <p class="opt">B. 空闲任务负责回收释放</p>
+  <p class="opt">C. 立即归还给系统堆</p>
+  <details><summary>查看答案</summary><div class="answer">B。内核分配的内存（TCB+栈）由空闲任务回收；用户自己申请的内存必须自己先释放（PDF p.92）。</div></details>
+
+  <p class="q">Q3. xTaskCreateStatic 比 xTaskCreate 多出的两个参数是？</p>
+  <p class="opt">A. 任务栈指针和任务控制块指针</p>
+  <p class="opt">B. 任务名和任务优先级</p>
+  <p class="opt">C. 任务参数和任务句柄</p>
+  <details><summary>查看答案</summary><div class="answer">A。静态创建要求用户提供 puxStackBuffer（任务栈数组）和 pxTaskBuffer（StaticTask_t TCB 内存）（PDF p.91）。</div></details>
+
+  <p class="q">Q4. 任务被 vTaskSuspend 连续挂起两次，恢复需要几次 vTaskResume？</p>
+  <p class="opt">A. 两次，每次挂起对应一次恢复</p>
+  <p class="opt">B. 一次，挂起不嵌套计数</p>
+  <p class="opt">C. 三次，加一次额外的确认</p>
+  <details><summary>查看答案</summary><div class="answer">B。vTaskSuspend 不支持嵌套，重复挂起多少次都只需一次恢复（PDF p.103）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 6 章（PDF p.90~109）——本课全部依据，含三个实验源码</li>
+<li>🌐 <a href="https://www.freertos.org/a00125.html">FreeRTOS 官方 xTaskCreate 文档</a>——API 参数与返回值的官方说明</li>
+<li>🌐 <a href="https://www.freertos.org/a00102.html">FreeRTOS 官方 vTaskDelete 文档</a>——删除任务的内存回收说明</li>
+<li>📕 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a>——第 3~4 章任务管理与调度器行为</li>
+</ul>
+
+<div class="footer-note">
+  <p>API 用熟了，接下来要钻进内核里看它凭什么能"管住"这么多任务——下一课是原理深入第一站：列表与列表项，TCB 里那两个列表项字段的谜底要揭开了。有疑问随时问我！</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0003-task-basics.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0005-lists-and-list-items.html">下一课：列表与列表项 →</a>
+</nav>
+
+</div>
+</body>
+</html>

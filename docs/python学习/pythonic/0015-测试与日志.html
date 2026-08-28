@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0015 · 测试与日志 pytest/logging</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>测试与日志 pytest / logging</h1>
+<p class="meta">Pythonic 代码 · 课程 0015 · 预计 30 分钟</p>
+
+<p>C 程序员写测试常没有好工具,调试靠 printf + 断点。Python 有两大神器:<strong>pytest</strong> 写自动化测试(几行断言就能验证函数);<strong>logging</strong> 替代 print 输出分级日志(debug/info/warning/error,能关能调)。本课是收尾,让你写的每个函数都能被验证、出错能追踪。</p>
+
+<h2>知识点 1:pytest——最小测试框架</h2>
+<p>先 <code>pip install pytest</code>。写测试极简单:建一个 <code>test_xxx.py</code> 文件,函数名以 <code>test_</code> 开头,里面用 <code>assert</code> 断言。然后运行 <code>pytest</code> 就自动发现并跑所有测试:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 文件 test_math_utils.py</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pytest</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">add</span><span style="color: #000">(</span><span style="color: #001080">a</span><span style="color: #000">,</span> <span style="color: #001080">b</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">a</span> <span style="color: #000">+</span> <span style="color: #001080">b</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_add_positive</span><span style="color: #000">():</span>     <span style="color: #008000"># 以 test_ 开头才会被 pytest 发现</span>
+    <span style="color: #00F">assert</span> <span style="color: #001080">add</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">3</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_add_negative</span><span style="color: #000">():</span>
+    <span style="color: #00F">assert</span> <span style="color: #001080">add</span><span style="color: #000">(-</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">0</span>
+
+<span style="color: #008000"># 期望抛异常:用 pytest.raises</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_add_type_error</span><span style="color: #000">():</span>
+    <span style="color: #00F">with</span> <span style="color: #001080">pytest</span><span style="color: #000">.</span><span style="color: #001080">raises</span><span style="color: #000">(</span><span style="color: #CD3131">TypeError</span><span style="color: #000">):</span>
+        <span style="color: #001080">add</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">)</span>
+</pre>
+<p>运行:<code>uv run pytest</code> 或 <code>pytest test_math_utils.py</code>。通过就显示绿点,失败会告诉你哪一行断言错了。命名规则:pytest 找 <code>test_*.py</code> 文件里的 <code>test_*</code> 函数——这是和「C 里没有」最大的不写框架。</p>
+
+<h2>知识点 2:fixture——给测试准备数据/环境</h2>
+<p>多个测试要共用「准备数据、建对象、开连接」,用 <code>@pytest.fixture</code>,它是自动注入的依赖(呼应你学过的依赖注入——这是 pytest 的标志):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pytest</span>
+
+<span style="color: #AF00DB">@pytest</span><span style="color: #000">.</span><span style="color: #001080">fixture</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">numbers</span><span style="color: #000">():</span>
+    <span style="color: #00F">return</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">]</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_sum</span><span style="color: #000">(</span><span style="color: #001080">numbers</span><span style="color: #000">):</span>        <span style="color: #008000"># 参数名= 函数名,自动注入</span>
+    <span style="color: #00F">assert</span> <span style="color: #0070C1">sum</span><span style="color: #000">(</span><span style="color: #001080">numbers</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">14</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_max</span><span style="color: #000">(</span><span style="color: #001080">numbers</span><span style="color: #000">):</span>
+    <span style="color: #00F">assert</span> <span style="color: #0070C1">max</span><span style="color: #000">(</span><span style="color: #001080">numbers</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #098658">5</span>
+</pre>
+<p>fixture 函数返回值会被「按参数名自动传给」测试函数;fixture 还能做 <code>yield</code> 形式的「前后清理」(setup/teardown),像上下文管理器。</p>
+
+<h2>知识点 3:parametrize——同一个测试跑多组数据</h2>
+<p>同一逻辑测很多组输入,用 <code>@pytest.mark.parametrize</code> 展开成多个用例:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pytest</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">classify</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #A31515">&quot;even&quot;</span> <span style="color: #00F">if</span> <span style="color: #001080">n</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span> <span style="color: #00F">else</span> <span style="color: #A31515">&quot;odd&quot;</span>
+
+<span style="color: #AF00DB">@pytest</span><span style="color: #000">.</span><span style="color: #001080">mark</span><span style="color: #000">.</span><span style="color: #001080">parametrize</span><span style="color: #000">(</span><span style="color: #A31515">&quot;n, expected&quot;</span><span style="color: #000">,</span> <span style="color: #000">[</span>
+    <span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;even&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;odd&quot;</span><span style="color: #000">),</span> <span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;even&quot;</span><span style="color: #000">),</span> <span style="color: #000">(-</span><span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;even&quot;</span><span style="color: #000">),</span>
+<span style="color: #000">])</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">test_classify</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">,</span> <span style="color: #001080">expected</span><span style="color: #000">):</span>
+    <span style="color: #00F">assert</span> <span style="color: #001080">classify</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">)</span> <span style="color: #000">==</span> <span style="color: #001080">expected</span>
+</pre>
+<p>一组参数一个用例,失败会单独标出来,定位精准。parametrize = 「一张表喂给同一个测试」。</p>
+
+<h2>知识点 4:logging——分层级、可开关的日志</h2>
+<p>代替散落的 print 调试,<code>logging</code> 提供分级:<code>debug &lt; info &lt; warning &lt; error &lt; critical</code>,设一个「门槛」就能批量过滤:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">logging</span>
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">basicConfig</span><span style="color: #000">(</span><span style="color: #001080">level</span><span style="color: #000">=</span><span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">INFO</span><span style="color: #000">)</span>   <span style="color: #008000"># 门槛:INFO 及以上的才打印</span>
+
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">debug</span><span style="color: #000">(</span><span style="color: #A31515">&quot;细节调试&quot;</span><span style="color: #000">)</span>      <span style="color: #008000"># 不打印(低于 INFO)</span>
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">info</span><span style="color: #000">(</span><span style="color: #A31515">&quot;开始处理&quot;</span><span style="color: #000">)</span>       <span style="color: #008000"># 打印</span>
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">warning</span><span style="color: #000">(</span><span style="color: #A31515">&quot;磁盘快满了&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># 打印,样式显眼</span>
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">error</span><span style="color: #000">(</span><span style="color: #A31515">&quot;失败了&quot;</span><span style="color: #000">)</span>        <span style="color: #008000"># 打印</span>
+</pre>
+<p>对应 C 的「printf 级别之分」:debug 细节、info 进度、warning 警告、error 错误。<code>level=</code> 设门槛,生产环境设 INFO/WARNING 少刷屏,调试改 DEBUG 全看。</p>
+
+<h2>知识点 5:logger 实例与格式</h2>
+<p>更好的习惯:每个模块建自己的 logger(带上模块名),并自定义格式(含时间、级别):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">logging</span>
+
+<span style="color: #001080">logger</span> <span style="color: #000">=</span> <span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">getLogger</span><span style="color: #000">(</span><span style="color: #001080">__name__</span><span style="color: #000">)</span>     <span style="color: #008000"># logger 名字是模块名</span>
+<span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">basicConfig</span><span style="color: #000">(</span>
+    <span style="color: #001080">level</span><span style="color: #000">=</span><span style="color: #001080">logging</span><span style="color: #000">.</span><span style="color: #001080">INFO</span><span style="color: #000">,</span>
+    <span style="color: #0070C1">format</span><span style="color: #000">=</span><span style="color: #A31515">&quot;%(asctime)s %(levelname)s %(name)s: %(message)s&quot;</span><span style="color: #000">,</span>
+<span style="color: #000">)</span>
+<span style="color: #001080">logger</span><span style="color: #000">.</span><span style="color: #001080">info</span><span style="color: #000">(</span><span style="color: #A31515">&quot;模块里的日志&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 2026-08-24 ... INFO ...: 模块里的日志</span>
+</pre>
+<p>加 <code>logger.exception("...")</code> 在 except 里还能自动带上堆栈。<code>logging</code> 的异步/生产用法比 print 强得多:能写文件、按级别过滤、人人都能搜。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">pytest 会跑哪个函数?</p>
+  <button class="opt" data-ok="false">以 main 开头</button>
+  <button class="opt" data-ok="true">以 test_ 开头</button>
+  <button class="opt" data-ok="false">任何函数</button>
+  <button class="opt" data-ok="false">带 @decorator</button>
+  <p class="reveal">pytest 找 test_*.py 里的 test_* 函数,自动收集执行。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">多个测试共享准备数据,用?</p>
+  <button class="opt" data-ok="false">copy 到每个函数</button>
+  <button class="opt" data-ok="true">@pytest.fixture</button>
+  <button class="opt" data-ok="false">全局变量</button>
+  <button class="opt" data-ok="false">argparse</button>
+  <p class="reveal">fixture 按参数名自动注入,还支持 yield 做前后清理。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">同一测试跑多组数据,用?</p>
+  <button class="opt" data-ok="false">fixture</button>
+  <button class="opt" data-ok="true">@pytest.mark.parametrize</button>
+  <button class="opt" data-ok="false">循环</button>
+  <button class="opt" data-ok="false">logging</button>
+  <p class="reveal">parametrize 把一组组参数展开成多个独立用例。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">生产环境想只看 warning 以上,设?</p>
+  <button class="opt" data-ok="false">print 全删</button>
+  <button class="opt" data-ok="true">level=logging.WARNING</button>
+  <button class="opt" data-ok="false">logger.debug</button>
+  <button class="opt" data-ok="false">sys.exit</button>
+  <p class="reveal">logging 设门槛 level=WARNING,低于它的 debug/info 自动不打印。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0015_测试与日志.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:给你最近写的两个函数写 pytest 测试(含 parametrize、fixture),用 pytest 跑通</li>
+  <li><strong>练习 B</strong>:把一段 print 调试改成 logging(分级、设格式和门槛)</li>
+  <li><strong>练习 C</strong>:为 repo 里一个「读文件→处理→写回」函数写测试 + 加日志</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>pytest 官方教程(<a href="https://docs.pytest.org/zh-cn/stable/getting-started.html">中文基本用法</a>)</strong>的「运行测试 / fixture / parametrize」;<strong>Python 官方<a href="https://docs.python.org/zh-cn/3/howto/logging.html">logging 教程</a></strong>:到「进阶」前都够用。</p>
+</blockquote>
+
+<h2>完工了</h2>
+<p>到这里,25 个主题全部覆盖:8 个惯用法核心 + 7 个常用库。你已经能从「C 思维」一路写出「能测、能查、会用库」的成熟 Python。回课程地图挑最不熟的回炉,或直接开始用 pytest+logging 改造你 repo 里的旧代码。</p>
+<p><strong>有任何不懂的,随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0014-多线程与并发.html">← 上一篇:多线程与并发 threading / concurrent.futures</a>
+  <a href="index.html">课程地图</a>
+  <a href="0016-生成器与迭代协议.html">下一篇:生成器与迭代协议 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

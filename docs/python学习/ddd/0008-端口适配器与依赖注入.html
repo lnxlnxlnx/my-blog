@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0008 · 端口适配器与依赖注入</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>端口 Ports 与适配器 + 依赖注入</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0008 · 预计 25 分钟</p>
+
+<p>这是「六边形(端口-适配器)」名字的由来,也是依赖方向落地的一课。核心:<strong>领域/应用层需要外部数据或发外部调用时,只声明一个接口(端口 Port),真正实现(适配器 Adapter)放基础设施层,通过依赖注入接进去</strong>。你架构课学过 DI 和接口,这里沿用,只是叫法更 DDD。</p>
+
+<h2>知识点 1:端口 = 接口,定义"要做什么",不管"怎么做"</h2>
+<p>端口是应用核心声明的<strong>接口</strong>,抽象掉技术细节。比如"存用户"不问是 MySQL 还是 Postgres:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">abc</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ABC</span><span style="color: #000">,</span> <span style="color: #001080">abstractmethod</span>
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">UserRepository</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>            <span style="color: #008000"># 端口:只写&quot;要做什么&quot;</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">)</span> <span style="color: #000">-&gt;</span> <span style="color: #00F">None</span><span style="color: #000">:</span> <span style="color: #000">...</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">find_by_id</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">:</span> <span style="color: #0070C1">str</span><span style="color: #000">)</span> <span style="color: #000">-&gt;</span> <span style="color: #A31515">&quot;User | None&quot;</span><span style="color: #000">:</span> <span style="color: #000">...</span>
+</pre>
+<p>端口在<strong>应用层/领域层</strong>定义;它描述的是「领域需要的操作」,别去模仿工具 API(为领域设计,不是为 ORM 设计)。<a href="https://8thlight.com/blog/damon-kelley/2021/05/18/a-color-coded-guide-to-ports-and-adapters.html">端口与适配器</a>。</p>
+
+<h2>知识点 2:适配器 = 端口的实现(放基础设施)</h2>
+<p><strong>适配器</strong>是端口的真实实现,塞在基础设施层,做着技术性的脏活(连数据库、调外部 API、发消息):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SqlUserRepository</span><span style="color: #000">(</span><span style="color: #001080">UserRepository</span><span style="color: #000">):</span>    <span style="color: #008000"># 适配器:端口的实现</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">db</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">db</span> <span style="color: #000">=</span> <span style="color: #001080">db</span>                         <span style="color: #008000"># 连接池/ORM</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">db</span><span style="color: #000">.</span><span style="color: #001080">execute</span><span style="color: #000">(</span><span style="color: #A31515">&quot;INSERT INTO users ...&quot;</span><span style="color: #000">,</span> <span style="color: #000">...)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">find_by_id</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">):</span>
+        <span style="color: #001080">row</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">db</span><span style="color: #000">.</span><span style="color: #001080">query</span><span style="color: #000">(...)</span> <span style="color: #000">;</span> <span style="color: #00F">return</span> <span style="color: #001080">User</span><span style="color: #000">(</span><span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;id&quot;</span><span style="color: #000">],</span> <span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;email&quot;</span><span style="color: #000">]))</span>
+</pre>
+<p>重点:<strong>应用核心只认得 UserRepository 这个接口,不认得 SqlUserRepository</strong>。换数据库=换适配器,不碰业务逻辑。这就是六边形:中心是应用核心,一圈适配器像六边形的边。</p>
+
+<h2>知识点 3:依赖注入——把实现"接"进接口</h2>
+<p>端口定义在里,实现在外。怎么让应用服务拿到实现?靠<strong>依赖注入(DI)</strong>:把适配器对象"塞"进去(架构课的 0008 学过)。这里最常见的注入点就是应用服务的构造函数:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">CreateUserService</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">repo</span><span style="color: #000">:</span> <span style="color: #001080">UserRepository</span><span style="color: #000">):</span>   <span style="color: #008000"># 依赖注入:只认接口</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">repo</span> <span style="color: #000">=</span> <span style="color: #001080">repo</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">handle</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">cmd</span><span style="color: #000">):</span>
+        <span style="color: #001080">user</span> <span style="color: #000">=</span> <span style="color: #001080">User</span><span style="color: #000">(</span><span style="color: #001080">uuid</span><span style="color: #000">(),</span> <span style="color: #001080">Email</span><span style="color: #000">(</span><span style="color: #001080">cmd</span><span style="color: #000">.</span><span style="color: #001080">email</span><span style="color: #000">))</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">repo</span><span style="color: #000">.</span><span style="color: #001080">save</span><span style="color: #000">(</span><span style="color: #001080">user</span><span style="color: #000">)</span>                     <span style="color: #008000"># 用接口,不关心实现</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">id</span>
+
+<span style="color: #008000"># 组装(composition root):在程序入口把具体实现接进去</span>
+<span style="color: #001080">sql_repo</span> <span style="color: #000">=</span> <span style="color: #001080">SqlUserRepository</span><span style="color: #000">(</span><span style="color: #001080">db</span><span style="color: #000">=</span><span style="color: #001080">connect</span><span style="color: #000">())</span>
+<span style="color: #001080">service</span> <span style="color: #000">=</span> <span style="color: #001080">CreateUserService</span><span style="color: #000">(</span><span style="color: #001080">repo</span><span style="color: #000">=</span><span style="color: #001080">sql_repo</span><span style="color: #000">)</span>
+</pre>
+<p>依赖方向:<strong>CreateUserService(里)只依赖 UserRepository 接口;SqlUserRepository(外)实现接口并被注入</strong>。核心不依赖外部,反过来外部依赖核心的接口——依赖倒置(DIP)。</p>
+
+<h2>知识点 4:为什么值钱——测试启动快、换实现容易</h2>
+<p>因为应用服务只认接口,测试时可以传一个<strong>假的仓库</strong>(mock),不连真库:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">FakeUserRepository</span><span style="color: #000">(</span><span style="color: #001080">UserRepository</span><span style="color: #000">):</span>     <span style="color: #008000"># 测试用的适配器</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">save</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">data</span><span style="color: #000">[</span><span style="color: #001080">user</span><span style="color: #000">.</span><span style="color: #001080">id</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">user</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">find_by_id</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">user_id</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #001080">user_id</span><span style="color: #000">)</span>
+
+<span style="color: #001080">service</span> <span style="color: #000">=</span> <span style="color: #001080">CreateUserService</span><span style="color: #000">(</span><span style="color: #001080">repo</span><span style="color: #000">=</span><span style="color: #001080">FakeUserRepository</span><span style="color: #000">())</span>
+<span style="color: #001080">service</span><span style="color: #000">.</span><span style="color: #001080">handle</span><span style="color: #000">(</span><span style="color: #001080">CreateUserCommand</span><span style="color: #000">(</span><span style="color: #001080">email</span><span style="color: #000">=</span><span style="color: #A31515">&quot;a@x.com&quot;</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">=</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">))</span>  <span style="color: #008000"># 不碰数据库</span>
+</pre>
+<p>这让<a href="https://en.wikipedia.org/wiki/Unit_testing">单元测试</a>又稳又快、不依赖环境。换数据库、加一个 CLI 入口,都只是"再装一个适配器"。</p>
+
+<h2>知识点 5:别过度抽象</h2>
+<p>项目提醒:滥用端口/接口会产生<a href="https://mortoray.com/2014/08/01/the-false-abstraction-antipattern/">假抽象</a>、过度复杂。很多时候直接依赖具体实现完全没问题。<strong>判断:这层真的可能被换掉/需要 mock 吗?</strong> 需要才抽象。端口还应遵循<strong>接口隔离</strong>(小接口),但也别碎到烦人。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">端口(Port)本质是?</p>
+  <button class="opt" data-ok="false">数据库</button>
+  <button class="opt" data-ok="true">接口协议</button>
+  <button class="opt" data-ok="false">控制器</button>
+  <button class="opt" data-ok="false">实体类</button>
+  <p class="reveal">端口是接口,定义"要做什么",不管"怎么做";由适配器实现。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">端口的实现(连库那层)放哪?</p>
+  <button class="opt" data-ok="false">领域层</button>
+  <button class="opt" data-ok="true">基础设施层</button>
+  <button class="opt" data-ok="false">应用层</button>
+  <button class="opt" data-ok="false">控制器层</button>
+  <p class="reveal">适配器(端口实现)放基础设施层,做技术脏活;核心只认接口。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">把适配器塞进应用服务的方式叫?</p>
+  <button class="opt" data-ok="false">全局变量</button>
+  <button class="opt" data-ok="true">依赖注入</button>
+  <button class="opt" data-ok="false">事件推送</button>
+  <button class="opt" data-ok="false">脚本复制</button>
+  <p class="reveal">DI:把具体实现通过构造/组装注入,"接"进接口使用的应用服务。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">这么做的最大好处之一?</p>
+  <button class="opt" data-ok="false">代码更长</button>
+  <button class="opt" data-ok="true">测试可 mock</button>
+  <button class="opt" data-ok="false">运行更快</button>
+  <button class="opt" data-ok="false">更少文件</button>
+  <p class="reveal">用假适配器 mock,不连数据库就能跑业务测试,快且稳。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0008_端口适配器与依赖注入.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:定义一个 UserRepository 端口,写一个 Sql 实现和一个 Fake 实现</li>
+  <li><strong>练习 B</strong>:写 CreateUserService 依赖注入端口;组装时注入 Fake,跑通不连库</li>
+  <li><strong>练习 C</strong>:给这个 service 写一个用 Fake repo 的单元测试(回忆 0015 pytest)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的 <strong>Ports</strong> 小节,再对照你的架构课 <a href="../architecture/0008-组合优于继承与依赖注入.html">0008 组合优于继承与依赖注入</a>——你会发现 DIP/DI 是同一件事。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:端口/适配器/DI 三件套连贯起来了吗?下一课讲<strong>接口适配层与基础设施层</strong>——控制器、DTO,以及仓储和持久化模型。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0007-应用层命令与查询.html">← 上一篇:应用层:应用服务 / 命令 / 查询(CQS)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0009-接口适配与基础设施.html">下一篇:接口适配层与基础设施层 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

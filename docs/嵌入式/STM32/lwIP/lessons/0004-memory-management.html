@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 4 课：内存管理 — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 4 课</nav>
+
+<h1>第 4 课：内存管理</h1>
+<p class="subtitle">mem.c 动态内存堆（首次适应算法）、memp.c 动态内存池（宏展开）、C 库策略、三方案选型</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>钻到 lwIP 的"心脏仓库"里看看它怎么管内存。学完你能说清：内存堆和内存池各解决什么问题、<code>struct mem</code> 怎么用索引串起整块堆、首次适应算法怎么分配和标记、内存池怎么靠一个宏展开出几十个固定大小的池、三个管理策略怎么选。之前移植时看到的 <code>MEM_SIZE</code>、<code>PBUF_POOL_SIZE</code>、<code>pbuf_alloc(PBUF_RAW, len, PBUF_POOL)</code>——这课全部对号入座。</p>
+</div>
+
+<h2>1. 内存简介：嵌入式内存管理的两难</h2>
+
+<p>lwIP 内核运行时到处都在"借内存"：每个收进来的包要一块 pbuf、每个 TCP 连接要一块 PCB 控制块、每个待发段要一块 TCP_SEG……（PDF 第 4.1 节 <span class="pg">PDF p.164</span>）。lwIP 提供两种互补的策略：</p>
+
+<ul>
+<li>🧱 <strong>动态内存池（memp）</strong>：预先切好一堆固定大小的块，申请/释放都是 O(1) 链表操作，快且无碎片；缺点是块大小固定，有浪费</li>
+<li>📦 <strong>动态内存堆（mem）</strong>：一整块大数组按需切分，灵活；缺点是会产生碎片、查找慢</li>
+</ul>
+
+<p>用哪个策略由三个宏决定（表 4.1.1）：</p>
+
+<table>
+<tr><th>宏定义</th><th>含义</th></tr>
+<tr><td><code>MEM_LIBC_MALLOC</code></td><td>是否用 C 标准库分配策略（默认 0，用 lwIP 自己的堆）</td></tr>
+<tr><td><code>MEMP_MEM_MALLOC</code></td><td>是否用 lwIP 内存堆来实现内存池（默认 0，池用独立数组）</td></tr>
+<tr><td><code>MEM_USE_POOLS</code></td><td>是否用 lwIP 内存池来实现内存堆（默认 0）</td></tr>
+</table>
+
+<div class="warn">
+  <p>⚠️ 硬规则：<strong>lwIP 内存堆策略和 C 库策略只能二选一</strong>（教材原文强调，<span class="pg">PDF p.164</span>）。别同时把 MEM_LIBC_MALLOC 和 lwIP 堆都打开，编译期就混乱了。</p>
+</div>
+
+<h2>2. 动态内存堆：mem.c 的"大仓库"</h2>
+
+<h3>2.1 内存块结构体：用索引串起链表</h3>
+
+<p>整个堆就是一块大数组 <code>ram_heap</code>，被切成一段段"内存块"，每块头部带一个管理结构（<span class="pg">PDF p.165</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> {</span>
+  <span style="color:#267F99">mem_size_t</span> next;    <span style="color:#008000">/* 保存下一个内存块的索引（不是指针！） */</span>
+  <span style="color:#267F99">mem_size_t</span> prev;    <span style="color:#008000">/* 保存前一个内存块的索引 */</span>
+  <span style="color:#267F99">u8_t</span> used;          <span style="color:#008000">/* 此内存块是否被使用：1 使用、0 未使用 */</span>
+};</pre>
+
+<p>注意 <code>next</code>/<code>prev</code> 存的是<strong>相对堆首的字节索引</strong>而非地址——好处是链表"搬家"也不失效，且省内存。配套几个对齐宏：<code>MIN_SIZE=12</code>（小于它的申请一律按 12 字节给，防止碎成渣）、<code>SIZEOF_STRUCT_MEM</code>（块头大小对齐）、<code>MEM_SIZE_ALIGNED</code>（堆大小对齐），全部经 <code>LWIP_MEM_ALIGN_SIZE</code> 按 <code>MEM_ALIGNMENT=4</code> 对齐。</p>
+
+<h3>2.2 三个"游标"指针</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">u8_t</span> *ram;                    <span style="color:#008000">/* 指向对齐后的内存堆首地址 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> *<span style="color:#795E26">ram_end</span>;</span>          <span style="color:#008000">/* 指向内存堆最后一个内存块 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> *<span style="color:#795E26">lfree</span>;</span>            <span style="color:#008000">/* 指向最低地址的那个空闲内存块 */</span></pre>
+
+<p>堆空间 = <code>MEM_SIZE_ALIGNED + 2*SIZEOF_STRUCT_MEM</code>（首尾各留一个块头）。<code>ram_end</code> 是"哨兵"（永远 used=1，表示堆的尽头），<code>lfree</code> 是分配的起点——始终指向索引最小的空闲块。</p>
+
+<p><code>mem_init()</code> 干的事（<span class="pg">PDF p.166</span>）：把首块建好（prev=0、used=0、next=MEM_SIZE_ALIGNED），尾块 ram_end 标记 used=1，lfree 指向首块，最后创建一个互斥量 <code>mem_mutex</code> 保护整个堆（有 OS 时 malloc/free 会被互斥量串行化）。</p>
+
+<h3>2.3 mem_malloc：首次适应 + 现场划分</h3>
+
+<p>算法名字叫 <strong>First Fit（首次拟合）</strong>：从 <code>lfree</code>（低地址）出发，沿 <code>next</code> 索引依次找，第一个"剩余空间够大"的空闲块就直接切（<span class="pg">PDF p.167</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> *
+<span style="color:#795E26">mem_malloc</span><span style="color:#001080">(<span style="color:#267F99">mem_size_t</span> size_in)</span>
+{
+  <span style="color:#267F99">mem_size_t</span> ptr, ptr2, size;
+  <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> *<span style="color:#795E26">mem</span>, *<span style="color:#795E26">mem2</span>;</span>
+
+  <span style="color:#008000">/* ……校验、对齐 size…… */</span>
+
+  <span style="color:#008000">/* 从最低的空闲块 lfree 开始，沿 next 索引寻找足够大的空闲块 */</span>
+  <span style="color:#0000FF">for</span> (ptr = mem_to_ptr(lfree); ptr &lt; MEM_SIZE_ALIGNED - size;
+       ptr = ((<span style="color:#0000FF">struct</span> mem *)(<span style="color:#267F99">void</span> *)&amp;ram[ptr])-&gt;next)
+  {
+    mem = ptr_to_mem(ptr);              <span style="color:#008000">/* 取它的地址 */</span>
+    <span style="color:#008000">/* 空间大小必须排除内存块头大小 */</span>
+    <span style="color:#0000FF">if</span> ((!mem-&gt;used) &amp;&amp;
+        (mem-&gt;next - (ptr + SIZEOF_STRUCT_MEM)) &gt;= size)
+    {
+      <span style="color:#008000">/* 剩余空间够再放一个新块头 + MIN_SIZE 才拆分，
+         否则整块给用户（会产生一点碎片，但避免无法管理的碎块） */</span>
+      <span style="color:#0000FF">if</span> (mem-&gt;next - (ptr + SIZEOF_STRUCT_MEM) &gt;= (size +
+           SIZEOF_STRUCT_MEM + MIN_SIZE_ALIGNED))
+      {
+        <span style="color:#008000">/* 在用户空间的后面插入一个新的空闲内存块 mem2 */</span>
+        ptr2 = (<span style="color:#267F99">mem_size_t</span>)(ptr + SIZEOF_STRUCT_MEM + size);
+        mem2 = ptr_to_mem(ptr2);
+        mem2-&gt;used = <span style="color:#098658">0</span>;
+        mem2-&gt;next = mem-&gt;next;
+        mem2-&gt;prev = ptr;
+        mem-&gt;next = ptr2;
+        mem-&gt;used = <span style="color:#098658">1</span>;                  <span style="color:#008000">/* 当前块标记为已使用 */</span>
+        <span style="color:#0000FF">if</span> (mem2-&gt;next != MEM_SIZE_ALIGNED)
+        {
+            ((<span style="color:#0000FF">struct</span> mem *)(<span style="color:#267F99">void</span> *)&amp;ram[mem2-&gt;next])-&gt;prev = ptr2;
+        }
+      }
+      <span style="color:#0000FF">else</span>                              <span style="color:#008000">/* 剩余太小：整块给出（碎片） */</span>
+      {
+        mem-&gt;used = <span style="color:#098658">1</span>;
+      }
+      <span style="color:#008000">/* 若分配出去的正是 lfree 指向的块，就把 lfree 往后挪到下一个空闲块 */</span>
+      <span style="color:#0000FF">if</span> (mem == lfree)
+      {
+        <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> *<span style="color:#795E26">cur</span> =</span> lfree;
+        <span style="color:#0000FF">while</span> (cur-&gt;used &amp;&amp; cur != ram_end)
+        {
+          cur = ptr_to_mem(cur-&gt;next);
+        }
+        lfree = cur;
+      }
+      <span style="color:#008000">/* 返回用户空间地址（跳过块头） */</span>
+      <span style="color:#0000FF">return</span> (<span style="color:#267F99">u8_t</span> *)mem + SIZEOF_STRUCT_MEM + MEM_SANITY_OFFSET;
+    }
+  }
+  <span style="color:#0000FF">return</span> <span style="color:#098658">NULL</span>;                          <span style="color:#008000">/* 没找到合适的块 */</span>
+}</pre>
+
+<p>这个函数把分配过程讲透了：<strong>先找（首次适应）、再切（拆出新空闲块）、后挪（维护 lfree）</strong>。教材特别点出"剩余空间连一个块头都放不下"的判断——如果强拆，会产生无法再分配的碎块，所以宁可整块给用户。</p>
+
+<h3>2.4 mem_free：三步归还</h3>
+
+<p>释放极简（<span class="pg">PDF p.170</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span>
+<span style="color:#795E26">mem_free</span><span style="color:#001080">(<span style="color:#267F99">void</span> *rmem)</span>
+{
+  <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mem</span> *<span style="color:#795E26">mem</span>;</span>
+  <span style="color:#0000FF">if</span> (rmem == <span style="color:#098658">NULL</span>)         <span style="color:#008000">/* 空指针直接返回 */</span>
+  {
+    <span style="color:#0000FF">return</span>;
+  }
+  <span style="color:#008000">/* 从用户地址回退一个块头，找到控制块 */</span>
+  mem = (<span style="color:#0000FF">struct</span> mem *)(<span style="color:#267F99">void</span> *)((<span style="color:#267F99">u8_t</span> *)rmem - (SIZEOF_STRUCT_MEM +
+                                              MEM_SANITY_OFFSET));
+  mem-&gt;used = <span style="color:#098658">0</span>;            <span style="color:#008000">/* 标记为未使用 */</span>
+  <span style="color:#008000">/* 若释放的块比 lfree 更靠前，更新 lfree（始终指向最低地址空闲块） */</span>
+  <span style="color:#0000FF">if</span> (mem &lt; lfree)
+  {
+    lfree = mem;
+  }
+}</pre>
+
+<p>关于<strong>合并逻辑</strong>：教材在与 C 库对比时明确说，lwIP 内存堆策略"可以合并相邻的空闲内存块，减少内存碎片化，提高内存利用率"（<span class="pg">PDF p.180</span>）——这也是它优于裸 malloc 的关键点。对比记忆：C 库的 malloc/free 不会把相邻空闲块拼回一个大块，反复申请释放后堆会被"碎尸万段"。</p>
+
+<div class="tip">
+  <p>💡 形象记忆：堆像一列火车车厢（块），每节车厢门牌号是索引（next/prev），乘务员 <code>lfree</code> 永远站在"最靠前的空车厢"门口。分配=从门口上车切座位，释放=座位变空并把乘务员往前拉。lwIP 用索引不用指针，这列火车还能"整列平移"都不乱。</p>
+</div>
+
+<h2>3. 动态内存池：memp.c 的"预制件仓库"</h2>
+
+<h3>3.1 思路与场景</h3>
+
+<p>很多数据结构<strong>大小固定、生命周期短、申请频繁</strong>（TCP_PCB、UDP_PCB、TCP_SEG、pbuf……）。给它们跑堆分配既慢又容易碎。内存池的做法（<span class="pg">PDF p.171</span>）：初始化时把一整块内存切成 <code>num</code> 个固定大小的块，用单链表串好；申请 = 从链表头取一个，释放 = 放回链表头。缺点：块大小固定，用不满就浪费。</p>
+
+<h3>3.2 四个文件的"宏交响曲"</h3>
+
+<p>池的实现分布在四个文件，靠宏展开生成所有代码（<span class="pg">PDF p.171~172</span>）：</p>
+
+<ul>
+<li><code>memp_std.h</code>：声明"有哪些池"——按协议开关宏列举，例如 <code>LWIP_MEMPOOL(TCP_PCB, MEMP_NUM_TCP_PCB, sizeof(struct tcp_pcb), "TCP_PCB")</code>，只有 <code>LWIP_TCP=1</code> 时 TCP 相关的池才被收录</li>
+<li><code>memp_priv.h</code>：两个管理结构体——<code>struct memp { struct memp *next; }</code>（空闲块串链）和 <code>struct memp_desc { u16_t size; u16_t num; u8_t *base; struct memp **tab; }</code>（描述一类池：块大小、块数、基地址、空闲链头）</li>
+<li><code>memp.h</code>：用 <code>##</code> 连接符把每个池名变成枚举成员 <code>MEMP_##name</code>，得到 <code>memp_t</code> 枚举和总数 <code>MEMP_MAX</code></li>
+<li><code>memp.c</code>：用 <code>LWIP_MEMPOOL_DECLARE</code> 宏为每个池展开出一个对齐数组 + <code>memp_desc</code> 结构体，并实现 init / malloc / free</li>
+</ul>
+
+<p><code>LWIP_MEMPOOL_DECLARE</code> 展开后大致长这样（<span class="pg">PDF p.174</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 以 LWIP_MEMPOOL_DECLARE(RAW_PCB, 4, 20, &quot;RAW_PCB&quot;) 为例展开 */</span>
+<span style="color:#267F99">u8_t</span> memp_memory_RAW_PCB_base[<span style="color:#098658">4</span> * (MEMP_SIZE + <span style="color:#098658">20</span>对齐后)]; <span style="color:#008000">/* 池的存储数组 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">memp</span> *<span style="color:#795E26">memp_tab_RAW_PCB</span>;</span>                      <span style="color:#008000">/* 空闲链头 */</span>
+<span style="color:#267F99">const</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">memp_desc</span> <span style="color:#795E26">memp_RAW_PCB</span> =</span> {
+  <span style="color:#098658">20</span>,                        <span style="color:#008000">/* 每个内存块大小 */</span>
+  <span style="color:#098658">4</span>,                         <span style="color:#008000">/* 内存块数量 */</span>
+  memp_memory_RAW_PCB_base,  <span style="color:#008000">/* 基地址 */</span>
+  &amp;memp_tab_RAW_PCB          <span style="color:#008000">/* 指向空闲链头 */</span>
+};</pre>
+
+<p>所有池的描述符再汇总成一个数组 <code>memp_pools[MEMP_MAX]</code>，索引正好对应枚举 <code>memp_t</code>。</p>
+
+<h3>3.3 初始化 / 申请 / 释放</h3>
+
+<p>初始化就是把空闲块串成链表（<span class="pg">PDF p.176</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">memp_init_pool</span><span style="color:#001080">(<span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> memp_desc *desc)</span>
+{
+  <span style="color:#267F99">int</span> i;
+  <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">memp</span> *<span style="color:#795E26">memp</span>;</span>
+  *desc-&gt;tab = <span style="color:#098658">NULL</span>;                       <span style="color:#008000">/* 空闲链头先置空 */</span>
+  memp = (<span style="color:#0000FF">struct</span> memp *)LWIP_MEM_ALIGN(desc-&gt;base);   <span style="color:#008000">/* 内存对齐 */</span>
+  <span style="color:#008000">/* 把该池所有内存块按固定步长串成单链表 */</span>
+  <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0</span>; i &lt; desc-&gt;num; ++i)
+  {
+    memp-&gt;next = *desc-&gt;tab;
+    *desc-&gt;tab = memp;
+    memp = (<span style="color:#0000FF">struct</span> memp *)(<span style="color:#267F99">void</span> *)((<span style="color:#267F99">u8_t</span> *)memp + MEMP_SIZE + desc-&gt;size);
+  }
+}</pre>
+
+<p>申请和释放更是"两头操作链表"（<span class="pg">PDF p.177~178</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 申请：从链头取一个块 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> *
+<span style="color:#795E26">do_memp_malloc_pool</span><span style="color:#001080">(<span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> memp_desc *desc)</span>
+{
+  <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">memp</span> *<span style="color:#795E26">memp</span>;</span>
+  memp = *desc-&gt;tab;                       <span style="color:#008000">/* 取空闲链头 */</span>
+  <span style="color:#0000FF">if</span> (memp != <span style="color:#098658">NULL</span>)
+  {
+    *desc-&gt;tab = memp-&gt;next;               <span style="color:#008000">/* 链头后移 */</span>
+    <span style="color:#0000FF">return</span> ((<span style="color:#267F99">u8_t</span> *)memp + MEMP_SIZE);     <span style="color:#008000">/* 返回跳过管理头的用户空间 */</span>
+  }
+  <span style="color:#0000FF">return</span> <span style="color:#098658">NULL</span>;                             <span style="color:#008000">/* 池耗尽，返回 NULL */</span>
+}
+
+<span style="color:#008000">/* 释放：把块放回链头 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span>
+<span style="color:#795E26">do_memp_free_pool</span><span style="color:#001080">(<span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> memp_desc *desc, <span style="color:#267F99">void</span> *mem)</span>
+{
+  <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">memp</span> *<span style="color:#795E26">memp</span>;</span>
+  memp = (<span style="color:#0000FF">struct</span> memp *)(<span style="color:#267F99">void</span> *)((<span style="color:#267F99">u8_t</span> *)mem - MEMP_SIZE); <span style="color:#008000">/* 找回管理头 */</span>
+  memp-&gt;next = *desc-&gt;tab;                 <span style="color:#008000">/* 新块插到链头 */</span>
+  *desc-&gt;tab = memp;
+}</pre>
+
+<p>池耗尽时 <code>memp_malloc</code> 返回 NULL——还记得第 2 课 <code>low_level_input</code> 里 pbuf 申请失败就 <code>LINK_STATS_INC(link.memerr)</code> 丢包吗？就是这里池不够了。</p>
+
+<h2>4. 使用 C 库管理策略：一个"省事但不建议"的选项</h2>
+
+<p>把 <code>MEM_LIBC_MALLOC=1</code>，lwIP 的 <code>mem_malloc</code>/<code>mem_free</code> 就变成 C 库 <code>malloc</code>/<code>free</code> 的薄封装（<span class="pg">PDF p.178</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* mem.c 中可被覆盖的 C 库函数别名 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">ifndef</span> mem_clib_free</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> mem_clib_free        free</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">ifndef</span> mem_clib_malloc</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> mem_clib_malloc      malloc</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">ifndef</span> mem_clib_calloc</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> mem_clib_calloc      calloc</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span></pre>
+
+<p>为什么教材说"不建议"？两条硬伤（<span class="pg">PDF p.180</span>）：</p>
+<ul>
+<li>❌ C 库<strong>不能合并相邻的空闲内存块</strong>，反复申请释放后碎片化严重</li>
+<li>❌ C 库分配器体积大、行为不可控（有的还要求堆初始化配置），嵌入式场景难把握</li>
+</ul>
+
+<p>而且它和 lwIP 内存堆<strong>只能二选一</strong>。所以默认配置（三个宏全 0）就是"lwIP 自己的堆 + 自己的池"的组合拳。</p>
+
+<h2>5. 三方案对比选型</h2>
+
+<table>
+<tr><th>策略</th><th>速度</th><th>碎片</th><th>适用场景</th><th>代表用途</th></tr>
+<tr><td>动态内存池 memp</td><td>⚡ 快（链表头 O(1)）</td><td>无碎片（固定大小）</td><td>大小固定、频繁申请的数据结构</td><td>pbuf、TCP_PCB、TCP_SEG、API 消息</td></tr>
+<tr><td>动态内存堆 mem</td><td>🐢 慢（首次适应查找）</td><td>有碎片（但可合并相邻块）</td><td>大小可变、偶尔申请的大块数据</td><td>大缓冲区、用户自定义数据</td></tr>
+<tr><td>C 库 malloc</td><td>取决于实现</td><td>碎片严重（不合并）</td><td>基本不推荐</td><td>——</td></tr>
+</table>
+
+<p>选型口诀：<strong>固定小件用池，可变大块用堆，C 库靠边站</strong>。这也是 <code>pbuf_alloc</code> 分 <code>PBUF_POOL</code>（池，快）和 <code>PBUF_RAM</code>（堆，可大）两种来源的底层原因——第 6 课讲 pbuf 时你会回来再看这张表。</p>
+
+<div class="warn">
+  <p>⚠️ 调参指南：堆不够用改 <code>MEM_SIZE</code>，池不够用改 <code>MEMP_NUM_XXX</code> / <code>PBUF_POOL_SIZE</code>；改完记得看 <code>LWIP_STATS=1</code> 时的统计输出，别拍脑袋。内存对齐 <code>MEM_ALIGNMENT</code> 别乱动，4 字节对齐是 Cortex-M 的基本盘。</p>
+</div>
+
+<h2>动手练习（约 40 分钟，真机验证）</h2>
+
+<div class="practice">
+  <h3>练习 4.1：解剖你工程里的 mem.c / memp.c</h3>
+  <p class="step">1️⃣ 在"你的 lwIP 实验工程"里打开 <code>src/core/mem.c</code> 和 <code>src/core/memp.c</code>（以及 <code>src/include/lwip/priv/memp_std.h</code>）。</p>
+  <p class="step">2️⃣ 用搜索定位：<code>struct mem</code>、<code>mem_init</code>、<code>mem_malloc</code>、<code>mem_free</code>、<code>memp_init_pool</code>、<code>do_memp_malloc_pool</code>、<code>do_memp_free_pool</code>，对照本课贴出的代码逐行读。</p>
+  <p class="step">3️⃣ 在 <code>memp_std.h</code> 里数一数你的工程编译出了多少个池，对照 lwipopts.h 里的 <code>MEMP_NUM_*</code> 宏验证数量来源。</p>
+  <p class="step">✅ <strong>怎么做/观察什么</strong>：把 <code>mem_malloc</code> 的 for 循环和 <code>do_memp_malloc_pool</code> 的链表头操作各画一张小图（块/索引/指针关系），画完你就真正"见过"这两种算法了。能说出你的工程里 pbuf 池和 TCP_SEG 池各自的数量配置即达标。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 4.2：改 MEM_SIZE 与 PBUF_POOL_SIZE，观察系统反应</h3>
+  <p class="step">1️⃣ 把 <code>MEM_SIZE</code> 从 10*1024 改到 40*1024，编译对比 .map 文件里 RAM 占用变化，下载后 ping 验证功能不受影响。</p>
+  <p class="step">2️⃣ 把 <code>PBUF_POOL_SIZE</code> 从 8 改到 2，电脑上 <code>ping -l 1400 192.168.1.10</code> 发大包，观察丢包。</p>
+  <p class="step">3️⃣ （可选）把 <code>LWIP_STATS</code> 打开，串口观察 mem/memp 统计。</p>
+  <p class="step">✅ <strong>怎么做/观察什么</strong>：MEM_SIZE 变大 → RAM 占用明显上涨（堆是静态数组，编译期就占好位置）；PBUF_POOL_SIZE=2 时大包 ping 丢包率飙升——接收时 <code>pbuf_alloc(PBUF_RAW, len, PBUF_POOL)</code> 申请不到池块直接丢帧（对应 low_level_input 的 memerr 路径）。做完把两个参数改回原值，并在记录里写下"改哪个参数、系统有什么反应"。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 内存堆结构体 struct mem 的 next/prev 成员保存的是什么？</p>
+  <p class="opt">A. 相邻内存块的指针地址</p>
+  <p class="opt">B. 相对堆首的字节索引</p>
+  <p class="opt">C. 内存块的使用计数</p>
+  <details><summary>查看答案</summary><div class="answer">B。next/prev 保存的是内存块在 ram_heap 中的字节索引，配合 ptr_to_mem/mem_to_ptr 换算地址（PDF p.165、p.167）。</div></details>
+
+  <p class="q">Q2. lwIP 内存堆的 First Fit 分配算法，特点是？</p>
+  <p class="opt">A. 从高地址开始找最大的空闲块</p>
+  <p class="opt">B. 从低地址找第一个足够大的空闲块并切分</p>
+  <p class="opt">C. 每次都把堆平均切成两半</p>
+  <details><summary>查看答案</summary><div class="answer">B。lfree 指向最低地址空闲块，从它开始沿 next 找第一个"剩余够大"的块；优点保留高地址大块，缺点产生小碎片（PDF p.164、p.167）。</div></details>
+
+  <p class="q">Q3. 内存池申请失败时（池耗尽），memp_malloc 返回什么？</p>
+  <p class="opt">A. 0，表示分配成功</p>
+  <p class="opt">B. NULL，调用方需自行丢包处理</p>
+  <p class="opt">C. 自动转向内存堆继续分配</p>
+  <details><summary>查看答案</summary><div class="answer">B。do_memp_malloc_pool 取不到空闲块返回 NULL，例如 low_level_input 里 pbuf 申请失败就丢包并统计 memerr（PDF p.177，结合 PDF p.60）。</div></details>
+
+  <p class="q">Q4. 以下哪个是教材不建议使用 C 库 malloc 管理 lwIP 内存的原因？</p>
+  <p class="opt">A. C 库分配速度太快，容易造成缓冲区溢出</p>
+  <p class="opt">B. C 库不能合并相邻空闲块，碎片化严重</p>
+  <p class="opt">C. C 库不支持 4 字节对齐</p>
+  <details><summary>查看答案</summary><div class="answer">B。C 标准库管理策略不能合并相邻的空闲内存块，易碎片化；而 lwIP 堆策略可以合并，且 MEM_LIBC_MALLOC 与 lwIP 堆只能二选一（PDF p.180）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 4 章（PDF p.164~180）——本课全部依据</li>
+<li>📂 lwIP 源码 <code>src/core/mem.c</code>、<code>src/core/memp.c</code>、<code>src/include/lwip/priv/memp_std.h</code>——对照阅读的最佳教材</li>
+<li>📕 STM32F407 参考手册内存章节——MCU 内存布局与对齐要求的背景知识</li>
+<li>🌐 <a href="https://savannah.nongnu.org/projects/lwip/">lwIP 官网</a>——lwIP 2.1.3 源码与文档下载</li>
+</ul>
+
+<div class="footer-note">
+  <p>有不清楚的地方直接问我（Agent 就是你的老师）。下一课预告：第 5 课——网络接口管理（netif 结构体与多网卡链表）和数据包结构 pbuf，把"网卡怎么抽象、数据怎么装"这两块拼图补上，内核的面貌就基本完整了。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0003-freertos-porting.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0005-netif-and-pbuf.html">下一课：netif 与 pbuf →</a>
+</nav>
+
+</div>
+</body>
+</html>

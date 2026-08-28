@@ -1,10 +1,14 @@
----
+﻿---
 title: Qt 开发：07 App 实战全解析
 published: 2026-08-12
 description: 逐个 App 的组件清单、结构、关键代码逐行讲解。
 tags: [Qt, App, 实战]
 category: Qt
 draft: false
+prevTitle: ""
+prevSlug: ""
+nextTitle: "Qt 开发：06 图形效果与 3D、主题"
+nextSlug: "qt/06-图形效果与3d"
 ---
 
 # 07 App 实战全解析（逐个 App）
@@ -246,3 +250,4 @@ qt_dev 里 95% 是 QML，只有 openhome、screenview 是纯 Widgets：
 | 适用 | 大多数 App | 传统桌面工具、绘图/网络流 |
 
 > 新 App 建议直接 QML。需要底层快速绘图（如投屏逐帧解码绘制）时可考虑 Widgets 的 `paintEvent`。
+| — | [课程目录](/my-blog/posts/qt/00-总览/) | [下一课 →](/my-blog/posts/qt/06-图形效果与3d/) |

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 4 课：调试器实战 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 4 课</nav>
+
+<h1>第 4 课：调试器实战</h1>
+<p class="subtitle">ST-Link 驱动/配置/固件升级 + 在线调试技巧（正点原子《ST-Link V2 调试补充教程》全文）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>第 3 课讲"从复位到 main"是纸上的，这课把它变成眼睛能看到的。学完你能：独立完成 ST-Link 的驱动安装、MDK 配置与固件升级；熟练使用断点/条件断点、Watch、Call Stack、Peripherals、Memory 五大调试窗口，真机上下载调试你自己的工程。</p>
+</div>
+
+<h2>1. 仿真器就三件事</h2>
+
+<p>ST-Link 与 J-Link 的操作方法几乎 99% 相同（<span class="pg">PDF p.1</span>）。任何 JTAG/SWD 仿真器，会用的知识点就三个：</p>
+
+<ol>
+<li><strong>驱动的安装</strong>——让电脑认得出这个 USB 设备</li>
+<li><strong>编程软件（MDK）配置</strong>——让 MDK 认识调试器并连上芯片</li>
+<li><strong>固件升级方法</strong>——保持 ST-Link 自身固件最新</li>
+</ol>
+
+<h2>2. 驱动安装</h2>
+
+<p>拿到 ST-Link 资料包，解压后有两个 exe（<span class="pg">PDF p.1</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># ST-Link 官方驱动包内容</span>
+dpinst_x86.exe      <span style="color:#008000">// 32 位系统用</span>
+dpinst_amd64.exe    <span style="color:#008000">// 64 位系统首选（装失败再试 x86）</span></pre>
+
+<p>步骤（<span class="pg">PDF p.1-2</span>）：① 先运行 <code>dpinst_amd64.exe</code>，无报错即成功；② USB 插入 ST-Link；③ 打开<strong>设备管理器</strong>，应能看到新设备（WIN10 显示为 "STM32 STLINK"）。若设备名旁有<strong>黄色叹号</strong>，右键 → 更新设备驱动。</p>
+
+<div class="warn">
+  <p>⚠️ 不同 Windows 版本下设备名称和所在栏目不一样，别按图索骥。判断标准只有一个：<strong>没有黄色感叹号</strong>就是装好了（PDF p.2）。</p>
+</div>
+
+<h2>3. MDK 配置：Debug + Utilities</h2>
+
+<p>驱动好了，来让 MDK 认识调试器。只需改两个地方（<span class="pg">PDF p.2-5</span>）：</p>
+
+<h3>3.1 Debug 选项卡</h3>
+<ul>
+<li>魔术棒 → <strong>Debug 选项卡</strong> → 右上角调试器下拉选 <strong>"ST-Link Debugger"</strong>（用 J-Link 则选 "J-LINK/J-Trace Cortex"）<span class="pg">PDF p.3</span></li>
+<li>点右侧 <strong>Settings</strong> 按钮进入连接配置 <span class="pg">PDF p.3</span></li>
+</ul>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># Settings 界面（Debug 选项卡 → Settings）</span>
+调试方式:   JTAG  |   SWD   <span style="color:#008000">// 教材默认 JTAG；推荐改 SWD</span>
+连接速度:   1~5M 之间选择   <span style="color:#008000">// 默认 1.12M，线短可调高</span>
+设备类型:   STM32F407ZG 等  <span style="color:#008000">// 右侧 SW Device 应列出你的芯片</span></pre>
+
+<p><strong>JTAG vs SWD</strong>：两者用法一样，区别是 <strong>SWD 更省引脚</strong>（SWDIO + SWCLK 两根线就能调试），为了省资源推荐用 SWD 模式（<span class="pg">PDF p.4</span>）。速度一般 1~5M 之间选一个合适的（与 ST-Link 固件版本有关）。</p>
+
+<h3>3.2 Utilities 选项卡</h3>
+<p>按图核对 <strong>Utilities 选项卡</strong>的下载设置是否与教材一致（选 ST-Link，Settings 里勾上 Reset and Run 之类），不一致就修正（<span class="pg">PDF p.4-5</span>）。</p>
+
+<div class="tip">
+  <p>💡 咱们当前 CMake 工程已经自带一条现成的调试路径：<code>.vscode\launch.json</code> 里配好了 <code>cortex-debug + OpenOCD</code>，直接用 <code>interface/stlink.cfg</code> + <code>target/stm32f4x.cfg</code>、<code>"interface": "swd"</code>、<code>"runToEntryPoint": "main"</code>。MDK 里学的概念，在这份 JSON 里能看到一一对应（swd、stlink 接口、入口 main）。</p>
+</div>
+
+<h2>4. 固件升级</h2>
+
+<p>ST-Link 能正常用就别乱升级；确需升级时（<span class="pg">PDF p.5-8</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># Windows 下升级流程</span>
+1. 解压「ST-Link 固件升级软件.zip」，进 Windows 文件夹
+2. 运行 ST-LinkUpgrade.exe
+3. ST-Link 插上 USB，点界面上的 [Device Connect]
+4. 提示 "Please restart it" → 拔掉 USB 重插，再试
+5. 连接成功 → 点 [YES] 开始升级</pre>
+
+<div class="warn">
+  <p>⚠️ 升级过程中<strong>千万不能断开 USB 线，也别断网</strong>——中途断电会把 ST-Link 刷成砖（PDF p.7）。</p>
+</div>
+
+<h2>5. 扩展：在线调试实战技巧</h2>
+
+<p>教材之外，把这五个窗口练熟，排查问题快一半。先看演示代码：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 演示 1：断点 + Watch 观察变量
+ * 用一个定时器中断自增的计数，配合断点看它跳变 */</span>
+<span style="color:#0000FF">volatile</span> <span style="color:#267F99">uint16_t</span> g_tick = <span style="color:#098658">0</span>;   <span style="color:#008000">/* volatile：防优化，调试必加 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">TIM6_IRQHandler</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#0000FF">if</span> (__HAL_TIM_GET_FLAG(&amp;htim6, TIM_FLAG_UPDATE)) {
+        __HAL_TIM_CLEAR_FLAG(&amp;htim6, TIM_FLAG_UPDATE);
+        g_tick++;               <span style="color:#008000">/* 在这里下断点，Watch 里看 g_tick 变化 */</span>
+    }
+}
+
+<span style="color:#267F99">int</span> <span style="color:#795E26">main</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    HAL_Init();
+    ...
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+        HAL_Delay(<span style="color:#098658">1</span>);           <span style="color:#008000">/* 全速运行时，断点只在命中处停 */</span>
+    }
+}</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 演示 2：条件断点 —— 只在特定条件下暂停 */</span>
+<span style="color:#0000FF">for</span> (<span style="color:#267F99">uint32_t</span> i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">10000</span>; i++) {
+    process_sample(&amp;buf[i]);    <span style="color:#008000">/* 希望 i == 5000 时暂停，逐行检查 buf */</span>
+}</pre>
+
+<p>对应五大窗口怎么用：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># MDK 调试工具栏 / 快捷键（cortex-debug 插件同键位）</span>
+F5/F8   Run(全速)      F10/F10 单步跳过     F11    单步进入
+Ctrl+F11  跳出函数     Ctrl+F5 运行到光标    Ctrl+Shift+F9 清除所有断点
+
+<span style="color:#008000"># 五大窗口速览</span>
+Watch          <span style="color:#008000">// 加变量，看实时值/类型/地址（右键可改值）</span>
+Call Stack     <span style="color:#008000">// 函数调用栈：看当前停在哪、谁调了谁（点栈帧可跳转）</span>
+Peripherals    <span style="color:#008000">// 外设寄存器视图，如 GPIOA->ODR 实时亮灭</span>
+Memory         <span style="color:#008000">// 看裸内存，调 DMA 缓冲区/结构体首选</span>
+Disassembly    <span style="color:#008000">// 看 C 对应的汇编，配启动文件学习食用更佳</span></pre>
+
+<ul>
+<li><strong>断点</strong>：点代码行号左侧红点。断点命中即暂停，CPU 状态冻结，所有窗口都给你看</li>
+<li><strong>条件断点</strong>：右键断点 → Breakpoint… 填条件（如 <code>i == 5000</code>），避免一次次 F5</li>
+<li><strong>Call Stack</strong>：单步进 <code>HAL_Delay</code> 后看栈顶到 main 的完整调用链——和第 1 课 .htm 的调用图"实测版"一模一样</li>
+<li><strong>Peripherals</strong>：全速跑 LVGL 界面时盯着 GPIO 或定时器寄存器，看外设状态</li>
+</ul>
+
+<h2>动手练习（约 25 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 4.1：连接 ST-Link，下载调试当前工程</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>ST-Link 用 SWD 接线连到探索者开发板（SWDIO/SWCLK/GND，板上一般留了 4 针口），USB 插电脑，设备管理器确认无黄叹号。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>MDK 工程按第 3 节配 Debug（ST-Link Debugger + SWD + 1M~5M）+ Utilities；CMake 工程直接用 VS Code 的 "Debug with OpenOCD" 配置（<code>.vscode\launch.json</code> 已就绪）。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>下载完成那一刻，LCD/串口开始按程序运行。在 Settings 里看 SW Device 是否识别到 STM32F407，识别到 = 连接成功。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 4.2：断点 + 单步走 main</h3>
+  <p class="step">1️⃣ <strong>怎么做：</strong>在 <code>main</code> 第一行下断点 → 启动调试。若配置了 <code>runToEntryPoint: main</code>，会直接停在 main 入口。</p>
+  <p class="step">2️⃣ <strong>怎么做：</strong>把第 3 课的启动流程"现场直播"：取消 main 断点，在 <code>Reset_Handler</code> 或 <code>SystemInit</code> 下断点，单步看汇编跳转；再在 <code>g_tick++</code> 处设断点，把 <code>g_tick</code> 加进 Watch。</p>
+  <p class="step">3️⃣ <strong>观察什么：</strong>Watch 里 g_tick 每次断点命中都在变；Call Stack 能看到 main → HAL_Delay 的调用链；Peripherals 里看 GPIO 寄存器随 LVGL 刷新跳变。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 驱动安装成功后，判断标准是？</p>
+  <p class="opt">A. 设备管理器出现 ST-Link 且无黄叹号</p>
+  <p class="opt">B. dpinst_amd64.exe 能双击打开</p>
+  <p class="opt">C. 设备管理器里名称叫 STLINK</p>
+  <details><summary>查看答案</summary><div class="answer">A。名称因系统而异，唯一硬标准是设备管理器无黄色叹号（PDF p.2）。</div></details>
+
+  <p class="q">Q2. MDK 中应选择哪种调试方式以节省引脚？</p>
+  <p class="opt">A. JTAG，速度快且稳定</p>
+  <p class="opt">B. SWD，只占两根信号线</p>
+  <p class="opt">C. ISP，直接串口下载</p>
+  <details><summary>查看答案</summary><div class="answer">B。SWD 只需 SWDIO+SWCLK，更省引脚，推荐使用（PDF p.4）。</div></details>
+
+  <p class="q">Q3. ST-Link 固件升级过程中绝对禁止？</p>
+  <p class="opt">A. 点击 Device Connect 按钮</p>
+  <p class="opt">B. 断开 USB 线或断网</p>
+  <p class="opt">C. 重复运行升级软件</p>
+  <details><summary>查看答案</summary><div class="answer">B。中途断电断网会刷坏 ST-Link（PDF p.7）。</div></details>
+
+  <p class="q">Q4. 想让程序只在 i == 5000 时停下，最合适用？</p>
+  <p class="opt">A. 条件断点，填 i == 5000</p>
+  <p class="opt">B. 普通断点，多按几次 F5</p>
+  <p class="opt">C. Watch 窗口监视变量</p>
+  <details><summary>查看答案</summary><div class="answer">A。条件断点在命中条件时才暂停，避免反复 F5（本课扩展技巧）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《ST-Link V2 调试补充教程》全文（PDF p.1~8）——本课驱动/配置/升级依据</li>
+<li>📖《STM32F4 开发指南》3.4.2 节 JLINK 下载与调试、4.2 节在线调试——通用调试步骤</li>
+<li>🔧 本工程 <code>.vscode\launch.json</code>——OpenOCD + cortex-debug 现成配置对照</li>
+</ul>
+
+<div class="footer-note">
+  <p>连不上、下不进、断点不生效——把这几个词丢给我，咱们一起查。下一课预告：第 5 课——代码规范与排版注释，把调试出的好代码再打磨得体面。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0003-startup-file.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0005-coding-style-format.html">下一课：规范总览与排版注释 →</a>
+</nav>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 20 课：综合项目：CAN 多媒体节点 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 20 课</nav>
+
+<h1>第 20 课：综合项目：CAN 多媒体节点</h1>
+<p class="subtitle">用一条 CAN 总线遥控开发板播 WAV、显 BMP——把工具箱所有模块拧成一台机器</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>收官之作。把前 19 课（CAN 收发、WAV 播放、BMP 显示、串口调试、MAP 分析、代码规范）串成一个真实项目：<strong>上位机或另一节点通过 CAN 发命令 → 开发板执行 → 回发状态帧</strong>。学完你能按"先链路、后功能、再回传"的节奏把它一步步搭出来，并用 MAP 文件给自己打一份占用账单。</p>
+</div>
+
+<h2>1. 项目蓝图：CAN 多媒体节点</h2>
+
+<p>一句话：<strong>一台"总线遥控的多媒体机"</strong>。总线上的命令方（PC 上位机、CAN 分析仪、或另一块板）通过 CAN 给开发板下指令，开发板执行并汇报状态。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 帧 ID 规划（写在 README 里，写码前先定死）</span>
+0x123  命令帧 →  播放 WAV（data[0] = 曲目号）
+0x124  命令帧 →  显示 BMP（data[0] = 图片号）
+0x125  命令帧 →  停止（停止播放/清屏）
+0x321  状态帧 ←  开发板回传（data[0] = 状态码, data[1] = 最近命令）
+
+<span style="color:#008000"># 状态码约定</span>
+0x00 空闲   0x01 播放中   0x02 显示中   0xFF 未知命令</pre>
+
+<h2>2. 模块复用清单：工具箱大检阅</h2>
+
+<p>这个项目是"搭积木"，每一块都在前面的课里见过：</p>
+
+<table>
+<tr><th>模块</th><th>来源</th><th>在项目里的角色</th></tr>
+<tr><td><strong>CAN 收发</strong></td><td>第 19 课</td><td>收命令、发状态</td></tr>
+<tr><td><strong>WAV 播放器</strong></td><td>音频课程</td><td>0x123 → 播放指定曲目</td></tr>
+<tr><td><strong>BMP 解析器</strong></td><td>图像课程</td><td>0x124 → 显示指定图片</td></tr>
+<tr><td><strong>串口调试</strong></td><td>第 7~8 课</td><td>打印收到的命令，联调期间"看得见"</td></tr>
+<tr><td><strong>代码规范</strong></td><td>第 5~6 课</td><td>命名/头文件/单一职责，让工程可维护</td></tr>
+<tr><td><strong>MAP 文件分析</strong></td><td>第 1~2 课</td><td>验证 Flash/RAM 占用</td></tr>
+</table>
+
+<h2>3. 分步实现清单（5 步）</h2>
+
+<p>原则：<strong>每一步都可编译、可验证</strong>，绝不在没跑通的上一步上叠新功能。</p>
+
+<ol>
+<li><strong>① CAN 收发先跑通</strong>：第 19 课代码原样搬过来，Loopback 验证 → Normal 双机验证（无第二台就先用 Loopback + 串口自证）</li>
+<li><strong>② 串口打印命令</strong>：把回调里收到的 <code>rxData[0]</code> 当命令码，串口打印 <code>CMD=0x..</code>——此时链路已"看得见"</li>
+<li><strong>③ 接 BMP 显示</strong>：收到 0x124 调用 BMP 显示函数，图片能出来</li>
+<li><strong>④ 接 WAV 播放</strong>：收到 0x123 调用 WAV 播放函数，声音能出来</li>
+<li><strong>⑤ 状态回传</strong>：每一步执行完用 0x321 回发状态帧，上位机"看得到"开发板状态</li>
+</ol>
+
+<h2>4. 代码规范自查</h2>
+
+<p>用第 5~7 课的规范给自己的代码打分（每项 ✓/✗）：</p>
+
+<ul>
+<li>命名：函数 <code>can_cmd_dispatch</code> / 变量 <code>last_cmd_id</code>，见名知意，无拼音缩写</li>
+<li>头文件：声明与实现分离，<code>can_app.h</code> 只暴露必须暴露的函数</li>
+<li>单一职责：<code>wav_play_track()</code> 只管播放，<code>can_send_status()</code> 只管回传，分发函数里没有超过 20 行的分支</li>
+<li>注释：硬件相关（波特率怎么来的、收发器注意点）写清楚；废话注释不写</li>
+<li>可读性：魔法数字（0x123/0x124…）用 <code>#define</code> 或 <code>enum</code> 命名</li>
+</ul>
+
+<h2>5. 验收标准（可勾选）</h2>
+
+<div class="practice">
+  <h3>项目验收单</h3>
+  <p class="step">☐ 发 0x123（带曲目号）→ 开发板开始播放 WAV，回传 0x321/0x01</p>
+  <p class="step">☐ 发 0x124（带图片号）→ 开发板显示对应 BMP，回传 0x321/0x02</p>
+  <p class="step">☐ 发 0x125 → 停止播放并清屏，回传 0x321/0x00</p>
+  <p class="step">☐ 连续快速乱发命令，无卡死、无硬错误（Fault 不进 HardFault_Handler）</p>
+  <p class="step">☐ 栈深合理：用第 1 课 .htm 方法核对，Stack_Size 不低于静态栈深 2 倍</p>
+  <p class="step">☐ 代码规范自查 5 项全 ✓</p>
+</div>
+
+<div class="tip">
+  <p>💡 关键节奏：<strong>先让"能发能收"可见，再挂功能，最后回状态</strong>。第 2 步串口打印就是你的"最小可验证点"——从它开始，每加一步都有成就感且随时可回退。</p>
+</div>
+
+<div class="warn">
+  <p>⚠️ 两个坑：① <strong>别在中断回调里做耗时操作</strong>（播放/显示放主循环或任务），回调只置标志；② 命令帧和状态帧的 ID、数据字节含义<strong>写进 README 再动手</strong>——联调时"两边对不上协议"是最大的时间黑洞。</p>
+</div>
+
+<h2>代码示例</h2>
+
+<p>下面两段是项目的"总装"代码：命令分发（主循环逻辑）和状态回传。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 收到一帧后的&quot;命令解析 + 执行&quot;：每个 case 只做一件事 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">can_cmd_dispatch</span><span style="color:#001080">(CAN_RxHeaderTypeDef *rx, <span style="color:#267F99">uint8_t</span> *data)</span>
+{
+    <span style="color:#0000FF">switch</span> (rx-&gt;StdId) {
+    <span style="color:#0000FF">case</span> <span style="color:#098658">0x123</span>:                        <span style="color:#008000">/* 播放 WAV：data[0] = 曲目号 */</span>
+        wav_play_track(data[<span style="color:#098658">0</span>]);
+        can_send_status(<span style="color:#098658">0x01</span>);         <span style="color:#008000">/* 回状态帧：播放中 */</span>
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">case</span> <span style="color:#098658">0x124</span>:                        <span style="color:#008000">/* 显示 BMP：data[0] = 图片号 */</span>
+        bmp_show(data[<span style="color:#098658">0</span>]);
+        can_send_status(<span style="color:#098658">0x02</span>);         <span style="color:#008000">/* 回状态帧：显示中 */</span>
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">case</span> <span style="color:#098658">0x125</span>:                        <span style="color:#008000">/* 停止 */</span>
+        wav_stop();
+        bmp_clear();
+        can_send_status(<span style="color:#098658">0x00</span>);
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">default</span>:
+        can_send_status(<span style="color:#098658">0xFF</span>);         <span style="color:#008000">/* 未知命令 */</span>
+        <span style="color:#0000FF">break</span>;
+    }
+}
+
+<span style="color:#008000">/* 主循环：消费回调里置的&quot;收到新帧&quot;标志（rx_pending），不在中断里跑业务 */</span>
+<span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+    <span style="color:#0000FF">if</span> (rx_pending) {
+        rx_pending = <span style="color:#098658">0</span>;
+        can_cmd_dispatch(&amp;rx_header, rx_data);
+    }
+}
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 回传状态帧：0x321 + 状态码 + 最近命令 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">can_send_status</span><span style="color:#001080">(<span style="color:#267F99">uint8_t</span> status)</span>
+{
+    CAN_TxHeaderTypeDef tx;
+    <span style="color:#267F99">uint8_t</span> buf[<span style="color:#098658">2</span>];
+    <span style="color:#267F99">uint32_t</span> mb;
+
+    tx.StdId = <span style="color:#098658">0x321</span>;               <span style="color:#008000">/* 状态帧 ID */</span>
+    tx.IDE   = CAN_ID_STD;
+    tx.RTR   = CAN_RTR_DATA;
+    tx.DLC   = <span style="color:#098658">2</span>;
+    buf[<span style="color:#098658">0</span>] = status;                <span style="color:#008000">/* 0x00 空闲 / 0x01 播放 / 0x02 显示 / 0xFF 未知 */</span>
+    buf[<span style="color:#098658">1</span>] = last_cmd_id;           <span style="color:#008000">/* 刚才执行的命令 ID */</span>
+    HAL_CAN_AddTxMessage(&amp;hcan1, &amp;tx, buf, &amp;mb);
+}
+</pre>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 20.1：完成第 1~3 步（CAN 收发 → 串口打印 → 接 BMP 显示）</h3>
+  <p class="step">1️⃣ 第 1 步：CAN 收发跑通（Loopback 或双机），串口能看到收发日志。</p>
+  <p class="step">2️⃣ 第 2 步：把回调收到的命令码打印出来，发 0x123/0x124/0x125 各一次，串口依次显示 CMD。</p>
+  <p class="step">3️⃣ 第 3 步：接上 BMP 模块，发 0x124 → 屏幕显示出图片；不显示就回到"串口打印"那步确认命令真的到了。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 20.2：用 MAP 文件验证 Flash/RAM 占用</h3>
+  <p class="step">1️⃣ 完整编译，打开工程的 .map 文件，翻到 "Image component sizes" 一节。</p>
+  <p class="step">2️⃣ 记下加入 CAN/WAV/BMP 模块后的 Code / RO-data / RW-data / ZI-data 四类总量（单位字节）。</p>
+  <p class="step">3️⃣ 与未加这些模块的旧版本对比增量，算一算：CAN 驱动 + 应用层大约吃掉多少 Flash 和 RAM？这份账单值不值？</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 项目里 0x123 帧的职责是什么？</p>
+  <p class="opt">A. 播放 WAV 的命令帧</p>
+  <p class="opt">B. 开发板回传的状态帧</p>
+  <p class="opt">C. 停止所有操作的控制帧</p>
+  <details><summary>查看答案</summary><div class="answer">A。0x123 播放 WAV、0x124 显示 BMP、0x125 停止、0x321 回传状态。</div></details>
+
+  <p class="q">Q2. 收到命令后正确的处理顺序是？</p>
+  <p class="opt">A. 解析 ID → 分派执行 → 回传状态</p>
+  <p class="opt">B. 先清屏 → 再判断 ID → 最后播放</p>
+  <p class="opt">C. 直接执行 → 出错再回传状态</p>
+  <details><summary>查看答案</summary><div class="answer">A。先按 ID 分派，每个分支执行一件事并回传状态，未知命令回 0xFF。</div></details>
+
+  <p class="q">Q3. 中断回调里应该放什么？</p>
+  <p class="opt">A. 快取帧 + 置标志，业务放主循环</p>
+  <p class="opt">B. 直接播放 WAV 和刷新屏幕</p>
+  <p class="opt">C. 阻塞等待串口空闲再处理</p>
+  <details><summary>查看答案</summary><div class="answer">A。耗时操作放主循环/任务，避免阻塞中断导致丢帧或卡死。</div></details>
+
+  <p class="q">Q4. 用什么文件查看各模块的 Flash/RAM 占用？</p>
+  <p class="opt">A. .map 的 Image component sizes</p>
+  <p class="opt">B. .htm 的最大栈深报告</p>
+  <p class="opt">C. .o 文件的反汇编清单</p>
+  <details><summary>查看答案</summary><div class="answer">A。MAP 文件的 Image component sizes 给出每模块 Code/RO/RW/ZI 占用（第 2 课）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 本课程第 1~2 课（MAP 文件）、第 5~6 课（代码规范）、第 7~8 课（串口调试）——本项目的"零件仓库"</li>
+<li>📖 瑞萨《CAN 入门教程》——回炉 CAN 概念时随时翻</li>
+</ul>
+
+<div class="footer-note">
+  <p>🎓 20 课到此收官！你把这条总线从"两根线"讲到了"能遥控多媒体机"。接下来给自己的项目留一点升级空间：加 CAN 错误统计、做波特率可配置、或用 FreeRTOS 把命令分发做成任务——工具箱里每一件工具都还能再打磨。有任何不清楚的地方，直接问我（Agent 就是你的老师）。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0019-can-bxcan-in-action.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a class="disabled" href="#">下一课</a>
+</nav>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0012 · 系统与命令行 sys/os.environ/argparse</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>系统与命令行 sys / os.environ / argparse</h1>
+<p class="meta">Pythonic 代码 · 课程 0012 · 预计 20 分钟</p>
+
+<p>写命令行工具时,C 程序要用 argc/argv 手动解析参数。Python 更舒服:<code>sys</code> 拿命令行列参数、退出码、标准输出;<code>os.environ</code> 拿环境变量;<code>argparse</code> 自动解析复杂参数(还能生成 --help)。本课让你能写「真正的 Python 命令行程序」。</p>
+
+<h2>知识点 1:sys.argv——命令行列参数</h2>
+<p>运行 <code>python script.py a b c</code> 时,<code>sys.argv</code> 是 <code>["script.py", "a", "b", "c"]</code>:第 0 项是脚本名,从第 1 项起是你的参数(都是字符串):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">sys</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">argv</span><span style="color: #000">)</span>          <span style="color: #008000"># [&#39;script.py&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;]</span>
+<span style="color: #008000"># 取参数时要判长度,否则越界</span>
+<span style="color: #00F">if</span> <span style="color: #0070C1">len</span><span style="color: #000">(</span><span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">argv</span><span style="color: #000">)</span> <span style="color: #000">&gt;</span> <span style="color: #098658">1</span><span style="color: #000">:</span>
+    <span style="color: #001080">name</span> <span style="color: #000">=</span> <span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">argv</span><span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">]</span>   <span style="color: #008000"># 简单场景手拿即可</span>
+</pre>
+<p>要点:<code>sys.argv[0]</code> 是脚本名,真正参数从 1 开始;<code>sys.argv</code> 里都是字符串,数字参数要自己转 int/float。简单脚本手拿即可,复杂参数用 argparse。</p>
+
+<h2>知识点 2:sys.exit 退出码与标准错误</h2>
+<p>程序出错想非零退出(像 C 的 return;shell 和 CI 会看退出码),用 <code>sys.exit(码)</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">sys</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">main</span><span style="color: #000">():</span>
+    <span style="color: #00F">return</span> <span style="color: #098658">0</span>     <span style="color: #008000"># 通常主函数 return 0</span>
+    <span style="color: #008000"># 出错:</span>
+    <span style="color: #008000"># sys.exit(1)   # 非零=失败</span>
+</pre>
+<p>报错信息应该打到<strong>标准错误</strong>(stderr)而不是 stdout,用 <code>sys.stderr</code>;正常输出用 <code>sys.stdout</code>/print:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">sys</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;正常结果&quot;</span><span style="color: #000">,</span> <span style="color: #001080">file</span><span style="color: #000">=</span><span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">stdout</span><span style="color: #000">)</span>   <span style="color: #008000"># 或直接 print</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;出错&quot;</span><span style="color: #000">,</span> <span style="color: #001080">file</span><span style="color: #000">=</span><span style="color: #001080">sys</span><span style="color: #000">.</span><span style="color: #001080">stderr</span><span style="color: #000">)</span>       <span style="color: #008000"># 走标准错误</span>
+</pre>
+<p>区分:<code>stdout</code> 是「结果」,<code>stderr</code> 是「诊断/错误」。shell 里 <code>2&gt;&amp;1</code> 才能把 stderr 也重定向。</p>
+
+<h2>知识点 3:os.environ——环境变量</h2>
+<p>读环境变量用 <code>os.environ</code>(一个类字典),没设置时用 <code>.get</code> 给默认值:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">os</span>
+<span style="color: #001080">h</span> <span style="color: #000">=</span> <span style="color: #001080">os</span><span style="color: #000">.</span><span style="color: #001080">environ</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;HOME&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;/tmp&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 取不到给默认</span>
+<span style="color: #001080">db</span> <span style="color: #000">=</span> <span style="color: #001080">os</span><span style="color: #000">.</span><span style="color: #001080">environ</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;DB_URL&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 没设就是 &quot;&quot;</span>
+<span style="color: #008000"># 敏感配置(密码/密钥)优先放环境变量,别写死在代码里</span>
+</pre>
+<p>安全习惯:密钥、路径、开关这类「因环境而异」的配置放环境变量,代码里只读。用 <code>os.environ.get(name, default)</code> 别直接 <code>os.environ[name]</code>(没有会 KeyError)。</p>
+
+<h2>知识点 4:argparse——自动解析参数 + 自带 --help</h2>
+<p>参数多时用 <code>argparse</code>,它负责解析、转类型、校验、生成帮助信息。三步:创建 → 声明参数 → parse:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">argparse</span>
+
+<span style="color: #001080">p</span> <span style="color: #000">=</span> <span style="color: #001080">argparse</span><span style="color: #000">.</span><span style="color: #001080">ArgumentParser</span><span style="color: #000">(</span><span style="color: #001080">description</span><span style="color: #000">=</span><span style="color: #A31515">&quot;计算器&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">add_argument</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #0070C1">type</span><span style="color: #000">=</span><span style="color: #0070C1">int</span><span style="color: #000">,</span> <span style="color: #001080">help</span><span style="color: #000">=</span><span style="color: #A31515">&quot;第一个数&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">add_argument</span><span style="color: #000">(</span><span style="color: #A31515">&quot;--op&quot;</span><span style="color: #000">,</span> <span style="color: #001080">choices</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;+&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;-&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;*&quot;</span><span style="color: #000">],</span> <span style="color: #001080">default</span><span style="color: #000">=</span><span style="color: #A31515">&quot;+&quot;</span><span style="color: #000">,</span>
+               <span style="color: #001080">help</span><span style="color: #000">=</span><span style="color: #A31515">&quot;运算&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">add_argument</span><span style="color: #000">(</span><span style="color: #A31515">&quot;-v&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;--verbose&quot;</span><span style="color: #000">,</span> <span style="color: #001080">action</span><span style="color: #000">=</span><span style="color: #A31515">&quot;store_true&quot;</span><span style="color: #000">,</span>
+               <span style="color: #001080">help</span><span style="color: #000">=</span><span style="color: #A31515">&quot;打印细节&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">args</span> <span style="color: #000">=</span> <span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">parse_args</span><span style="color: #000">()</span>
+
+<span style="color: #00F">if</span> <span style="color: #001080">args</span><span style="color: #000">.</span><span style="color: #001080">op</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;+&quot;</span><span style="color: #000">:</span>
+    <span style="color: #001080">result</span> <span style="color: #000">=</span> <span style="color: #001080">args</span><span style="color: #000">.</span><span style="color: #001080">a</span> <span style="color: #000">+</span> <span style="color: #001080">args</span><span style="color: #000">.</span><span style="color: #001080">a</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">args</span><span style="color: #000">.</span><span style="color: #001080">a</span><span style="color: #000">,</span> <span style="color: #001080">args</span><span style="color: #000">.</span><span style="color: #001080">op</span><span style="color: #000">,</span> <span style="color: #001080">result</span><span style="color: #000">)</span>   <span style="color: #008000"># args.a / args.op 自动可用</span>
+</pre>
+<p>运行 <code>python calc.py 5 --op - --verbose</code> 就能拿到 <code>args.a=5</code>。自动生成 <code>--help</code>:<code>python calc.py --help</code>。<code>action="store_true"</code> 是布尔开关,<code>choices</code> 限定可取值,<code>type=int</code> 自动转成 int。</p>
+
+<h2>知识点 5:推荐的结构——if __name__ == "__main__"</h2>
+<p>命令行入口常写成 <code>if __name__ == "__main__": main()</code>,这样脚本既能被 import(不执行),也能被直接运行:这是 Python 的程序入口习惯,像 C 的 <code>int main()</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">main</span><span style="color: #000">():</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">&quot;程序从这里开始&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #00F">if</span> <span style="color: #001080">__name__</span> <span style="color: #000">==</span> <span style="color: #A31515">&quot;__main__&quot;</span><span style="color: #000">:</span>
+    <span style="color: #001080">main</span><span style="color: #000">()</span>
+</pre>
+<p><code>__name__</code> 在直接运行时是 <code>"__main__"</code>,被 import 时是模块名。套这个判断,写错 import 也不会误执行。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">sys.argv[0] 是?</p>
+  <button class="opt" data-ok="false">第一个参数</button>
+  <button class="opt" data-ok="true">脚本名</button>
+  <button class="opt" data-ok="false">参数个数</button>
+  <button class="opt" data-ok="false">退出码</button>
+  <p class="reveal">argv[0] 是脚本名,真正的参数从 argv[1] 开始。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">报错信息应打到哪?</p>
+  <button class="opt" data-ok="false">print 即可</button>
+  <button class="opt" data-ok="true">sys.stderr</button>
+  <button class="opt" data-ok="false">sys.argv</button>
+  <button class="opt" data-ok="false">文件里</button>
+  <p class="reveal">诊断/错误打 stderr;正常结果打 stdout,便于 shell 区分。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">读环境变量且没设置时给默认值?</p>
+  <button class="opt" data-ok="false">os.environ["X"]</button>
+  <button class="opt" data-ok="true">os.environ.get("X", 默认)</button>
+  <button class="opt" data-ok="false">sys.environ.get</button>
+  <button class="opt" data-ok="false">pathlib.env</button>
+  <p class="reveal">os.environ.get(name, default),没有也不会 KeyError。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">复杂命令行参数解析 + 自动 --help,用?</p>
+  <button class="opt" data-ok="false">手写 sys.argv</button>
+  <button class="opt" data-ok="true">argparse</button>
+  <button class="opt" data-ok="false">os.system</button>
+  <button class="opt" data-ok="false">sys.exit</button>
+  <p class="reveal">argparse 自动解析参数、转类型、生成 --help,比手写 sys.argv 强。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0012_系统与命令行.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:打印 sys.argv;跑一个带参数的程序;写退出码到 stderr</li>
+  <li><strong>练习 B</strong>:用 argparse 写一个 mini CLI(接收两个 int + 操作符);读环境变量给默认值</li>
+  <li><strong>练习 C</strong>:把 repo 里一段「脚本到处 print / 硬编码配置」改成 if __name__ + argparse + os.environ</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档<a href="https://docs.python.org/zh-cn/3/howto/argparse.html">argparse 教程</a></strong>:看完 leader 那节你就能写常用 CLI;「<a href="https://docs.python.org/zh-cn/3/library/sys.html">sys 模块</a>」挑 argv/exit/stderr 看。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:argparse 生成 --help 有没有惊艳你?下一课讲<strong>网络编程 requests / socket</strong>——发 HTTP 请求、抓网页/调 API。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0011-文件与目录.html">← 上一篇:文件与目录 os / shutil / json / csv</a>
+  <a href="index.html">课程地图</a>
+  <a href="0013-网络编程.html">下一篇:网络编程 requests / socket →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

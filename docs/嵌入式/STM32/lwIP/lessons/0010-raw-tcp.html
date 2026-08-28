@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 10 课：RAW API · TCP — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 10 课</nav>
+
+<h1>第 10 课：RAW API · TCP</h1>
+<p class="subtitle">TCP 协议、三次握手与四次挥手、状态机、tcp_pcb 控制块、TCP 客户端与服务器实验</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>UDP 是"发出去就完事"，TCP 是"说到做到、按序送达"。学完你能说清：三次握手/四次挥手每一步的状态变化、lwIP 的 TCP 状态机和 tcp_pcb 里滑动窗口怎么回事、以及用 RAW API 分别写一个 TCP 客户端（主动连）和一个 TCP 服务器（被动等）的最小完整代码。最终用网络调试助手 + Wireshark 亲眼验证握手与数据流。</p>
+</div>
+
+<h2>1. TCP 协议：可靠字节流的"承诺"</h2>
+
+<p>TCP（Transmission Control Protocol）是<strong>面向连接、可靠、基于字节流</strong>的传输层协议（正点原子《lwIP 开发指南 V1.7》第 12.1.1 节 <span class="pg">PDF p.281</span>）。它给每个字节编号（序号），接收方按序号确认（ACK）；发送方在合理往返时延（RTT）内没收到 ACK 就认为丢包并重传。可靠性的三大支柱：<strong>序号 + ACK + 重传</strong>。</p>
+
+<h3>1.1 建立连接：三次握手（<span class="pg">PDF p.281</span>）</h3>
+
+<table>
+<tr><th>步骤</th><th>客户端 → 服务器</th><th>状态变化</th></tr>
+<tr><td>第 1 次</td><td>SYN=1，seq=x（不携带数据，消耗一个序号）</td><td>CLOSED → SYN_SENT</td></tr>
+<tr><td>第 2 次</td><td>服务器回 SYN=1，ACK=1，seq=y，ack=x+1</td><td>LISTEN → SYN_RCVD</td></tr>
+<tr><td>第 3 次</td><td>客户端回 ACK=1，seq=x+1，ack=y+1</td><td>SYN_SENT → ESTABLISHED（服务器收后也 ESTABLISHED）</td></tr>
+</table>
+
+<h3>1.2 终止连接：四次挥手（<span class="pg">PDF p.282</span>）</h3>
+
+<table>
+<tr><th>步骤</th><th>动作</th><th>状态变化</th></tr>
+<tr><td>第 1 次</td><td>客户端发 FIN=1，seq=u，停止发送数据</td><td>ESTABLISHED → FIN_WAIT_1</td></tr>
+<tr><td>第 2 次</td><td>服务器回 ACK，ack=u+1</td><td>→ CLOSE_WAIT；客户端 → FIN_WAIT_2</td></tr>
+<tr><td>第 3 次</td><td>服务器发 FIN=1，ACK=1</td><td>CLOSE_WAIT → LAST_ACK</td></tr>
+<tr><td>第 4 次</td><td>客户端回 ACK</td><td>客户端 TIME_WAIT（2MSL 后 CLOSED），服务器直接 CLOSED</td></tr>
+</table>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>握手 3 条报文、挥手 4 条报文</strong>——挥手多一条是因为连接是全双工的，每一方向都要"我说完 → 你确认"，两个方向独立进行。</p>
+</div>
+
+<h2>2. TCP 报文结构（<span class="pg">PDF p.283</span>）</h2>
+
+<p>TCP 首部最小 20 字节，关键字段：</p>
+
+<ul>
+<li><strong>源/目的端口</strong>（16 位 ×2）：标识两端应用进程</li>
+<li><strong>序号 seq</strong>（32 位）：本报文段第一个数据字节的编号</li>
+<li><strong>确认号 ack</strong>（32 位）：期望收到的下一个字节序号，仅 ACK=1 时有效</li>
+<li><strong>标志位</strong>（6 位）：URG 紧急 / ACK 确认有效 / PSH 尽快上交应用 / RST 重建连接 / SYN 发起连接 / FIN 释放连接</li>
+<li><strong>窗口大小</strong>（16 位）：接收方通告自己还能收多少字节，用于流量控制</li>
+<li><strong>校验和 / 紧急指针 / 选项</strong>：校验覆盖整个报文段；选项含 MSS、时间戳、窗口扩大因子等</li>
+</ul>
+
+<p>lwIP 用 <code>struct tcp_hdr</code> 描述（<span class="pg">PDF p.284</span>），字段与上图一一对应，其中 <code>_hdrlen_rsvd_flags</code> 一个 u16 打包了"首部长度 + 保留位 + 标志位"。</p>
+
+<h2>3. lwIP 的 TCP 状态机（<span class="pg">PDF p.285</span>）</h2>
+
+<p>lwIP 在 tcpbase.h 用枚举 <code>tcp_state</code> 定义全部 11 个状态：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* tcpbase.h 中的 TCP 状态枚举 */</span>
+<span style="color:#267F99"><span style="color:#0000FF">enum</span> <span style="color:#795E26">tcp_state</span> {</span>
+  CLOSED      = <span style="color:#098658">0</span>,   <span style="color:#008000">/* 关闭状态 */</span>
+  LISTEN      = <span style="color:#098658">1</span>,   <span style="color:#008000">/* 监听状态（服务器被动等连接） */</span>
+  SYN_SENT    = <span style="color:#098658">2</span>,   <span style="color:#008000">/* 已发送连接请求（客户端主动连接中） */</span>
+  SYN_RCVD    = <span style="color:#098658">3</span>,   <span style="color:#008000">/* 已接收连接请求（服务器收到 SYN） */</span>
+  ESTABLISHED = <span style="color:#098658">4</span>,   <span style="color:#008000">/* 连接已建立，可以收发数据 */</span>
+  FIN_WAIT_1  = <span style="color:#098658">5</span>,   <span style="color:#008000">/* 程序已关闭该连接（已发 FIN） */</span>
+  FIN_WAIT_2  = <span style="color:#098658">6</span>,   <span style="color:#008000">/* 另一端已关闭连接（已收 ACK） */</span>
+  CLOSE_WAIT  = <span style="color:#098658">7</span>,   <span style="color:#008000">/* 等待程序关闭连接（已收对方 FIN） */</span>
+  CLOSING     = <span style="color:#098658">8</span>,   <span style="color:#008000">/* 两端同时收到对方的关闭请求 */</span>
+  LAST_ACK    = <span style="color:#098658">9</span>,   <span style="color:#008000">/* 服务器等待对方确认关闭 */</span>
+  TIME_WAIT   = <span style="color:#098658">10</span>   <span style="color:#008000">/* 关闭成功，等 2MSL 后彻底释放 */</span>
+};
+</pre>
+
+<p>配合教材的 TCP 状态变迁图（<span class="pg">PDF p.286</span>）：客户端走 <code>CLOSED → SYN_SENT → ESTABLISHED → FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT → CLOSED</code>；服务器走 <code>CLOSED → LISTEN → SYN_RCVD → ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED</code>。抓包时对照这个状态看，包和状态就"对上了号"。</p>
+
+<h2>4. TCP 控制块 tcp_pcb 的关键字段（<span class="pg">PDF p.287</span>）</h2>
+
+<p>tcp_pcb 是 TCP 的"灵魂"，成员很多（TCP 占了 lwIP 源码一半），抓住这几组即可：</p>
+
+<ul>
+<li><strong>接收窗口</strong>：<code>rcv_nxt</code>（期望收到的下一个序号）、<code>rcv_wnd</code>（接收窗口大小）、<code>rcv_ann_wnd</code>（要通告给对方的窗口值，填进报文首部）、<code>rcv_ann_right_edge</code>（上次通告的窗口右边界）</li>
+<li><strong>发送窗口</strong>：<code>lastack</code>（已被对方确认的最高序号）、<code>snd_nxt</code>（下一个要发的序号）、<code>snd_wnd</code>（发送窗口大小，通常=对方通告的接收窗口）、<code>snd_lbb</code>（下一个将被应用缓存的字节序号）</li>
+<li><strong>发送缓冲队列</strong>：<code>unsent</code>（未发送的报文段）、<code>unacked</code>（已发未确认，超时重传用）——都由 <code>tcp_seg</code> 串成链表</li>
+<li><strong>回调函数指针</strong>：<code>sent / recv / connected / poll / errf</code>——RAW API 的"接线端子"</li>
+<li><strong>监听专用</strong>：<code>tcp_pcb_listen</code> 只记录本地端口和 accept 回调，省内存；来了 SYN 再分配完整控制块无缝切换</li>
+</ul>
+
+<p>内核用四条链表管理控制块：<code>tcp_bound_pcbs</code>（已绑定未连接）、<code>tcp_listen_pcbs</code>（监听中）、<code>tcp_active_pcbs</code>（其他活跃状态）、<code>tcp_tw_pcbs</code>（TIME_WAIT）（<span class="pg">PDF p.291</span>）。</p>
+
+<h2>5. RAW TCP 编程接口（<span class="pg">PDF p.314</span>）</h2>
+
+<table>
+<tr><th>分组</th><th>API 函数</th><th>功能</th></tr>
+<tr><td rowspan="5">连接建立</td><td><code>tcp_new()</code></td><td>创建 TCP 控制块</td></tr>
+<tr><td><code>tcp_bind(pcb, ip, port)</code></td><td>绑定本地 IP 和端口</td></tr>
+<tr><td><code>tcp_listen(pcb)</code></td><td>进入监听状态（返回 listen 控制块）</td></tr>
+<tr><td><code>tcp_accept(pcb, fn)</code></td><td>注册 accept 回调（监听有连接时调用）</td></tr>
+<tr><td><code>tcp_connect(pcb, ip, port, connected_fn)</code></td><td>主动连接远端，成功回调 connected</td></tr>
+<tr><td rowspan="3">发送数据</td><td><code>tcp_write(pcb, data, len, flags)</code></td><td>把数据放进发送缓冲队列（不立即发）</td></tr>
+<tr><td><code>tcp_output(pcb)</code></td><td>把缓冲队列数据真正发出去</td></tr>
+<tr><td><code>tcp_sent(pcb, fn)</code></td><td>注册 sent 回调（对端 ACK 后调用）</td></tr>
+<tr><td rowspan="2">接收数据</td><td><code>tcp_recv(pcb, fn)</code></td><td>注册 recv 回调（新数据到达时调用）</td></tr>
+<tr><td><code>tcp_recved(pcb, len)</code></td><td>告知内核已取走 len 字节，更新接收窗口（处理完数据必须调用）</td></tr>
+<tr><td rowspan="3">关闭/异常</td><td><code>tcp_close(pcb)</code></td><td>正常关闭连接（发送 FIN）</td></tr>
+<tr><td><code>tcp_abort(pcb)</code></td><td>强制中止连接（发 RST）</td></tr>
+<tr><td><code>tcp_err(pcb, fn)</code> / <code>tcp_poll(pcb, fn, interval)</code></td><td>注册错误回调 / 周期轮询回调</td></tr>
+</table>
+
+<h3>5.1 连接建立与关闭的原理要点（<span class="pg">PDF p.300</span>）</h3>
+
+<ul>
+<li><strong>客户端</strong>：<code>tcp_connect</code> 内部 <code>tcp_enqueue_flags(TCP_SYN)</code> 构建 SYN 段 → 状态置 <code>SYN_SENT</code> → <code>tcp_output</code> 发出（第一次握手）；收到 SYN+ACK 后在 <code>tcp_process</code> 的 SYN_SENT 分支校验标志位与确认号，置 <code>ESTABLISHED</code>（第二、三次握手）</li>
+<li><strong>服务器</strong>：<code>tcp_listen</code> 把控制块置 <code>LISTEN</code>；收到 SYN 后 <code>tcp_listen_input</code> 分配新控制块、状态 <code>SYN_RCVD</code>、回 SYN+ACK；收到客户端 ACK 后 <code>tcp_process</code> 置 <code>ESTABLISHED</code>，并调用 listen 控制块的 accept 回调通知应用</li>
+<li><strong>关闭</strong>：<code>tcp_close</code> → <code>tcp_close_shutdown_fin</code> 发送 FIN 并置 <code>FIN_WAIT_1</code>；对端回 ACK 进入 <code>FIN_WAIT_2</code>；收到对端 FIN 回 ACK 进入 <code>TIME_WAIT</code>，挂在 tcp_tw_pcbs 上等 2MSL 超时（教材实验里还提供了 <code>lwip_tcp_server_remove_timewait</code> 强制清理 TIME_WAIT 控制块，<span class="pg">PDF p.333</span>）</li>
+</ul>
+
+<h2>6. 最小可用代码：TCP 客户端</h2>
+
+<p>配置步骤（<span class="pg">PDF p.317</span>）：<code>tcp_new</code> → <code>tcp_connect</code> → 连接成功后注册 recv/sent/err/poll 回调 → 收发数据。</p>
+
+<h3>6.1 创建 + 主动连接</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* TCP 客户端初始化：创建控制块并连接电脑 192.168.1.2:8080 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tcp_pcb</span> *<span style="color:#795E26">tcp_client_pcb</span>;</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">tcp_client_init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99">ip_addr_t</span> rmtipaddr;
+
+    tcp_client_pcb = tcp_new();                 <span style="color:#008000">/* 1. 创建控制块 */</span>
+    <span style="color:#0000FF">if</span> (tcp_client_pcb == <span style="color:#098658">NULL</span>) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;tcp_new 失败\r\n&quot;</span>);
+        <span style="color:#0000FF">return</span>;
+    }
+
+    IP4_ADDR(&amp;rmtipaddr, <span style="color:#098658">192</span>, <span style="color:#098658">168</span>, <span style="color:#098658">1</span>, <span style="color:#098658">2</span>);       <span style="color:#008000">/* 电脑 IP */</span>
+    <span style="color:#008000">/* 2. 发起连接：SYN 发出后立即返回，成功时回调 tcp_client_connected */</span>
+    tcp_connect(tcp_client_pcb, &amp;rmtipaddr, <span style="color:#098658">8080</span>,
+                tcp_client_connected);
+}
+
+<span style="color:#008000">/* 3. 连接成功回调：在这里注册其余回调 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">tcp_client_connected</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> tcp_pcb *tpcb, <span style="color:#267F99">err_t</span> err)</span>
+{
+    <span style="color:#0000FF">if</span> (err != ERR_OK) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;连接失败 err=%d\r\n&quot;</span>, err);
+        tcp_abort(tpcb);                        <span style="color:#008000">/* 强制中止 */</span>
+        <span style="color:#0000FF">return</span> err;
+    }
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;连接服务器成功！\r\n&quot;</span>);
+    tcp_arg(tpcb, <span style="color:#098658">NULL</span>);                        <span style="color:#008000">/* 传递用户参数（示例传 NULL） */</span>
+    tcp_recv(tpcb, tcp_client_recv);            <span style="color:#008000">/* 注册接收回调 */</span>
+    tcp_sent(tpcb, tcp_client_sent);            <span style="color:#008000">/* 注册发送成功回调 */</span>
+    tcp_err(tpcb, tcp_client_error);            <span style="color:#008000">/* 注册错误回调 */</span>
+    tcp_poll(tpcb, tcp_client_poll, <span style="color:#098658">1</span>);         <span style="color:#008000">/* 注册周期轮询回调 */</span>
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<h3>6.2 接收回调（核心：拷贝 + tcp_recved + 释放）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 接收回调：p==NULL 表示对端已关闭连接；否则把数据拷贝到用户缓冲 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">tcp_client_recv</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> tcp_pcb *tpcb,
+                      <span style="color:#0000FF">struct</span> pbuf *p, <span style="color:#267F99">err_t</span> err)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">q</span>;</span>
+    <span style="color:#267F99">u16_t</span> data_len = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">if</span> (p == <span style="color:#098658">NULL</span>) {
+        <span style="color:#008000">/* 空 pbuf = 对端 FIN，连接要结束了 */</span>
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;服务器关闭连接\r\n&quot;</span>);
+        tcp_close(tpcb);                        <span style="color:#008000">/* 回应并关闭 */</span>
+        <span style="color:#0000FF">return</span> ERR_OK;
+    }
+
+    <span style="color:#795E26">memset</span>(recv_buf, <span style="color:#098658">0</span>, RECV_BUF_SIZE);         <span style="color:#008000">/* 缓冲清零 */</span>
+    <span style="color:#0000FF">for</span> (q = p; q != <span style="color:#098658">NULL</span>; q = q-&gt;next) {       <span style="color:#008000">/* 遍历 pbuf 链表拷贝 */</span>
+        <span style="color:#0000FF">if</span> (q-&gt;len &gt; (RECV_BUF_SIZE - data_len)) <span style="color:#0000FF">break</span>;
+        <span style="color:#795E26">memcpy</span>(recv_buf + data_len, q-&gt;payload, q-&gt;len);
+        data_len += q-&gt;len;
+    }
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;收到服务器数据: %s\r\n&quot;</span>, recv_buf);
+
+    tcp_recved(tpcb, p-&gt;tot_len);   <span style="color:#008000">/* ★ 通知内核已取走数据，更新接收窗口 */</span>
+    pbuf_free(p);                   <span style="color:#008000">/* ★ 释放 pbuf */</span>
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<h3>6.3 发送数据（tcp_write 入队 + tcp_output 发送）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 发送数据：注意 tcp_write 只是入队，必须 tcp_output 才会真正发出 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">tcp_client_send_data</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> tcp_pcb *tpcb, <span style="color:#267F99">const</span> <span style="color:#267F99">char</span> *data)</span>
+{
+    <span style="color:#267F99">err_t</span> err;
+
+    <span style="color:#008000">/* 发送缓冲空间不足时返回 ERR_MEM，需等 sent 回调后再发 */</span>
+    <span style="color:#0000FF">if</span> (<span style="color:#795E26">strlen</span>(data) &gt; tcp_sndbuf(tpcb)) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;发送缓冲区不够\r\n&quot;</span>);
+        <span style="color:#0000FF">return</span> ERR_MEM;
+    }
+
+    <span style="color:#008000">/* 1 表示数据要拷贝进内核（TCP_WRITE_FLAG_COPY），
+       这样调用后用户缓冲区可以立即复用 */</span>
+    err = tcp_write(tpcb, data, <span style="color:#795E26">strlen</span>(data), <span style="color:#098658">1</span>);
+    <span style="color:#0000FF">if</span> (err == ERR_OK) {
+        tcp_output(tpcb);                       <span style="color:#008000">/* 立即发送缓冲队列 */</span>
+    }
+    <span style="color:#0000FF">return</span> err;
+}
+
+<span style="color:#008000">/* sent 回调：对端 ACK 后调用，可在此接着发下一批数据 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">tcp_client_sent</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> tcp_pcb *tpcb, <span style="color:#267F99">u16_t</span> len)</span>
+{
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;已确认发送 %d 字节\r\n&quot;</span>, len);
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<h2>7. 最小可用代码：TCP 服务器</h2>
+
+<p>配置步骤（<span class="pg">PDF p.330</span>）：<code>tcp_new</code> → <code>tcp_bind</code> → <code>tcp_listen</code> → <code>tcp_accept</code> → 新连接上注册 recv 等回调。注意服务器用 <code>tcp_close</code> 正常关闭（客户端实验教材里用的是 <code>tcp_abort</code>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* TCP 服务器初始化：绑定 8080 端口并进入监听 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">tcp_server_init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">tcp_pcb</span> *<span style="color:#795E26">tcppcbnew</span>, *<span style="color:#795E26">tcppcbconn</span>;</span>
+    <span style="color:#267F99">err_t</span> err;
+
+    tcppcbnew = tcp_new();                      <span style="color:#008000">/* 1. 创建控制块 */</span>
+    <span style="color:#0000FF">if</span> (tcppcbnew == <span style="color:#098658">NULL</span>) <span style="color:#0000FF">return</span>;
+
+    <span style="color:#008000">/* 2. 绑定本地所有 IP 的 8080 端口 */</span>
+    err = tcp_bind(tcppcbnew, IP_ADDR_ANY, <span style="color:#098658">8080</span>);
+    <span style="color:#0000FF">if</span> (err != ERR_OK) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;tcp_bind 失败\r\n&quot;</span>);
+        <span style="color:#0000FF">return</span>;
+    }
+
+    <span style="color:#008000">/* 3. 进入监听状态，返回精简的 listen 控制块 */</span>
+    tcppcbconn = tcp_listen(tcppcbnew);
+
+    <span style="color:#008000">/* 4. 注册 accept 回调：有客户端连上来时被调用 */</span>
+    tcp_accept(tcppcbconn, tcp_server_accept);
+}
+
+<span style="color:#008000">/* accept 回调：新连接 newpcb 已通过三次握手，注册收发回调 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">tcp_server_accept</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> tcp_pcb *newpcb, <span style="color:#267F99">err_t</span> err)</span>
+{
+    tcp_setprio(newpcb, TCP_PRIO_MIN);          <span style="color:#008000">/* 设置新连接优先级 */</span>
+
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;客户端 %d.%d.%d.%d 连接上了\r\n&quot;</span>,
+           (newpcb-&gt;remote_ip.addr &amp; <span style="color:#098658">0xff</span>), ((newpcb-&gt;remote_ip.addr &gt;&gt; <span style="color:#098658">8</span>) &amp; <span style="color:#098658">0xff</span>),
+           ((newpcb-&gt;remote_ip.addr &gt;&gt; <span style="color:#098658">16</span>) &amp; <span style="color:#098658">0xff</span>), ((newpcb-&gt;remote_ip.addr &gt;&gt; <span style="color:#098658">24</span>) &amp; <span style="color:#098658">0xff</span>));
+
+    tcp_arg(newpcb, <span style="color:#098658">NULL</span>);                      <span style="color:#008000">/* 用户参数 */</span>
+    tcp_recv(newpcb, tcp_server_recv);          <span style="color:#008000">/* 接收回调 */</span>
+    tcp_sent(newpcb, tcp_server_sent);          <span style="color:#008000">/* 发送确认回调 */</span>
+    tcp_err(newpcb, tcp_server_error);          <span style="color:#008000">/* 错误回调 */</span>
+    tcp_poll(newpcb, tcp_server_poll, <span style="color:#098658">1</span>);       <span style="color:#008000">/* 轮询回调 */</span>
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<div class="warn">
+  <p>⚠️ 三个"必须"：收到数据后 <strong>必须 tcp_recved</strong>（否则对方窗口被耗尽、通信停滞）；回调里处理完 pbuf <strong>必须 pbuf_free</strong>；发送缓冲满返回 ERR_MEM 时 <strong>不能死等</strong>，应等 sent 回调触发再发（教材的 senddata 就写成 while 循环配合 tcp_sndbuf 判断）。</p>
+</div>
+
+<h2>动手练习（约 60 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 10.1：实验 A — 板子做 TCP 客户端</h3>
+  <p class="step">1️⃣ 电脑打开网络调试助手，<strong>协议选 TCP Server，本地端口 8080</strong>，点击"开始监听"（电脑 192.168.1.2）。</p>
+  <p class="step">2️⃣ 在实验工程里按第 6 节代码实现客户端：连接 192.168.1.2:8080，成功后周期/按键发送 "TCP Client Data"，同时把收到的数据打印到串口。</p>
+  <p class="step">3️⃣ 联调：工具里应看到板子连上并收到数据；工具回发字符串，板子串口应打印。再点工具的"断开"→ 板子应打印"服务器关闭连接"。</p>
+  <p class="step">4️⃣ 验收标准：连接、双向收发、断开通知三个环节全部可复现。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 10.2：实验 B — 板子做 TCP 服务器 + Wireshark 看三次握手</h3>
+  <p class="step">1️⃣ 按第 7 节代码实现服务器：板子监听 8080（LCD/串口显示 Server Port）。</p>
+  <p class="step">2️⃣ 电脑网络调试助手选 <strong>TCP Client</strong>，目标 192.168.1.10:8080，点"连接"。</p>
+  <p class="step">3️⃣ Wireshark 过滤 <code>tcp.port == 8080</code>，连接瞬间应看到 3 条报文：<code>SYN → SYN,ACK → ACK</code>（展开看 Flags 和 Sequence Number 的 x/x+1/y/y+1 关系），之后收发数据的报文带 PSH、ACK 标志。</p>
+  <p class="step">4️⃣ 关闭连接再抓 4 条 FIN/ACK 挥手报文。验收标准：能在抓包里指认出握手与挥手的每一步。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 三次握手中，客户端发出 SYN 后进入哪个状态？</p>
+  <p class="opt">A. LISTEN</p>
+  <p class="opt">B. SYN_SENT</p>
+  <p class="opt">C. ESTABLISHED</p>
+  <details><summary>查看答案</summary><div class="answer">B。tcp_connect 发送 SYN 后把状态置为 SYN_SENT，等服务器的 SYN+ACK（PDF p.301）。</div></details>
+
+  <p class="q">Q2. tcp_write 调用后数据立即发到网络上了吗？</p>
+  <p class="opt">A. 立即发送并等待 ACK 才返回</p>
+  <p class="opt">B. 只是放进发送缓冲队列，需 tcp_output 才发送</p>
+  <p class="opt">C. 直接丢弃不发送</p>
+  <details><summary>查看答案</summary><div class="answer">B。tcp_write 只把数据入队（unsent 队列），tcp_output 才真正发出；缓冲满返回 ERR_MEM（PDF p.316）。</div></details>
+
+  <p class="q">Q3. recv 回调收到数据并拷贝给用户后，还必须调用什么？</p>
+  <p class="opt">A. tcp_sent 通知对端已接收</p>
+  <p class="opt">B. tcp_recved 更新接收窗口</p>
+  <p class="opt">C. tcp_abort 关闭连接</p>
+  <details><summary>查看答案</summary><div class="answer">B。tcp_recved 通知内核数据已被取走，内核才能更新接收窗口并继续通告对方发送（PDF p.314）。</div></details>
+
+  <p class="q">Q4. 服务器进入监听状态，用哪个函数组合？</p>
+  <p class="opt">A. tcp_new + tcp_bind + tcp_listen + tcp_accept</p>
+  <p class="opt">B. tcp_new + tcp_connect + tcp_recv</p>
+  <p class="opt">C. tcp_new + tcp_write + tcp_output</p>
+  <details><summary>查看答案</summary><div class="answer">A。服务器流程：创建→绑定→监听→注册 accept 回调；tcp_connect 是客户端行为，tcp_write 是发数据（PDF p.330）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 12、13 章（<span class="pg">PDF p.281~338</span>）——TCP 协议、状态机、客户端与服务器实验全解析</li>
+<li>🌐 <a href="https://savannah.nongnu.org/projects/lwip/">lwIP 官网</a>——tcp.h 中 tcp_recv_fn / tcp_accept_fn / tcp_write 官方声明</li>
+<li>📕 RFC 793（TCP）——协议权威出处，三次握手与状态机的"宪法"</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 11 课——NETCONN 接口，把今天的回调地狱换成"阻塞式"的线程友好写法，在 FreeRTOS 任务里跑 UDP 和 TCP，感受两种风格的对比。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0009-raw-udp.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0011-netconn-api.html">下一课：NETCONN 接口 →</a>
+</nav>
+
+</div>
+</body>
+</html>

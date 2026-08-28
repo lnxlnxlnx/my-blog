@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numpy 0006 · 高级题型总复习</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>高级题型总复习</h1>
+<p class="meta">Numpy 专题 · 课程 0006 · 预计 30 分钟 · 配套 100 题 75~100</p>
+
+<p>最难的一批(★★☆~★★★,题75~100)其实都在重复<span style="color: var(--accent);">同样几招</span>:<strong>滑窗 <code>sliding_window_view</code></strong>、<strong>下一步转移 <code>stride/pad/roll</code></strong>、<strong>卷积 <code>convolve</code></strong>、<strong>距离/矩阵 <code>einsum/linalg</code></strong>、<strong>group-by <code>bincount</code></strong>。把本课的大招记熟,75~100 就不难了。</p>
+
+<h2>知识点 1:滑窗 / 卷积——跳过 for(题 75、80、84、88)</h2>
+<p>凡是"相邻 N 个一起算"(均值、移动平均、块求积),都优先滑窗;凡是要"邻居线性叠加"用卷积:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">numpy.lib.stride_tricks</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">sliding_window_view</span>
+<span style="color: #001080">x</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">11</span><span style="color: #000">)</span>
+<span style="color: #001080">W</span> <span style="color: #000">=</span> <span style="color: #001080">sliding_window_view</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">)</span>        <span style="color: #008000"># 每行3个连续</span>
+<span style="color: #001080">avg</span> <span style="color: #000">=</span> <span style="color: #001080">W</span><span style="color: #000">.</span><span style="color: #001080">mean</span><span style="color: #000">(</span><span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>                 <span style="color: #008000"># 移动平均</span>
+
+<span style="color: #008000"># 卷积:做&quot;邻居加权和&quot;</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #001080">k</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">ones</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">)</span> <span style="color: #000">/</span> <span style="color: #098658">3</span>                    <span style="color: #008000"># 3点平均核</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">convolve</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">k</span><span style="color: #000">,</span> <span style="color: #001080">mode</span><span style="color: #000">=</span><span style="color: #A31515">&quot;valid&quot;</span><span style="color: #000">)</span>       <span style="color: #008000"># 和 sliding_window.mean 一致</span>
+<span style="color: #008000"># Game of Life(题88)就是二维卷积:neighbor 计数</span>
+</pre>
+<p>题75 滑动窗口平均 → sliding_window+mean;题84 3×3 子块 → sliding_window_view(arr,(3,3))。</p>
+
+<h2>知识点 2:一维滑窗生成"错位数组"(题 70、76)</h2>
+<p>题76:由一维 Z 生成二维数组,第 i 行是 Z[i],Z[i+1],Z[i+2]——这就是 sliding_window_view(窗口3):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">11</span><span style="color: #000">)</span>
+<span style="color: #001080">N</span> <span style="color: #000">=</span> <span style="color: #098658">3</span>
+<span style="color: #001080">sliding_window_view</span><span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">,</span> <span style="color: #001080">N</span><span style="color: #000">)</span>            <span style="color: #008000"># shape (8,3)</span>
+<span style="color: #008000"># 每行 = Z[i],Z[i+1],Z[i+2]</span>
+</pre>
+<p>题70 是"3 个连续的窗"收集,和它同招。记住:连续窗口 → sliding_window_view。</p>
+
+<h2>知识点 3:距离 / 矩阵——einsum 与广播(题 69、78、82、86)</h2>
+<p>题69:两个矩阵内积的对角线(避免整体矩乘):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">))</span>
+<span style="color: #001080">B</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">8</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">))</span>
+<span style="color: #008000"># 对角线用元素乘再按行和,避免 A@B 整体算</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">einsum</span><span style="color: #000">(</span><span style="color: #A31515">&quot;ij,ji-&gt;i&quot;</span><span style="color: #000">,</span> <span style="color: #001080">A</span><span style="color: #000">,</span> <span style="color: #001080">B</span><span style="color: #000">)</span>   <span style="color: #008000"># 每个 i:A[i]·B[:,i](不建整个内积阵)</span>
+<span style="color: #008000"># 或:np.sum(A * B.T, axis=1)</span>
+</pre>
+<p>题82:矩阵秩 <code>np.linalg.matrix_rank</code>:<code>np.linalg.matrix_rank(M)</code>。题86:一堆矩阵×一堆向量——用 <code>np.matmul(A, v[...,None])</code> 或 einsum。距离/模长用 <code>np.linalg.norm</code> 或手写平方和。<code>einsum</code> 是"指定下标求和"的瑞士军刀(德国人是真懂的)。</p>
+
+<h2>知识点 4:group-by→均值(题 68、79、83)</h2>
+<p>"按标签分组求均值 / 最频值"这类,一律 bincount(带权重),别写循环:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">labels</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">array</span><span style="color: #000">([</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">])</span>     <span style="color: #008000"># bincount 是整数标签</span>
+<span style="color: #001080">values</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">array</span><span style="color: #000">([</span><span style="color: #098658">1.0</span><span style="color: #000">,</span> <span style="color: #098658">3.0</span><span style="color: #000">,</span> <span style="color: #098658">10.0</span><span style="color: #000">,</span> <span style="color: #098658">14.0</span><span style="color: #000">,</span> <span style="color: #098658">99.0</span><span style="color: #000">])</span>
+<span style="color: #001080">counts</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">bincount</span><span style="color: #000">(</span><span style="color: #001080">labels</span><span style="color: #000">)</span>                    <span style="color: #008000"># [2,2,1] 每标签个数</span>
+<span style="color: #001080">sums</span>   <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">bincount</span><span style="color: #000">(</span><span style="color: #001080">labels</span><span style="color: #000">,</span> <span style="color: #001080">weights</span><span style="color: #000">=</span><span style="color: #001080">values</span><span style="color: #000">)</span>    <span style="color: #008000"># 每标签和</span>
+<span style="color: #001080">means</span>  <span style="color: #000">=</span> <span style="color: #001080">sums</span> <span style="color: #000">/</span> <span style="color: #001080">counts</span>                          <span style="color: #008000"># 每标签均值</span>
+<span style="color: #008000"># 题83:最频值 → bincount 的 argmax</span>
+</pre>
+<p>题79 两个点集合之间的距离矩阵:广播 <code>P0[:,None] - P1[None,:]</code> 再 norm。题83 最频值 = <code>np.bincount(Z).argmax()</code>。</p>
+
+<h2>知识点 5:进/出流与重排(题 95、96、99、偶有 93)</h2>
+<p>题95:整数向量转二进制矩阵——用位运算+广播:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">6</span><span style="color: #000">)</span>          <span style="color: #008000"># 1..5</span>
+<span style="color: #001080">n</span> <span style="color: #000">=</span> <span style="color: #098658">4</span>
+<span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">[:,</span> <span style="color: #00F">None</span><span style="color: #000">]</span> <span style="color: #000">&amp;</span> <span style="color: #000">(</span><span style="color: #098658">1</span> <span style="color: #000">&lt;&lt;</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">)[::-</span><span style="color: #098658">1</span><span style="color: #000">]))</span> <span style="color: #000">&gt;</span> <span style="color: #098658">0</span>    <span style="color: #008000"># 二进制的每一位展开</span>
+<span style="color: #008000"># 或:((Z[:,None] &gt;&gt; np.arange(n-1,-1,-1)) &amp; 1).astype(int)</span>
+</pre>
+<p>题96:二维数组去重行:<code>np.unique(Z, axis=0)</code>(unique 可指定按轴/行)。题99:选"行和能被 n 整除"的行:<code>Z[Z.sum(axis=1) % n == 0]</code>。核心再强调:<strong>能整体/广播/唯一/位运算,就别写 for</strong>。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">3×3 子块提取用什么最省?</p>
+  <button class="opt" data-ok="false">np.reshape</button>
+  <button class="opt" data-ok="true">sliding_window_view</button>
+  <button class="opt" data-ok="false">np.tile</button>
+  <button class="opt" data-ok="false">np.dot</button>
+  <p class="reveal">sliding_window_view(arr,(3,3)) 一步产出所有3×3块。题84。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">求两个矩阵内积对角线,最省?</p>
+  <button class="opt" data-ok="false">np.dot 全算</button>
+  <button class="opt" data-ok="true">np.einsum("ij,ji->i",...)</button>
+  <button class="opt" data-ok="false">np.linalg.norm</button>
+  <button class="opt" data-ok="false">循环</button>
+  <p class="reveal">einsum 只算需要对角线,不建整个内积阵。题69。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">找出现最多次的整数,用?</p>
+  <button class="opt" data-ok="false">np.mean</button>
+  <button class="opt" data-ok="true">bincount argmax</button>
+  <button class="opt" data-ok="false">argsort 首尾</button>
+  <button class="opt" data-ok="false">sliding_window</button>
+  <p class="reveal">np.bincount(Z).argmax()。题83。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">二维数组按行去重?</p>
+  <button class="opt" data-ok="false">np.dedupe</button>
+  <button class="opt" data-ok="true">np.unique(axis=0)</button>
+  <button class="opt" data-ok="false">np.flatten</button>
+  <button class="opt" data-ok="false">np.equal</button>
+  <p class="reveal">np.unique(Z, axis=0) 按行去重。题96。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/numpy/0006_高级题型总复习.ipynb</code>:</p>
+<ul>
+  <li><strong>题 75~100</strong>:numpy-100 的压轴题(滑窗/卷积/einsum/bincount/位运算)</li>
+  <li><strong>额外</strong>:这 5 个大招各手写 1 个最小例子,并写下"什么时候用它"</li>
+</ul>
+
+<h2>完工了</h2>
+<p>到这里 numpy 的 6 课 + 100 题全打通。你已经拥有:创建/索引/形状、运算/广播/ufunc、排序/统计/随机、结构化数组,以及高级招(滑窗/卷积/einsum/bincount/位运算)。<strong>最后的建议:</strong>做题时别一上来翻答案,先想"该用什么招",再对照。有不懂的随时回来——你是学生,我是老师,咱们可以反复拆任何一题。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-结构化数组与进阶.html">← 上一篇:结构化数组与进阶</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">下一篇:课程地图(收尾) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

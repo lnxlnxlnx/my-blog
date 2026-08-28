@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 13 课：HTTP 与 NTP — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 13 课</nav>
+
+<h1>第 13 课：HTTP 与 NTP</h1>
+<p class="subtitle">让浏览器打开开发板的网页、让板子告诉你"现在几点"——两个最常用的应用层协议</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>从"自己收发数据"升级到"跑真实的应用协议"。学完你能：看懂一个 HTTP 请求/响应长什么样，用 lwIP 的 httpd 或手写 TCP 80 端口把开发板变成网页服务器（直连环境电脑浏览器直接访问）；理解 NTP 报文结构，能把 UDP 请求发往时间服务器并解析出时间戳。同时诚实面对一个现实——<strong>NTP 服务器在外网，你的直连环境做不了真实验证</strong>，本课会给你直连替代方案和联网后的补做清单。</p>
+</div>
+
+<h2>1. HTTP 协议简介：浏览器与服务器的"对话协议"</h2>
+
+<p>HTTP（Hyper Text Transfer Protocol，超文本传输协议）是从万维网服务器把超文本传到本地浏览器的传送协议（教材第 29.1 节 <span class="pg">PDF p.431</span>）。几个关键特性：</p>
+
+<ul>
+<li>✅ <strong>无状态</strong>：服务器不保留与客户交易时的任何状态，减轻记忆负担，换快速响应</li>
+<li>✅ <strong>面向对象</strong>：允许传任意类型的数据对象，通过数据类型和长度标识内容</li>
+<li>✅ 工作方式：浏览器通过 <strong>TCP/IP</strong> 与服务器（默认端口 80）建立连接后交换数据</li>
+</ul>
+
+<p>HTTP 定义了三种基本方法（PDF p.431）：</p>
+
+<table>
+<tr><th>方法</th><th>作用</th><th>本课用途</th></tr>
+<tr><td><code>GET</code></td><td>从服务端获取数据</td><td>浏览器打开页面、获取状态</td></tr>
+<tr><td><code>POST</code></td><td>向服务器传送数据</td><td>网页表单提交，控制 LED / BEEP</td></tr>
+<tr><td><code>HEAD</code></td><td>检测对象是否存在</td><td>调试辅助</td></tr>
+</table>
+
+<p>一个 GET 请求的样子大致是：首行是"请求行"（方法 + 路径 + 版本），后面跟若干"首部"行，空行后是可选的"正文"；服务器回一个"状态行"（如 <code>HTTP/1.1 200 OK</code>）加响应头加网页正文。浏览器就是靠这些明文文本和服务器对话的。</p>
+
+<div class="tip">
+  <p>💡 抓包视角：用 Wireshark 过滤 <code>http</code> 就能看到完整的请求行、首部和响应，比读十页书都直观——本课第 14 课会正式教抓包，你现在就可以先用起来。</p>
+</div>
+
+<h2>2. Web Server 原理：RAW 版把网页"烧"进芯片</h2>
+
+<p>教材第 14 章在 ST 官方 Web Server 例程基础上完成实验（<span class="pg">PDF p.339</span>）。核心思路：<strong>开发板的空间放不下"网页文件"，那就用 makefsdata 工具把网页转成 C 语言数组，随固件一起烧进 Flash</strong>。</p>
+
+<table>
+<tr><th>文件</th><th>作用</th></tr>
+<tr><td><code>fs.c / fs.h</code></td><td>管理生成的网页数组（文件系统抽象）</td></tr>
+<tr><td><code>fsdata.c / fsdata.h</code></td><td>网页内容转成的 C 数组（由 makefsdata 工具生成）</td></tr>
+<tr><td><code>httpd.c</code></td><td>HTTP 服务器核心源码，把板子配置成 Web Server</td></tr>
+<tr><td><code>httpd_structs.h</code></td><td>HTTPD 协议的结构体定义</td></tr>
+</table>
+
+<p>两条"老牌"网页技术在这里登场（PDF p.343）：</p>
+
+<ul>
+<li><strong>CGI（公共网关接口）</strong>：服务器执行外部程序并把结果发给浏览器。本例用 <code>leds.cgi</code> 之类的 URL 触发对 LED、蜂鸣器的控制，让网页"可交互"</li>
+<li><strong>SSI（服务器端嵌入）</strong>：在网页源码里嵌入指令，如 <code>&lt;!--#include file="info.htm"--&gt;</code>，服务器发送前先把动态内容（ADC、内部温度、RTC 值）填充进去</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 使用 lwIP 官方 httpd 应用搭建 Web Server（教材第 14 章） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;httpd.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;httpd_cgi_ssi.h&quot;</span></span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lwip_demo</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    httpd_init();        <span style="color:#008000">/* 初始化 HTTP 服务器，默认监听 80 端口 */</span>
+    httpd_ssi_init();    <span style="color:#008000">/* 配置 SSI：网页里动态填入 ADC/温度/RTC 值 */</span>
+    httpd_cgi_init();    <span style="color:#008000">/* 配置 CGI：网页表单触发 LED/BEEP 动作 */</span>
+}
+</pre>
+
+<p>这一步直连环境就能体验：烧录例程后，电脑浏览器地址栏输入 <code>192.168.1.10</code> 回车，就能看到网页并勾选控制板子上的外设。</p>
+
+<h2>3. 手写 HTTP 服务器：netconn 版更透明的"教学版"</h2>
+
+<p>第 14 章用的是网页数组（高度封装），教材第 29 章换了个更透明的做法：用 <strong>netconn 接口手写一个 TCP 服务器监听 80 端口</strong>，收到浏览器请求后，用字符串直接拼出网页发回去（<span class="pg">PDF p.432</span>）。这能让你看穿 HTTP 的本质：<strong>无非是一个固定格式的文本流，先收请求、按关键字判断、再回发内容</strong>。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* HTTP 服务器主循环：netconn 接口，监听 80 端口（教材第 29 章） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">lwip_demo</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">netconn</span> *<span style="color:#795E26">conn</span>, *<span style="color:#795E26">newconn</span>;</span>
+    <span style="color:#267F99">err_t</span> err;
+
+    <span style="color:#008000">/* 创建 TCP 连接句柄，绑定 80 端口（HTTP 默认端口） */</span>
+    conn = netconn_new(NETCONN_TCP);
+    netconn_bind(conn, IP_ADDR_ANY, <span style="color:#098658">80</span>);
+
+    <span style="color:#008000">/* 进入监听状态 */</span>
+    netconn_listen(conn);
+
+    <span style="color:#0000FF">do</span>
+    {
+        <span style="color:#008000">/* 等待并接受一个浏览器连接 */</span>
+        err = netconn_accept(conn, &amp;newconn);
+        <span style="color:#0000FF">if</span> (err == ERR_OK)
+        {
+            lwip_server_netconn_serve(newconn);  <span style="color:#008000">/* 处理一次 HTTP 请求 */</span>
+            netconn_delete(newconn);
+        }
+    } <span style="color:#0000FF">while</span> (err == ERR_OK);
+
+    netconn_close(conn);
+    netconn_delete(conn);
+}
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 解析浏览器请求：GET 回发网页，POST 解析表单控制外设 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">lwip_server_netconn_serve</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> netconn *conn)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">netbuf</span> *<span style="color:#795E26">inbuf</span>;</span>
+    <span style="color:#267F99">char</span> *buf;
+    <span style="color:#267F99">u16_t</span> buflen;
+    <span style="color:#267F99">err_t</span> err;
+    <span style="color:#267F99">char</span> *ptemp;
+
+    err = netconn_recv(conn, &amp;inbuf);        <span style="color:#008000">/* 读取请求数据 */</span>
+    <span style="color:#0000FF">if</span> (err == ERR_OK)
+    {
+        netbuf_data(inbuf, (<span style="color:#267F99">void</span> **)&amp;buf, &amp;buflen);
+
+        <span style="color:#008000">/* 是 GET 请求（以 &quot;GET /&quot; 开头）就回发网页 */</span>
+        <span style="color:#0000FF">if</span> (buflen &gt;= <span style="color:#098658">5</span> &amp;&amp; buf[<span style="color:#098658">0</span>]==<span style="color:#A31515">&#x27;G&#x27;</span> &amp;&amp; buf[<span style="color:#098658">1</span>]==<span style="color:#A31515">&#x27;E&#x27;</span> &amp;&amp;
+            buf[<span style="color:#098658">2</span>]==<span style="color:#A31515">&#x27;T&#x27;</span> &amp;&amp; buf[<span style="color:#098658">3</span>]==<span style="color:#A31515">&#x27; &#x27;</span> &amp;&amp; buf[<span style="color:#098658">4</span>]==<span style="color:#A31515">&#x27;/&#x27;</span>)
+        {
+start_html:
+            <span style="color:#008000">/* 回发 HTTP 响应头和网页内容（常量数据用 NOCOPY 免拷贝） */</span>
+            netconn_write(conn, http_html_hdr, <span style="color:#0000FF">sizeof</span>(http_html_hdr) - <span style="color:#098658">1</span>,
+                          NETCONN_NOCOPY);
+            netconn_write(conn, http_index_html, <span style="color:#0000FF">sizeof</span>(http_index_html) - <span style="color:#098658">1</span>,
+                          NETCONN_NOCOPY);
+        }
+        <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (buflen &gt;= <span style="color:#098658">8</span> &amp;&amp; buf[<span style="color:#098658">0</span>]==<span style="color:#A31515">&#x27;P&#x27;</span> &amp;&amp; buf[<span style="color:#098658">1</span>]==<span style="color:#A31515">&#x27;O&#x27;</span> &amp;&amp;
+                 buf[<span style="color:#098658">2</span>]==<span style="color:#A31515">&#x27;S&#x27;</span> &amp;&amp; buf[<span style="color:#098658">3</span>]==<span style="color:#A31515">&#x27;T&#x27;</span>)
+        {
+            <span style="color:#008000">/* 是 POST 请求：定位 &quot;led1=&quot; 字段并控制 LED */</span>
+            ptemp = lwip_data_locate((<span style="color:#267F99">char</span> *)buf, <span style="color:#A31515">&quot;led1=&quot;</span>);
+            <span style="color:#0000FF">if</span> (ptemp != <span style="color:#098658">NULL</span>)
+            {
+                <span style="color:#0000FF">if</span> (*ptemp == <span style="color:#A31515">&#x27;1&#x27;</span>)  LED0(<span style="color:#098658">0</span>);   <span style="color:#008000">/* 点亮 LED */</span>
+                <span style="color:#0000FF">else</span>                LED1(<span style="color:#098658">1</span>);   <span style="color:#008000">/* 熄灭 LED */</span>
+            }
+            <span style="color:#0000FF">goto</span> start_html;   <span style="color:#008000">/* 重新回发网页，刷新状态 */</span>
+        }
+    }
+    netconn_close(conn);
+    netbuf_delete(inbuf);    <span style="color:#008000">/* netconn_recv 把所有权交给我们，必须释放 */</span>
+}
+</pre>
+
+<div class="warn">
+  <p>⚠️ 直连环境注意：此实验 <strong>完全可在直连环境运行</strong>。板子 IP <code>192.168.1.10</code>，电脑浏览器直接访问即可。如果页面打不开，先用 <code>ping 192.168.1.10</code> 确认链路，再看板子是否真的绑定了 80 端口、电脑是否设了代理。</p>
+</div>
+
+<h2>4. HTTP 服务器实验：直连就能跑</h2>
+
+<p>把 <code>lwIP_HTTPS 实验</code>（或 RAW_Webserver 实验）烧进板子，连好网线，做三件事（教材 29.3/14.2 下载验证 <span class="pg">PDF p.436 / p.349</span>）：</p>
+
+<ol>
+<li>电脑浏览器输入 <code>192.168.1.10</code>，应出现开发板的控制页面</li>
+<li>勾选 / 取消网页上的 LED、蜂鸣器复选框，观察板子外设动作（CGI 生效）</li>
+<li>看页面上的 ADC、内部温度、RTC 数值会不会刷新（SSI 生效）</li>
+</ol>
+
+<p>这一关是纯局域网、无外网依赖，<strong>你现在的直连环境完全能拿下</strong>，值得认真跑一遍。</p>
+
+<h2>5. NTP 简介与报文结构：网络对表协议</h2>
+
+<p>NTP（Network Time Protocol）是使计算机时间同步化的协议，可对时钟源（石英钟、GPS 等）做同步，LAN 上精度小于 1 毫秒，WAN 上几十毫秒（教材第 23.1 节 <span class="pg">PDF p.396</span>）。服务器按离 UTC 源的远近分层（Stratum）。NTP 报文是 48 字节起，结构如下：</p>
+
+<table>
+<tr><th>字段</th><th>位数</th><th>含义</th></tr>
+<tr><td>LI</td><td>2 bit</td><td>告警状态，11 表示时钟未同步</td></tr>
+<tr><td>VN</td><td>3 bit</td><td>NTP 版本号</td></tr>
+<tr><td>Mode</td><td>3 bit</td><td>3=客户模式、4=服务器模式、5=广播</td></tr>
+<tr><td>Stratum</td><td>8 bit</td><td>时钟层数（1~16）</td></tr>
+<tr><td>Poll / Precision</td><td>8+8 bit</td><td>轮询间隔 / 时钟精度</td></tr>
+<tr><td>Root Delay / Dispersion</td><td>32+32 bit</td><td>到主参考时钟的往返时间 / 最大误差</td></tr>
+<tr><td>Reference Identifier</td><td>32 bit</td><td>参考时钟源标识</td></tr>
+<tr><td>Reference / Originate / Receive / Transmit Timestamp</td><td>4×64 bit</td><td>四组时间戳，核心是 Transmit</td></tr>
+</table>
+
+<p>教材给了个"手撕"流程（PDF p.397）：UDP 连 NTP 服务器（默认端口 123）→ 发 NTP 请求报文 → 取响应第 <strong>40~43 字节</strong>的十六进制值（这是自 1900 年起的总秒数）→ 转十进制 → 减去 1900→1970 的时间差 <code>2208988800</code> 秒 → 换算成年月日时分秒。lwIP 里对应的标准实现叫 <strong>SNTP 客户端</strong>（<code>apps/sntp</code>），教材例程则用 netconn 手写。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 构建 NTP 请求报文（教材 23.2.2.2 节） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">lwip_ntp_client_init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99">uint8_t</span> flag;
+
+    <span style="color:#008000">/* 只需设置关键字段：版本号 3、模式 3（客户模式） */</span>
+    g_ntpformat.leap = <span style="color:#098658">0</span>;
+    g_ntpformat.version = <span style="color:#098658">3</span>;
+    g_ntpformat.mode = <span style="color:#098658">3</span>;
+    <span style="color:#008000">/* stratum、poll、precision、各时间戳等其余字段全部清 0 */</span>
+
+    <span style="color:#008000">/* 首字节 = (version &lt;&lt; 3) | mode，即 0x1B */</span>
+    flag = (g_ntpformat.version &lt;&lt; <span style="color:#098658">3</span>) + g_ntpformat.mode;
+    <span style="color:#795E26">memcpy</span>(g_ntp_message, (<span style="color:#267F99">void</span> <span style="color:#267F99">const</span> *)(&amp;flag), <span style="color:#098658">1</span>);
+}
+
+<span style="color:#008000">/* 从响应报文中截取第 40~43 字节，还原为总秒数并换算成时间 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">lwip_get_seconds_from_ntp_server</span><span style="color:#001080">(<span style="color:#267F99">uint8_t</span> *buf, <span style="color:#267F99">uint16_t</span> idx)</span>
+{
+    <span style="color:#267F99">unsigned</span> <span style="color:#267F99">long</span> <span style="color:#267F99">long</span> atk_seconds = <span style="color:#098658">0</span>;
+    <span style="color:#267F99">uint8_t</span> i;
+
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0</span>; i &lt; <span style="color:#098658">4</span>; i++)            <span style="color:#008000">/* 拼接 40~43 字节为 32 位秒数 */</span>
+    {
+        atk_seconds = (atk_seconds &lt;&lt; <span style="color:#098658">8</span>) | buf[idx + i];
+    }
+    atk_seconds -= NTP_TIMESTAMP_DELTA;  <span style="color:#008000">/* 减去 1900→1970 的 2208988800 秒 */</span>
+    lwip_calc_date_time(atk_seconds);    <span style="color:#008000">/* 换算成 年/月/日 时:分:秒 */</span>
+}
+</pre>
+
+<h2>6. NTP 实验：需要联网，直连先做替代</h2>
+
+<div class="warn">
+  <p>⚠️ <strong>直连环境的现实约束</strong>：NTP 服务器在公网（如阿里云 NTP），你板子和电脑是网线直连、没有外网出口，所以"发 NTP 请求 → 收服务器回包"这一环<strong>现在做不了</strong>。要跑通完整的 NTP 实验，需要联网环境（<strong>手机热点 / 路由器</strong>），让板子能访问公网 UDP 123 端口。</p>
+</div>
+
+<p>那么直连环境能做什么？分两档：</p>
+
+<ul>
+<li>✅ <strong>能做的</strong>：把 NTP 例程烧进板子，Wireshark 抓包，验证板子确实发出了 48 字节的 NTP UDP 请求（目的端口 123、首字节 0x1B）——链路是通的，只是没人应答；顺便把第 5 节报文结构对着抓包一格格看明白</li>
+<li>⏳ <strong>联网后补做</strong>：手机开热点或接路由器，把例程里 NTP 服务器地址设成阿里云 NTP（<code>ntp.aliyun.com</code>），串口/LCD 应打印出"北京时间：xxxx-xx-xx xx:xx:xx"（教材 23.2.3 <span class="pg">PDF p.405</span>）</li>
+</ul>
+
+<div class="tip">
+  <p>💡 直连替代练习思路：NTP 的本质是"UDP 发请求 + 解析响应"。你现在就能用第 12 课的 UDP socket 收发能力，把"构造 0x1B 报文 → 抓包验证 → 解析 40~43 字节"这套流程在本地跑通，唯一的区别是"对端从公网服务器变成没人应答"——等联网后，把目标地址一换，全流程就活了。</p>
+</div>
+
+<h2>动手练习（约 35 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 13.1：让浏览器打开开发板的网页（直连可行）</h3>
+  <p class="step">1️⃣ 烧录 httpd（RAW 版）或 HTTP 服务器例程，电脑浏览器访问 <code>192.168.1.10</code>。</p>
+  <p class="step">2️⃣ 勾选网页复选框，观察板子 LED、蜂鸣器动作（CGI 生效）。</p>
+  <p class="step">3️⃣ 在电脑上用 Wireshark 过滤 <code>http</code>，看一眼浏览器发来的 GET 请求行和板子回发的响应，对照第 1 节的内容。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 13.2：NTP 报文解剖（直连替代）＋ 联网补做</h3>
+  <p class="step">1️⃣ 直连环境：烧 NTP 例程，Wireshark 过滤 <code>udp.port==123</code>，确认板子发出 48 字节请求、首字节为 0x1B（版本 3、客户模式）。</p>
+  <p class="step">2️⃣ 对着第 5 节表格，在抓包里把 LI/VN/Mode/Stratum 逐字段圈出来。</p>
+  <p class="step">3️⃣ 联网后：手机热点或路由器接入，服务器地址改成 <code>ntp.aliyun.com</code>，观察串口是否打印北京时间；把结果截图留档。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 浏览器首次打开一个网页，发送的是？</p>
+  <p class="opt">A. POST 请求，包含表单数据</p>
+  <p class="opt">B. GET 请求，请求行以 GET 开头</p>
+  <p class="opt">C. HEAD 请求，只检测对象存在</p>
+  <details><summary>查看答案</summary><div class="answer">B。打开页面默认发 GET；POST 用于提交表单（教材 29.1 节，PDF p.431）。</div></details>
+
+  <p class="q">Q2. 网页控制板子 LED，靠哪种技术实现？</p>
+  <p class="opt">A. CGI 公共网关接口</p>
+  <p class="opt">B. SSI 服务器端嵌入</p>
+  <p class="opt">C. DHCP 动态主机配置</p>
+  <details><summary>查看答案</summary><div class="answer">A。CGI 让网页可交互、控制外设；SSI 用于动态填入 ADC/温度/RTC 数值（PDF p.343）。</div></details>
+
+  <p class="q">Q3. NTP 响应报文中，当前时间秒数位于？</p>
+  <p class="opt">A. 第 0 到第 3 字节</p>
+  <p class="opt">B. 第 40 到第 43 字节</p>
+  <p class="opt">C. 第 44 到第 47 字节</p>
+  <details><summary>查看答案</summary><div class="answer">B。取 40~43 字节为总秒数，减 2208988800 换算（PDF p.397）。</div></details>
+
+  <p class="q">Q4. 直连环境下 NTP 实验的合适做法是？</p>
+  <p class="opt">A. 板子直连电脑，直接连公网 NTP 服务器</p>
+  <p class="opt">B. 抓包验证请求报文，联网后补做完整流程</p>
+  <p class="opt">C. 用本地文件模拟时间戳，无需真实网络</p>
+  <details><summary>查看答案</summary><div class="answer">B。直连无外网出口，先验证链路与报文，联网后换服务器地址补做（本课第 6 节）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 14 章（PDF p.339~349）、第 29 章（PDF p.431~436）、第 23 章（PDF p.396~405）——本课全部依据</li>
+<li>🌐 lwIP 2.1.3 源码 <code>src/apps/http/httpd.c</code> 与 <code>src/apps/sntp/sntp.c</code>——官方 httpd 与 SNTP 客户端实现</li>
+<li>📕 RFC 7230（HTTP/1.1）与 RFC 4330（SNTPv4）——协议官方规范</li>
+</ul>
+
+<div class="footer-note">
+  <p>有问题随时问我。下一课预告：第 14 课——测速与抓包分析，用 JPerf 给开发板"跑个分"、用 Wireshark 亲眼看看三次握手和 ARP，把前面所有"看不见的协议"变成"看得见的包"。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0012-socket-api.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0014-bandwidth-and-packet-analysis.html">下一课：测速与抓包分析 →</a>
+</nav>
+
+</div>
+</body>
+</html>

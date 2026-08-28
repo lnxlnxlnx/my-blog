@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LVGL 术语表 — 速查参考</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 术语表</nav>
+
+<h1>LVGL 术语表</h1>
+<p class="subtitle">全课程统一使用的术语定义。速查用，不用背，遇到生词回来翻。</p>
+
+<h2>核心概念</h2>
+
+<table>
+<tr><th>术语</th><th>定义</th><th>备注</th></tr>
+<tr><td><strong>LVGL</strong></td><td>Light and Versatile Graphics Library，纯 C 开源图形库</td><td>工程版本 v8.3.11</td></tr>
+<tr><td><strong>对象（Object / lv_obj）</strong></td><td>屏幕上一切元素的基类：按钮、标签、屏幕本身都是对象</td><td>部件是"加工过的对象"</td></tr>
+<tr><td><strong>部件（Widget）</strong></td><td>基于 lv_obj 扩展出的具体控件，如 lv_btn、lv_label</td><td>33 种核心部件（v8）</td></tr>
+<tr><td><strong>屏幕（Screen / scr）</strong></td><td>对象树的根，一屏一个。默认屏幕 <code>lv_scr_act()</code></td><td>可建多屏切换</td></tr>
+<tr><td><strong>图层（Layer）</strong></td><td>屏幕之上的独立层：顶层（top）/系统层（sys）</td><td>加载动画、光标等用</td></tr>
+<tr><td><strong>父/子对象</strong></td><td>对象树结构，子对象随父对象移动/隐藏/删除</td><td>GUI 组织的核心思维</td></tr>
+<tr><td><strong>样式（Style）</strong></td><td>对象的"皮肤"：背景、边框、文字、圆角、阴影等属性集合</td><td>CSS 风格，可叠加</td></tr>
+<tr><td><strong>状态（State）</strong></td><td>对象的交互状态：默认/按下/聚焦/禁用/选中/勾选/编辑</td><td>样式可按状态区分</td></tr>
+<tr><td><strong>部件组成（Part）</strong></td><td>复杂部件的可独立设置样式的部分（如滑块的轨道/旋钮）</td><td>详见各部件文档</td></tr>
+<tr><td><strong>事件（Event）</strong></td><td>用户交互或对象变化的通知，如点击、值改变、滚动</td><td>回调函数处理</td></tr>
+<tr><td><strong>动画（Animation）</strong></td><td>对象属性随时间的平滑变化（位置、透明度、角度…）</td><td>依赖时基推进</td></tr>
+<tr><td><strong>定时器（Timer）</strong></td><td>LVGL 内部周期性回调，替代裸机"软件定时器"</td><td>由 lv_timer_handler 调度</td></tr>
+<tr><td><strong>时基（Tick）</strong></td><td>LVGL 的时间基准，由 lv_tick_inc() 周期性喂入</td><td>SysTick 1ms</td></tr>
+<tr><td><strong>刷新（Refresh）</strong></td><td>检测"脏区域"并重绘到缓冲区，再经 flush 推给屏幕</td><td>不是每帧全屏重绘</td></tr>
+<tr><td><strong>绘制缓冲区（Draw Buffer）</strong></td><td>LVGL 渲染用的内存区，可单缓冲/双缓冲/全屏缓冲</td><td>你的工程：320×10 单缓冲</td></tr>
+<tr><td><strong>flush</strong></td><td>把缓冲区内容拷贝到 LCD 的回调（flush_cb）</td><td>接 LCD 驱动</td></tr>
+<tr><td><strong>输入设备（Indev）</strong></td><td>触摸屏、鼠标、键盘、编码器、按键的统称</td><td>注册为 indev</td></tr>
+<tr><td><strong>组（Group）</strong></td><td>用键盘/编码器导航时，把对象归组实现焦点移动</td><td>v8 的 keypad 导航</td></tr>
+<tr><td><strong>主题（Theme）</strong></td><td>一套默认样式，决定新部件"长什么样"</td><td>default/basic/mono</td></tr>
+<tr><td><strong>布局（Layout）</strong></td><td>子对象自动排列的机制：Flex（一维）与 Grid（二维）</td><td>产品界面的骨架</td></tr>
+<tr><td><strong>字库（Font）</strong></td><td>字形数据集合，LVGL 内建 ASCII 字库 + 自定义字库</td><td>C 数组或文件加载</td></tr>
+<tr><td><strong>lv_conf.h</strong></td><td>用户级配置文件：色彩深度、内存池、功能裁剪</td><td>不属于内核</td></tr>
+<tr><td><strong>内存池（Mem Pool）</strong></td><td>LVGL 自管堆，所有对象/样式/动画从这里分配</td><td>LV_MEM_SIZE 配置</td></tr>
+<tr><td><strong>滚动（Scroll）</strong></td><td>内容超出对象区域时的滚动手势与滚动条</td><td>触摸滑动天然支持</td></tr>
+<tr><td><strong>对齐（Align）</strong></td><td>对象相对父对象的摆放方式（居中、左上、右中…）</td><td>lv_obj_align()</td></tr>
+</table>
+
+<h2>常用缩写</h2>
+
+<table>
+<tr><th>缩写</th><th>全称</th><th>含义</th></tr>
+<tr><td>scr_act</td><td>active screen</td><td>当前活动屏幕</td></tr>
+<tr><td>disp</td><td>display</td><td>显示设备</td></tr>
+<tr><td>indev</td><td>input device</td><td>输入设备</td></tr>
+<tr><td>opa</td><td>opacity</td><td>不透明度（0~255）</td></tr>
+<tr><td>pad</td><td>padding</td><td>内边距</td></tr>
+<tr><td>border</td><td>border</td><td>边框</td></tr>
+<tr><td>HOR/VER</td><td>horizontal / vertical</td><td>水平 / 垂直</td></tr>
+<tr><td>CB / ClickCB</td><td>callback</td><td>回调函数</td></tr>
+</table>
+
+<p class="footer-note">有歧义或新增术语，随时告诉我更新本表。</p>
+
+</div>
+</body>
+</html>

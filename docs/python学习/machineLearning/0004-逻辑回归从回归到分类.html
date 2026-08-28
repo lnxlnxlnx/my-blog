@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0004 · 逻辑回归：把线性模型搬到分类</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>逻辑回归：把线性模型搬到分类</h1>
+<p class="meta">课程 0004 · 预计 30 分钟 · 前置：<a href="0003-线性回归三件套.html">课程 0003</a></p>
+
+<p>上一课把「模型 / 策略 / 算法」三件套在<strong>回归</strong>上走了一遍。这一课把它搬到<strong>分类</strong>：逻辑回归。你会发现它几乎是线性回归的「小改版」，但解决的是完全不同的问题——而且它就是你学过的神经网络最基础的一块砖。</p>
+
+<h2>问题：回归不能直接做分类</h2>
+<p>分类要输出「P(y=1|x)」——一个 0 到 1 之间的概率。而线性回归的输出是整个实数轴：可能 <code>ŷ = -3</code> 或 <code>ŷ = 7</code>，没法当概率用。所以需要在线性函数外面加一层「压缩器」。</p>
+
+<h2>三要素之「模型」：sigmoid</h2>
+<pre>ŷ = σ(wᵀx + b) = 1 / (1 + e<sup>−(wᵀx+b)</sup>)</pre>
+<ul>
+  <li>sigmoid 把任意实数压到 (0,1)，可解释为概率：越接近 0 → 类 0，越接近 1 → 类 1。</li>
+  <li>分界在 ŷ=0.5，即 wᵀx+b=0 —— <strong>永远是一条直线（超平面）</strong>。</li>
+  <li><strong>模型</strong> = 所有形如 σ(wᵀx+b) 的函数集合。</li>
+</ul>
+
+<h2>三要素之「策略」：极大似然 → 交叉熵</h2>
+<p>把 ŷ 当正类概率，对每个样本写出似然，取负对数，得到交叉熵（对数损失）：</p>
+<pre>L(w) = −(1/N) Σ [ y log(ŷ) + (1−y) log(1−ŷ) ]</pre>
+<p>两个关键点：</p>
+<ul>
+  <li><strong>为什么不用均方误差？</strong>sigmoid + MSE 是非凸的，梯度下降会卡在局部极小；而 <strong>sigmoid + 交叉熵是凸的</strong>，保证收敛到全局最优。这是「策略」选择背后的数学。</li>
+  <li>完全猜对时 L=0；全给 0.5 时 L = ln 2 ≈ 0.693（你的 notebook 第一步会验证到这个值）。</li>
+</ul>
+
+<h2>三要素之「算法」：梯度下降，且梯度出奇地简单</h2>
+<pre>∇L(w) = (1/N)·Xᵀ(ŷ − y)</pre>
+<p>注意：这个梯度和线性回归的梯度<strong>长得几乎一样</strong>（都形如「残差 × 特征」的平均）。同一个「算法」（梯度下降）服务两个不同的「模型」——上一课说的「三要素可自由组合」的又一例证。</p>
+
+<h2>动手：完成 notebook 并回答练习</h2>
+<p>打开（JupyterLab 内核 <code>deeplearning</code>）：</p>
+<pre>practice/0004_logistic_regression.ipynb</pre>
+<p>已填好全部实现，含 6 道题（S/M/H 三档），答案在同目录 <code>answers/</code>。做的时候重点想三件事：</p>
+<ol>
+  <li><strong>S2</strong>：从训练出的 w 反推决策边界方程，和图对照。</li>
+  <li><strong>M2</strong>：同心圆数据为什么让逻辑回归「无能为力」？限制卡在「模型」的哪个地方？</li>
+  <li><strong>H2</strong>：数据重叠大时，L2 正则为什么能提升测试准确率？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">sigmoid 的输出范围是？</p>
+  <button class="opt" data-ok="false">(−1,1)</button>
+  <button class="opt" data-ok="false">(0,∞)</button>
+  <button class="opt" data-ok="false">(−∞,∞)</button>
+  <button class="opt" data-ok="true">(0,1)</button>
+  <p class="reveal">sigmoid 把任意实数压到 (0,1)，正好适合当概率。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">逻辑回归的「策略」是？</p>
+  <button class="opt" data-ok="false">均方误差</button>
+  <button class="opt" data-ok="false">绝对误差</button>
+  <button class="opt" data-ok="false">KL散度</button>
+  <button class="opt" data-ok="true">交叉熵</button>
+  <p class="reveal">策略 = 交叉熵（对数损失），来自极大似然估计。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">逻辑回归本质上是一个？</p>
+  <button class="opt" data-ok="false">多层神经网络</button>
+  <button class="opt" data-ok="false">深度决策树</button>
+  <button class="opt" data-ok="false">无监督聚类</button>
+  <button class="opt" data-ok="true">单层神经网络</button>
+  <p class="reveal">线性加权 + sigmoid 激活 + 交叉熵 = 单个神经元。多分类版是 softmax 输出层。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">逻辑回归的决策边界是什么形状？</p>
+  <button class="opt" data-ok="false">任意曲线</button>
+  <button class="opt" data-ok="false">圆形</button>
+  <button class="opt" data-ok="false">无边界</button>
+  <button class="opt" data-ok="true">直线</button>
+  <p class="reveal">决策边界在 wᵀx+b=0 处，是一条直线（超平面）——这是它的「模型」假设。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》§6.1 逻辑斯谛回归</strong>——模型的来历（从条件概率分布导出）、极大似然估计推导、梯度公式。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p><strong>ISL 第 4 章（Classification）</strong>——为什么线性回归不适合分类、逻辑回归在真实数据上的表现。<a href="https://www.statlearning.com/">statlearning.com 免费下载</a>。</p>
+  <p>Andrew Ng 课程 1 第 3 周：逻辑回归与梯度下降的逐步推导，可免费旁听。<a href="https://www.coursera.org/specializations/machine-learning-introduction">Coursera</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习后告诉我：M2 里「模型限制」到底限制了什么？下一课进入<strong>k 近邻与朴素贝叶斯</strong>——两个几乎「不需要训练」的直觉型分类器。它们没有显式的「学习算法」，正好反衬出你已理解的三要素框架。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-线性回归三件套.html">← 上一篇:线性回归：三件套完整走一遍</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-k近邻不训练也能分类.html">下一篇:k 近邻（kNN）：不训练也能分类 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

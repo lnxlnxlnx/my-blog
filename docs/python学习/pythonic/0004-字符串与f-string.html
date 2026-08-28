@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0004 · 字符串与 f-string</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>字符串与 f-string</h1>
+<p class="meta">Pythonic 代码 · 课程 0004 · 预计 20 分钟</p>
+
+<p>C 里拼字符串很痛苦(sprintf、strcat、%d %s 占位符)。而 Python 有一个优雅得多的方案:<strong>f-string</strong>——直接在字符串里写花括号塞变量。本课把「拼串」「格式化」「拆分」一次说清。</p>
+
+<h2>知识点 1:别用 + 拼字符串(不是不行,只是费劲)</h2>
+<p>C 思维(拼接、占位符):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">name</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;Alice&quot;</span>
+<span style="color: #001080">age</span> <span style="color: #000">=</span> <span style="color: #098658">25</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;Name: &quot;</span> <span style="color: #000">+</span> <span style="color: #001080">name</span> <span style="color: #000">+</span> <span style="color: #A31515">&quot;, age: &quot;</span> <span style="color: #000">+</span> <span style="color: #0070C1">str</span><span style="color: #000">(</span><span style="color: #001080">age</span><span style="color: #000">)</span> <span style="color: #000">+</span> <span style="color: #A31515">&quot; years&quot;</span>
+<span style="color: #008000"># 或用 C 风格：s = &quot;Name: %s, age: %d years&quot; % (name, age)</span>
+</pre>
+<p>Pythonic——f-string,字符串前加 <code>f</code>,花括号 <code>{}</code> 里直接写变量或表达式:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">name</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;Alice&quot;</span>
+<span style="color: #001080">age</span> <span style="color: #000">=</span> <span style="color: #098658">25</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #A31515">f&quot;Name: {</span><span style="color: #001080">name</span><span style="color: #A31515">}, age: {</span><span style="color: #001080">age</span><span style="color: #A31515">} years&quot;</span>
+</pre>
+<p>还能在花括号里做运算、调函数、取下标:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">price</span> <span style="color: #000">=</span> <span style="color: #098658">3.14159</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">price</span><span style="color: #A31515">:.2f}&quot;</span><span style="color: #000">)</span>          <span style="color: #008000"># 3.14:保留两位小数</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;upper: {</span><span style="color: #001080">name</span><span style="color: #000">.</span><span style="color: #001080">upper</span><span style="color: #000">()</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># upper: ALICE</span>
+</pre>
+<p>要点:能写 <code>f"..."</code> 的地方就别 <code>"..." + ...</code>,这是 Python 3.6+ 的标准答案。</p>
+
+<h2>知识点 2:拼一串列表——用 join,别用循环 append</h2>
+<p>C 程序员想把单词拼成逗号分隔的字符串,常写循环:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;&quot;</span>
+<span style="color: #00F">for</span> <span style="color: #001080">i</span><span style="color: #000">,</span> <span style="color: #001080">w</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">enumerate</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">):</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">i</span> <span style="color: #000">&gt;</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+        <span style="color: #001080">s</span> <span style="color: #000">+=</span> <span style="color: #A31515">&quot;, &quot;</span>
+    <span style="color: #001080">s</span> <span style="color: #000">+=</span> <span style="color: #001080">w</span>
+</pre>
+<p>Pythonic——用 <code>str.join</code>,一句话,还自动处理分隔符:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;, &quot;</span><span style="color: #000">.</span><span style="color: #001080">join</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">)</span>            <span style="color: #008000"># &#39;apple, banana, cherry&#39;</span>
+</pre>
+<p>注意语法是 <code>分隔符.join(序列)</code>,别记反。注意序列里的得是字符串,数字先转:<code>", ".join(map(str, nums))</code>。</p>
+
+<h2>知识点 3:格式化对齐、补零——f-string 的格式符</h2>
+<p>f-string 花括号里 <code>:</code> 后面是格式说明,和 C 的 printf 很像但不那么吓人:</p>
+<pre lang="python" class="highlight"><span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">name</span><span style="color: #A31515">:&lt;10}&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 左对齐,占 10 宽(&lt;10)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">age</span><span style="color: #A31515">:&gt;5}&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 右对齐,占 5 宽</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">age</span><span style="color: #A31515">:03d}&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 补零:025</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">x</span><span style="color: #A31515">:08.2f}&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 008.14:总宽 8,两位小数,补零</span>
+</pre>
+<p>记法:<code>{值:&lt;/&gt;宽度.精度f}</code>。用到再查,先记住「<code>:</code> 后面就是格式」这个位置。</p>
+
+<h2>知识点 4:split 拆字符串、strip 去空白、replace 替换</h2>
+<p>C 的 strtok 很啰嗦;Python 直接链式:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">line</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;  apple, banana ,  cherry  &quot;</span>
+<span style="color: #001080">parts</span> <span style="color: #000">=</span> <span style="color: #001080">line</span><span style="color: #000">.</span><span style="color: #001080">split</span><span style="color: #000">(</span><span style="color: #A31515">&quot;,&quot;</span><span style="color: #000">)</span>            <span style="color: #008000"># [&#39;  apple&#39;, &#39; banana &#39;, &#39;  cherry  &#39;]</span>
+<span style="color: #001080">cleaned</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">strip</span><span style="color: #000">()</span> <span style="color: #00F">for</span> <span style="color: #001080">p</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">parts</span><span style="color: #000">]</span>  <span style="color: #008000"># [&#39;apple&#39;,&#39;banana&#39;,&#39;cherry&#39;]</span>
+<span style="color: #001080">text</span> <span style="color: #000">=</span> <span style="color: #A31515">&quot;a.b.c.d&quot;</span>
+<span style="color: #001080">text</span><span style="color: #000">.</span><span style="color: #001080">replace</span><span style="color: #000">(</span><span style="color: #A31515">&quot;.&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;-&quot;</span><span style="color: #000">)</span>             <span style="color: #008000"># &#39;a-b-c-d&#39;</span>
+<span style="color: #001080">text</span><span style="color: #000">.</span><span style="color: #001080">split</span><span style="color: #000">(</span><span style="color: #A31515">&quot;.&quot;</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">)</span>                 <span style="color: #008000"># 只拆前 2 个:[&#39;a&#39;,&#39;b&#39;,&#39;c.d&#39;]</span>
+</pre>
+<p>顺带一提:很多统计/去重不用纯循环。<code>split + strip + 推导式</code> 一条链就是一次完整解析。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">插入变量 age 的现代写法?</p>
+  <button class="opt" data-ok="false">"%d" % age</button>
+  <button class="opt" data-ok="true">f"{age}"</button>
+  <button class="opt" data-ok="false">" + str(age)</button>
+  <button class="opt" data-ok="false">sprintf(age)</button>
+  <p class="reveal">Python 3.6+ 用 f-string:f"{age}",花括号里直接写变量。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">把 lst 拼成逗号分隔字符串?</p>
+  <button class="opt" data-ok="false">"".join(lst)</button>
+  <button class="opt" data-ok="true">", ".join(lst)</button>
+  <button class="opt" data-ok="false">lst.join(",")</button>
+  <button class="opt" data-ok="false">用循环 append</button>
+  <p class="reveal">语法是 分隔符.join(序列),在其中是 ", "。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">f"{x:08.2f}" 表示?</p>
+  <button class="opt" data-ok="false">十六进制</button>
+  <button class="opt" data-ok="true">补零两位小数</button>
+  <button class="opt" data-ok="false">布尔值</button>
+  <button class="opt" data-ok="false">科学计数</button>
+  <p class="reveal">08 = 占 8 宽不足补零,.2f = 保留两位小数。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">去掉字符串首尾空白用?</p>
+  <button class="opt" data-ok="false">split()</button>
+  <button class="opt" data-ok="true">strip()</button>
+  <button class="opt" data-ok="false">replace(" ","")</button>
+  <button class="opt" data-ok="false">trim()</button>
+  <p class="reveal">strip() 去首尾空白;split() 是拆分,别混。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0004_字符串与f-string.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把用 + 拼接和 printf 风格的代码改成 f-string,再对答案</li>
+  <li><strong>练习 B</strong>:join 拼接成绩单、按分数右对齐补零格式化输出表格</li>
+  <li><strong>练习 C</strong>:解析一行 CSV(拆+去空格)、训练 repo 里一段字符串处理代码</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方教程「<a href="https://docs.python.org/zh-cn/3/tutorial/inputoutput.html">格式化字符串字面量</a>」</strong>一章:f-string 的全部格式说明符,半小时可刷完。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:拼字符串最困扰你的是什么场景?下一课讲<strong>字典惯用法</strong>——C 程序员的 struct/查找表怎么用 Python dict 用得漂亮。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-真值与空判断.html">← 上一篇:真值与空判断</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-字典惯用法.html">下一篇:字典惯用法 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

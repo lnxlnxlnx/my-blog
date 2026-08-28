@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0009 · 集成学习：Bagging 与随机森林</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>集成学习：Bagging 与随机森林</h1>
+<p class="meta">课程 0009 · 预计 45 分钟 · 前置：<a href="0007-决策树.html">课程 0007</a>（决策树）+ <a href="0005-k近邻不训练也能分类.html">0005</a>（偏差-方差）</p>
+
+<p>单棵决策树高方差：数据抖一抖，树就换一棵。本课的核心思想——<strong>集成</strong>：把很多「又笨又抖」的模型放一起投票，让它们的方差互相抵消。这堂课的产物：<b>随机森林</b>，面试最高频的模型之一。</p>
+
+<h2>为什么要集成：偏差-方差分解</h2>
+<p>泛化误差 ≈ 偏差² + 方差 + 噪声。单棵深树偏差低但方差高。Bagging 的洞察：</p>
+<pre>对 m 个独立、同分布的模型求平均：方差 → 方差/m，偏差不变</pre>
+<p>模型独立难，但用<strong>自助采样（bootstrap）</strong>让每棵树看不同的训练子集，就是近似的独立。</p>
+
+<h2>三要素</h2>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>一组决策树的集成，预测时多数投票（分类）/ 平均（回归）。</p></div>
+  <div class="card"><h3>策略</h3><p>每棵树在自助采样子集上训练；随机森林再加一层随机：分裂时只看随机特征子集。</p></div>
+  <div class="card"><h3>算法</h3><p>Bootstrap 采样 → 逐树贪心生长 → 投票；每棵树的随机源独立（random_state）。</p></div>
+</div>
+
+<h2>两个关键组件</h2>
+
+<h3>1. Bootstrap（自助采样）</h3>
+<p>从 N 个样本里有放回地抽 N 次。每个样本约 <b>63.2%</b> 概率被抽到（1−1/e），没被抽到的约 36.8% 构成天然的验证集——叫 <strong>OOB（袋外）样本</strong>，可直接用来估泛化误差，不用额外切验证集。</p>
+
+<h3>2. 特征子采样（随机森林的灵魂）</h3>
+<p>如果所有树都用全部特征，那么「最强的那个特征」每棵树都第一个用它分裂——树之间高度相关，投票抵消不了方差。随机森林让每棵树分裂时只从 <b>√p</b>（分类）个随机特征里选，树之间更独立，集成效果更好。这是随机森林 vs 普通 Bagging 的本质区别。</p>
+
+<h2>三个必懂点</h2>
+
+<h3>1. 为什么能「降方差」而不升偏差</h3>
+<p>每棵树本身偏差没变（还是那类树），只是互相独立后平均消掉了方差。所以集成对「高方差」模型（深树、kNN）最有效；对低方差模型（线性回归）帮助有限。</p>
+
+<h3>2. 偏差低：几乎不用调深，调树数</h3>
+<p>随机森林的树通常长满（<code>max_depth=None</code>），靠随机性而非剪枝来防过拟合。<code>n_estimators</code> 越多越稳（有收敛上限），几乎不会过拟合。</p>
+
+<h3>3. 特征重要性：这次的统计更可信</h3>
+<p>随机森林的特征重要性（<code>feature_importances_</code>）仍可能被高相关特征稀释，但比单棵树稳得多，是特征筛选的常用起点。更严谨的是「排列重要性」（permutation importance）。</p>
+
+<h2>动手：完成 notebook</h2>
+<p>打开（内核 <code>deeplearning</code>）：</p>
+<pre>practice/0009_ensemble.ipynb</pre>
+<p>从零实现 Bagging：写一个 bootstrap 采样函数，训练多个决策树投票；对比单树 vs 随机森林的 train/test 差距，验证 OOB 分数和特征重要性。答案在 <code>practice/answers/</code>。重点想三件事：</p>
+<ol>
+  <li><strong>S1</strong>：为什么 36.8% 的样本抽不到？用 bootstrap 函数验证这个比例。</li>
+  <li><strong>M1</strong>：把特征子采样关掉（每次用全部特征），随机森林为什么变差？</li>
+  <li><strong>H1</strong>：单树 train=1.0 而 RF train≈1.0，为什么随机森林几乎不会过拟合？</li>
+</ol>
+
+<h2>测一测</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">Bagging 主要通过什么降低泛化误差？</p>
+  <button class="opt" data-ok="false">降低偏差</button>
+  <button class="opt" data-ok="false">增加噪声</button>
+  <button class="opt" data-ok="false">减少样本</button>
+  <button class="opt" data-ok="true">降低方差</button>
+  <p class="reveal">独立模型平均后方差 /m、偏差不变——专治高方差模型。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">自助采样里，每个样本大约多少概率抽不到？</p>
+  <button class="opt" data-ok="false">10%</button>
+  <button class="opt" data-ok="false">50%</button>
+  <button class="opt" data-ok="false">5%</button>
+  <button class="opt" data-ok="true">36.8%</button>
+  <p class="reveal">1−1/e ≈ 63.2% 被抽到，约 36.8% 是袋外样本。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">随机森林和普通 Bagging 的本质区别？</p>
+  <button class="opt" data-ok="false">树更深</button>
+  <button class="opt" data-ok="false">更多树</button>
+  <button class="opt" data-ok="false">数据更多</button>
+  <button class="opt" data-ok="true">分裂时特征子采样</button>
+  <p class="reveal">分裂只看随机特征子集，让树之间更独立，抵消方差更有效。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">袋外（OOB）样本可以用来？</p>
+  <button class="opt" data-ok="false">训练模型</button>
+  <button class="opt" data-ok="false">增加特征</button>
+  <button class="opt" data-ok="false">提升偏差</button>
+  <button class="opt" data-ok="true">估计泛化误差</button>
+  <p class="reveal">每棵树没见过的样本组成天然验证集，OOB 分数≈交叉验证。</p>
+</div>
+
+<h2>推荐阅读</h2>
+<blockquote>
+  <p><strong>ISL 第 8 章（Tree-Based Methods）</strong>——Bagging、随机森林、OOB 误差的完整讲解，数学不重但直觉到位。<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+  <p><strong>李航《统计学习方法》§8.3 随机森林</strong>——随机森林的定义与两种随机性的严格表述。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习告诉我：M1 里关掉特征子采样后准确率降了多少？下一课<strong>Boosting（GBDT）</strong>——把集成从「平均」升级为「串行纠错」，这是 XGBoost、LightGBM 的地基。</p>
+<p><strong>哪里卡住随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0008-SVM.html">← 上一篇:SVM：一条有「间隔」的直线</a>
+  <a href="index.html">课程地图</a>
+  <a href="0010-Boosting.html">下一篇:Boosting：串行纠错 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 15 课：GIF 格式与 LZW 解码 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 15 课</nav>
+
+<h1>第 15 课：GIF 格式与 LZW 解码</h1>
+<p class="subtitle">256 色 + 字典压缩：一本"边读边抄"的密码本是怎么工作的（依据：Andrew S. Downs《Implementing a GIF Decoder》）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>GIF 是动图鼻祖，它的压缩算法 LZW（Lempel-Ziv-Welch）有个神奇特点——<strong>压缩和解压用的字典是"临时现建"的，文件里一个字都不存</strong>。学完你能：读 GIF 的文件结构（头/描述符/色表/图像数据/扩展块）、讲清 LZW 的 clear/end code 与码宽动态增长、理解解码器的 InitializeDictionary / ReadCode / OutputCode 三个函数，并手推一个小字典。（预计 45~50 分钟）</p>
+</div>
+
+<h2>1. GIF 概述：出生 40 年还在线的老将</h2>
+
+<p>GIF（Graphics Interchange Format，图形交换格式）由 CompuServe 于 1987 年发布。文件开头 6 个字节直接自报家门（<span class="pg">文章 "Header" 节</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">// 结构体视角 (C 风格)</span>
+struct Header { Byte signature[3]; Byte version[3]; };
+    signature = 'G' 'I' 'F'
+    version   = '87a' 或 '89a'        <span style="color:#008000">// 87a 基础版, 89a 加了扩展块</span>
+
+<span style="color:#008000">// 例子: 49 46 46 38 39 61   == "GIF89a"</span></pre>
+
+<p>两大先天限制决定了它的"性格"：<strong>最多 256 色</strong>（调色板索引，最大 2^8）、用 <strong>LZW</strong> 做无损压缩。所以它不适合照片，但适合图标、插画、动图——而 LZW 恰恰是全篇核心。</p>
+
+<div class="tip">
+  <p>💡 <strong>一段历史课：</strong>LZW 算法被 Unisys 申请了专利（US 4,558,302），GIF 火了几年后 Unisys 开始收许可费，闹得满城风雨，直接催生了免费的 PNG。专利 2003 年（美国）/2004 年（海外）到期，现在用 GIF 没有专利风险了（<span class="pg">文章 "The patent" 节</span>）。</p>
+</div>
+
+<h2>2. 文件结构：头、描述符、色表、图像数据、扩展块</h2>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">偏移 0
+  "GIF87a" / "GIF89a"                <span style="color:#008000">// 6 字节头</span>
+  逻辑屏幕描述符 (7 字节)             <span style="color:#008000">// 屏幕宽/高 + 标志 + 背景色 + 像素宽高比</span>
+  全局色表 (2^N × 3 字节 RGB)         <span style="color:#008000">// 最多 256 项, 每项 R,G,B</span>
+  ┌──► 0x2C 图像描述符               <span style="color:#008000">// 左上角坐标 + 图像宽/高 + 标志</span>
+  │     局部色表 (可选)               <span style="color:#008000">// 本图私用, 优先于全局表</span>
+  │     LZW 最小码宽 (1 字节)         <span style="color:#008000">// 如 8 = 每像素 8 位索引</span>
+  │     图像数据子块 (子块流, 0x00 结束) <span style="color:#008000">// 每子块: 1 长度字节 + 数据</span>
+  │  0x21 扩展块 (89a 新增)           <span style="color:#008000">// 图形控制/注释/应用... </span>
+  └── 循环 ...
+  0x3B Trailer                       <span style="color:#008000">// 文件结束</span></pre>
+
+<p>逻辑屏幕描述符和图像描述符里的标志字节（bitField）按位用：<strong>bit7=0x80</strong> 表示"后面跟色表"（全局或局部），<strong>低 3 位 N</strong> 决定色表大小 = <strong>2^(N+1)</strong> 项（<span class="pg">文章 "File format"/"Image Header" 节</span>）。图像描述符的 <strong>bit6=0x40</strong> 是隔行扫描标志：</p>
+
+<ul>
+<li><strong>隔行（interlaced）</strong>：数据分 4 趟下传——第 1 趟行 0,8,16…，第 2 趟行 4,12,20…，第 3 趟行 2,6,10…，第 4 趟行 1,3,5…（间隔 8/8/4/2，<span class="pg">文章 "Interlacing" 节</span>）。解码后要重排（Normalize）回逐行顺序</li>
+<li><strong>扩展块（0x21 + 标签）</strong>：89a 引入，支持文字叠加、动画帧、应用专用数据（如 <code>0xF9</code> 图形控制扩展控制帧延时与透明色、<code>0xFF</code> 应用扩展写循环次数）——动画的秘密就藏在这里</li>
+</ul>
+
+<p>图像数据子块的读法是：读 1 字节长度 <code>count</code>，再读 <code>count</code> 字节，直到遇到长度 0 结束（<span class="pg">文章 Listing 4 末尾</span>）。</p>
+
+<h2>3. LZW 压缩原理：边读边抄的密码本</h2>
+
+<p>LZW 的思路：把重复出现的"颜色序列"登记进一本字典，给每个序列一个编号（码字 code），输出码字代替长序列。而<strong>字典不随文件发送</strong>——编码器读原始数据时建字典，解码器读码流时<strong>重建一模一样的字典</strong>（<span class="pg">文章 "Introduction" 节</span>）。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 初始 (LZW 最小码宽 = size, 常见 8)</span>
+根节点   : 0 .. 2^size − 1          <span style="color:#008000">// 直接是调色板的颜色</span>
+clear 码 : 2^size                   <span style="color:#008000">// 清除码: 重建字典</span>
+end   码 : 2^size + 1               <span style="color:#008000">// 结束码: 数据流终止</span>
+新码起点 : 2^size + 2               <span style="color:#008000">// 从这里开始登记新序列</span>
+
+<span style="color:#008000"># 码宽 (每个码字占几位)</span>
+初始 = size + 1 位 → 随着字典变满, 依次 +1, 最大 12 位
+(2^12 = 4096 个码字是上限, 满了就发 clear 重建字典)</pre>
+
+<p>关键概念（<span class="pg">文章 "The code dictionary" 节</span>）：字典节点是一个"颜色 + 父节点下标"，从叶子沿父链一路走到根，就能拼出这个码字代表的整个颜色序列——它其实是棵树。编码/解码同时进行，谁都不用存字典。</p>
+
+<h2>4. 解码器实现：三个函数拆解</h2>
+
+<p>文章把解码拆成三个函数（<span class="pg">Listing 1/2/3</span>），逻辑非常干净。</p>
+
+<h3>① InitializeDictionary：用调色板灌满根节点</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 初始化字典 (文章 Listing 1) ===== */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span> <span style="color:#267F99">uint8_t</span> r, g, b; <span style="color:#267F99">uint16_t</span> parent; } DictNode;
+<span style="color:#267F99">static</span> DictNode dict[<span style="color:#098658">4096</span>];       <span style="color:#008000">/* 最大 2^12 = 4096 个码字 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> clear_code, end_code, start_code;
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> next_code;             <span style="color:#008000">/* 下一个待写入的码字 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> curr_code_size;        <span style="color:#008000">/* 当前码宽 (位) */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> first_char;            <span style="color:#008000">/* 上一个输出串的首字符 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span> <span style="color:#795E26">stack</span>[<span style="color:#098658">4096</span>], sp;       <span style="color:#008000">/* OutputCode 用的反转栈 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">lzw_init</span><span style="color:#001080">(<span style="color:#267F99">int</span> size)</span>           <span style="color:#008000">/* size = LZW 最小码宽(色表位数) */</span>
+{
+    <span style="color:#267F99">int</span> limit = <span style="color:#098658">1</span> &lt;&lt; size;
+    clear_code = limit;           <span style="color:#008000">/* 清除码 = 2^size */</span>
+    end_code   = clear_code + <span style="color:#098658">1</span>;  <span style="color:#008000">/* 结束码 */</span>
+    start_code = clear_code + <span style="color:#098658">2</span>;  <span style="color:#008000">/* 第一个新码字 */</span>
+    next_code  = start_code;
+    curr_code_size = size + <span style="color:#098658">1</span>;    <span style="color:#008000">/* 初始码宽 = size + 1 */</span>
+
+    <span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> i = <span style="color:#098658">0</span>; i &lt; limit; i++) {   <span style="color:#008000">/* 根节点 = 全局色表项 */</span>
+        dict[i].r = gct[i * <span style="color:#098658">3</span>];
+        dict[i].g = gct[i * <span style="color:#098658">3</span> + <span style="color:#098658">1</span>];
+        dict[i].b = gct[i * <span style="color:#098658">3</span> + <span style="color:#098658">2</span>];
+        dict[i].parent = <span style="color:#098658">0</span>;       <span style="color:#008000">/* 根节点没有父节点 */</span>
+    }
+    sp = <span style="color:#098658">0</span>;
+}</pre>
+
+<h3>② ReadCode：读一个变长码字（LSB-first）</h3>
+
+<p>码宽不是固定的——这正是 LZW 最"tricky"的地方。文章用 12 路 switch 精确处理"上次读剩几位"的边界（<span class="pg">Listing 2</span>）。现代写法是维护一个位缓冲，思路完全一致：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 变长码读取: LSB-first, 记住上次剩下的位 (Listing 2 思路) ===== */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> bit_buf;   <span style="color:#008000">/* 位缓冲 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">int</span>      bit_cnt;   <span style="color:#008000">/* 缓冲内有效位数 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">const</span> <span style="color:#267F99">uint8_t</span> *block; <span style="color:#267F99">static</span> <span style="color:#267F99">int</span> bidx;   <span style="color:#008000">/* 当前子块数据 */</span>
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> <span style="color:#795E26">read_bits</span><span style="color:#001080">(<span style="color:#267F99">int</span> n)</span>        <span style="color:#008000">/* 0 &lt; n &lt;= 12 */</span>
+{
+    <span style="color:#0000FF">while</span> (bit_cnt &lt; n) {               <span style="color:#008000">/* 不够就从子块补字节 */</span>
+        bit_buf |= (<span style="color:#267F99">uint32_t</span>)block[bidx++] &lt;&lt; bit_cnt;
+        bit_cnt += <span style="color:#098658">8</span>;
+    }
+    <span style="color:#267F99">uint32_t</span> v = bit_buf &amp; ((<span style="color:#098658">1u</span> &lt;&lt; n) - <span style="color:#098658">1</span>);
+    bit_buf &gt;&gt;= n;
+    bit_cnt -= n;
+    <span style="color:#0000FF">return</span> v;
+}</pre>
+
+<h3>③ OutputCode：沿父链压栈，反转输出整串</h3>
+
+<p>一个码字代表的是一整串颜色。做法：从该节点一路向上走到根，全压进栈（顺序是反的），再出栈就还原了正序（<span class="pg">Listing 3</span>）。栈顶元素就是这一串的<strong>首字符</strong>，供建字典用：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 输出一个码字 (Listing 3): 压栈再反转 ===== */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">lzw_output</span><span style="color:#001080">(<span style="color:#267F99">int</span> code, <span style="color:#267F99">uint8_t</span> *dst, <span style="color:#267F99">int</span> *idx)</span>
+{
+    <span style="color:#267F99">int</span> prev = code;
+    sp = <span style="color:#098658">0</span>;
+
+    <span style="color:#008000">/* 从叶子沿父链走到根, 压栈 (得到逆序) */</span>
+    <span style="color:#0000FF">do</span> {
+        <span style="color:#0000FF">if</span> (code == end_code || code == clear_code) <span style="color:#0000FF">break</span>;
+        <span style="color:#795E26">stack</span>[sp++] = code;
+        prev = code;
+        code = dict[code].parent;
+    } <span style="color:#0000FF">while</span> (code != <span style="color:#098658">0</span>);
+
+    <span style="color:#008000">/* 处理走到 0 节点时的 off-by-one */</span>
+    <span style="color:#0000FF">if</span> (prev &gt; end_code) <span style="color:#795E26">stack</span>[sp++] = code;
+
+    first_char = <span style="color:#795E26">stack</span>[sp - <span style="color:#098658">1</span>];     <span style="color:#008000">/* 栈顶 = 串的首字符 */</span>
+
+    <span style="color:#008000">/* 出栈即还原正序, 写入输出流 */</span>
+    <span style="color:#0000FF">while</span> (sp &gt; <span style="color:#098658">0</span>) {
+        <span style="color:#267F99">int</span> c = <span style="color:#795E26">stack</span>[--sp];
+        dst[(*idx)++] = dict[c].r;  <span style="color:#008000">/* 按调色板 RGB 输出 */</span>
+        dst[(*idx)++] = dict[c].g;
+        dst[(*idx)++] = dict[c].b;
+    }
+}</pre>
+
+<h2>5. 主解码循环：边读边建字典（含 KwKwK 特例）</h2>
+
+<p>把三块拼起来就是主循环（<span class="pg">Listing 4 精简</span>）。注意三种分支：<strong>已存在的码字</strong>（输出 + 用"上一串+本串首字符"建新码字）、<strong>还没定义的码字</strong>（KwKwK 特例：先建字典再输出）、<strong>clear/end 码</strong>（重建字典 / 结束）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 主解码循环 (文章 Listing 4 精简) ===== */</span>
+code = read_bits(curr_code_size);
+<span style="color:#0000FF">while</span> (code == clear_code) code = read_bits(curr_code_size);  <span style="color:#008000">/* 跳过开头 clear */</span>
+lzw_output(code, img, &amp;out);
+last = code;
+
+<span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>) {
+    <span style="color:#0000FF">if</span> (next_code &gt;= (<span style="color:#098658">1</span> &lt;&lt; curr_code_size) &amp;&amp; curr_code_size &lt; <span style="color:#098658">12</span>)
+        curr_code_size++;           <span style="color:#008000">/* 字典快满, 码宽 +1 */</span>
+
+    code = read_bits(curr_code_size);
+
+    <span style="color:#0000FF">if</span> (code == end_code) <span style="color:#0000FF">break</span>;                        <span style="color:#008000">/* 结束 */</span>
+    <span style="color:#0000FF">if</span> (code == clear_code) {                           <span style="color:#008000">/* 重建字典 */</span>
+        lzw_init(init_size);
+        <span style="color:#0000FF">while</span> (code == clear_code) code = read_bits(curr_code_size);
+        lzw_output(code, img, &amp;out);
+        last = code;
+        <span style="color:#0000FF">continue</span>;
+    }
+
+    <span style="color:#0000FF">if</span> (code &lt; next_code) {             <span style="color:#008000">/* 已存在的码字 */</span>
+        lzw_output(code, img, &amp;out);
+        dict[next_code].parent = last;              <span style="color:#008000">/* 新串 = 旧串 + 首字符 */</span>
+        dict[next_code].r = dict[first_char].r;
+        dict[next_code].g = dict[first_char].g;
+        dict[next_code].b = dict[first_char].b;
+        next_code++;
+    } <span style="color:#0000FF">else</span> {                            <span style="color:#008000">/* code == next_code: KwKwK 特例 */</span>
+        dict[next_code].parent = last;
+        dict[next_code].r = dict[first_char].r;
+        dict[next_code].g = dict[first_char].g;
+        dict[next_code].b = dict[first_char].b;
+        next_code++;
+        lzw_output(code, img, &amp;out);
+    }
+    last = code;
+}</pre>
+
+<div class="warn">
+  <p>⚠️ <strong>KwKwK 特例最容易绕晕：</strong>解码器可能遇到"字典里还没有的码字"——它必然是"上一串 + 上一串的首字符"（编码器刚生成、还没轮到这个码字就发了）。必须先把它写进字典，再输出。手推一遍练习 15.1 你就彻底懂了。</p>
+</div>
+
+<h2>6. 与 LVGL 衔接：lv_gif</h2>
+
+<p>LVGL 的 <code>lv_gif</code> 正是用上面这套 LZW 解码（底层是 <code>gifdec</code>，即 gd_GIF），包成 <code>lv_img</code> 的子类：对象创建后定时器自动推进动画帧（<span class="pg">lv_gif.h:30</span>，内部有 <code>lv_timer_t</code> 驱动）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== lv_gif 使用 (LVGL v8.3) ===== */</span>
+<span style="color:#267F99">lv_obj_t</span> *gif = lv_gif_create(lv_scr_act());   <span style="color:#008000">/* 创建对象 (img 子类) */</span>
+lv_gif_set_src(gif, <span style="color:#A31515">&quot;A:/anim.gif&quot;</span>);           <span style="color:#008000">/* 指定 GIF 文件 */</span>
+lv_obj_center(gif);
+<span style="color:#008000">/* 需要重播时: lv_gif_restart(gif); */</span></pre>
+
+<div class="warn">
+  <p>⚠️ <strong>动画 GIF 在 F407 上是"内存大户"：</strong>GIF 必须先整帧解出再上屏，320×240 的 RGB565 全帧要 320×240×2 ≈ <strong>150KB</strong>，而 F407 总共 192KB RAM。而且工程里 <code>LV_USE_GIF</code> 默认 0（<span class="pg">lv_conf.h:668</span>），要用得改成 1 重新编译。真机建议：小尺寸动图（如图标级 96×96 ≈ 18KB）或先降帧。这正是你在第 13、14 课学的"内存换时间"权衡。</p>
+</div>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 15.1：手推 LZW 解码字典</h3>
+  <p class="step">1️⃣ 场景：LZW 最小码宽 = 3（8 色），调色板 <code>1 = 红</code>、<code>2 = 蓝</code>。码流（十进制）为：<code>8, 1, 2, 10, 10, 9</code>（8=clear，9=end，初始码宽 4 位）。</p>
+  <p class="step">2️⃣ 画一张表，逐码字记录：输出什么颜色串、新建的码字内容（父节点 + 颜色）、first_char、next_code。</p>
+  <p class="step">3️⃣ 验证：6 个输出像素是不是 <code>红 蓝 红 蓝 红 蓝</code>？新建的 10、11、12 三个码字各代表什么串？码宽有变化吗？</p>
+</div>
+
+<div class="practice">
+  <h3>练习 15.2：解剖一张真实 GIF</h3>
+  <p class="step">1️⃣ 找一张 .gif（没有就用 LVGL 自带的动图素材），HxD 打开，确认开头 6 字节是 GIF87a 还是 GIF89a。</p>
+  <p class="step">2️⃣ 读出逻辑屏幕的宽（2 字节小端）、全局色表大小（标志位低 3 位 +1 再取 2 次幂，乘 3 字节验证色表区间）。</p>
+  <p class="step">3️⃣ 找到第一个 0x2C 图像描述符的偏移，读出图像宽高；再找 0x21 扩展块（89a 动画一定有几个），记录它们的标签值。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. GIF 文件开头 6 个字节是？</p>
+  <p class="opt">A. 'GIF87a' 或 'GIF89a'</p>
+  <p class="opt">B. 'RIFFWAVE' 六个字符</p>
+  <p class="opt">C. 4 字节魔数加版本号</p>
+  <p class="opt">D. 'GIF' 加 3 字节随机数</p>
+  <details><summary>查看答案</summary><div class="answer">A。签名 'GIF' + 版本 '87a'/'89a'，共 6 字节。</div></details>
+
+  <p class="q">Q2. 解码过程中 LZW 码宽为什么会增大？</p>
+  <p class="opt">A. 因为图像的颜色越来越多</p>
+  <p class="opt">B. 字典码字变多，需要更多位表示</p>
+  <p class="opt">C. 为了提高压缩率必须持续增大</p>
+  <p class="opt">D. 与文件大小成正比增长</p>
+  <details><summary>查看答案</summary><div class="answer">B。码字空间被占满，next_code ≥ 2^码宽 时 +1，最大 12 位。</div></details>
+
+  <p class="q">Q3. clear code（清除码）的用途是？</p>
+  <p class="opt">A. 标记一帧图像的数据结束</p>
+  <p class="opt">B. 清空并重建字典，重新开始编码</p>
+  <p class="opt">C. 表示某个像素是透明色</p>
+  <p class="opt">D. 表示隔行扫描开始</p>
+  <details><summary>查看答案</summary><div class="answer">B。字典塞满或数据特性变化时发 clear，重置字典从头建。</div></details>
+
+  <p class="q">Q4. LVGL 里播放 GIF 动画的第一步是？</p>
+  <p class="opt">A. lv_gif_create 创建对象再 set_src</p>
+  <p class="opt">B. 直接用 lv_img 就能自动动起来</p>
+  <p class="opt">C. 先调用 lv_split_jpeg_init</p>
+  <p class="opt">D. 用 lv_timer 手动逐帧刷新</p>
+  <details><summary>查看答案</summary><div class="answer">A。lv_gif 是 lv_img 子类，create 后 lv_gif_set_src 指定文件，内部定时器自动播放。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 Andrew S. Downs《Implementing a GIF Decoder》全文——本课全部依据（Header/Screen/Image Descriptor、LZW 字典、ReadCode/OutputCode/主循环、隔行、专利史）</li>
+<li>🔧 工程源码：<code>EXTERNAL/LVGL/src/extra/libs/gif/lv_gif.c</code> 与 <code>gifdec.c</code>——可对照本文读懂 LVGL 的实现</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 16 课——从图像世界切换回总线世界，认识 CAN 物理层：为什么汽车里到处都是这对差分线。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0014-jpeg-principles-huffman.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0016-can-basics.html">下一课：CAN 入门：物理层与特点 →</a>
+</nav>
+
+</div>
+</body>
+</html>

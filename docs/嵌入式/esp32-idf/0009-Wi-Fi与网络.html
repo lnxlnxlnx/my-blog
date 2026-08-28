@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0009 · Wi-Fi 与网络</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>Wi-Fi 与网络</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0009 · 预计 20 分钟</p>
+
+<p>STM32 接网是外挂模块 + 透传指令;ESP32 是<strong>片上 Wi-Fi</strong>,而且 API 是"事件驱动"的——连上、断开都有事件。这一课打通:<strong>初始化 → 事件回调 → 配网 → TCP/HTTP</strong>,这是 xiaozhi 一切网络功能的地基。</p>
+
+<h2>知识点 1:初始化三步</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">esp_netif_init</span>();                       <span style="color: #008000">// 1. TCP/IP 协议栈</span>
+<span style="color: #795E26">esp_event_loop_create_default</span>();        <span style="color: #008000">// 2. 事件循环</span>
+<span style="color: #795E26">esp_wifi_init</span>(&amp;wifi_cfg);               <span style="color: #008000">// 3. Wi-Fi 驱动</span>
+</pre>
+
+<h2>知识点 2:事件驱动连接</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">esp_event_handler_register</span>(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_handler, <span style="color: #00F">NULL</span>);
+<span style="color: #795E26">esp_event_handler_register</span>(IP_EVENT, IP_EVENT_STA_GOT_IP, got_ip_handler, <span style="color: #00F">NULL</span>);
+<span style="color: #008000">// 连上+拿到 IP 后,才敢去连服务器——这就是 xiaozhi 的启动顺序</span>
+</pre>
+
+<h2>知识点 3:配网与 HTTP</h2>
+<p>xiaozhi 支持两种配网:热点配网(Hotspot,设备自己开 AP 让你填 WiFi)和 BluFi(BLE 配网)。配好密码存 NVS。网络层收发用 lwIP;HTTP 用 <code>esp_http_client</code>;WebSocket 有 <code>esp_websocket_client</code>——xiaozhi 的 <code>websocket_protocol.cc</code> 就是用它。</p>
+
+<h2>动手</h2>
+<p>打开 <code>xiaozhi-esp32-2.2.4/main/protocols/websocket_protocol.cc</code>,<strong>搜 <code>esp_websocket_client</code> 和事件回调</strong>,画出"连接→断线重连"的事件流。再在 <code>main/application.cc</code> 找 Wi-Fi 事件处理的注册位置。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">拿到 IP 的事件是?</p>
+  <button class="opt" data-ok="true">IP_EVENT_STA_GOT_IP</button>
+  <button class="opt" data-ok="false">WIFI_EVENT</button>
+  <button class="opt" data-ok="false">SC_EVENT</button>
+  <p class="reveal">IP_EVENT_STA_GOT_IP,拿到 IP 才能连服务器。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">xiaozhi 默认配网方式是?</p>
+  <button class="opt" data-ok="true">热点配网</button>
+  <button class="opt" data-ok="false">串口配网</button>
+  <button class="opt" data-ok="false">SD卡配网</button>
+  <p class="reveal">Hotspot(设备开热点)为主,也可开 BluFi。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《Wi-Fi 入门》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/wifi.html">Wi-Fi 指南</a>):重点看 STA 连接流程那节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:存储——NVS 与文件系统,配网信息、设备配置存在哪。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0008-UART与I2C与SPI.html">← 上一篇:通信总线</a>
+  <a href="index.html">课程地图</a>
+  <a href="0010-NVS与文件系统.html">下一篇:NVS →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

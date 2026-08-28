@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 9 课：MiniOS③ 调度器与临界区 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 9 课</nav>
+
+<h1>第 9 课：MiniOS③ 调度器与临界区</h1>
+<p class="subtitle">⭐ 手写内核第三步：OSSched、任务创建与第一个可运行的多任务 MiniOS</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>第 8 课切换链路全自动、选人手动；本课把最后一块拼图装上：<code>OS_SchedNew</code> 填真算法、<code>OSSched</code> 成为统一调度入口、<code>OSTaskCreate</code> 让任务"出生即就绪"、BASEPRI 临界区落地，再配一个最低优先级的空闲任务兜底。学完你将拥有<strong>第一个真正全自动运行的多任务 MiniOS</strong>：两个任务轮流打印，抢占、让出、挂起/恢复全部自动完成。对照 µC/OS-III 的 OSSched（PDF p.133~136），你会发现我们的实现是它的骨架级简化。</p>
+</div>
+
+<h2>1. 调度点设计：什么时候该问"换不换人"</h2>
+
+<p>µC/OS-III 的自动切换触发条件（PDF p.132 表 8.2.1）有一长串：发信号、延时、等事件、挂起/恢复、创建/删除任务、中断嵌套结束、解锁调度器……归拢起来就一句话——<strong>一切"就绪集合可能变化"的时刻</strong>。MiniOS 初版挑出四个调度点：</p>
+
+<table>
+<tr><th>调度点</th><th>触发动作</th><th>谁调用 OSSched</th><th>UCOS 对应（表 8.2.1）</th></tr>
+<tr><td>任务主动让出</td><td>挂起自己</td><td>OS_TaskSuspend（挂起的是当前任务时）</td><td>OSTaskSuspend 挂起自身</td></tr>
+<tr><td>任务被恢复</td><td>恢复对方</td><td>OS_TaskResume</td><td>OSTaskResume 恢复任务</td></tr>
+<tr><td>新任务诞生</td><td>创建任务</td><td>OSTaskCreate（内核运行中时）</td><td>任务被创建</td></tr>
+<tr><td>延时到期</td><td>时基节拍</td><td>OSIntExit（下一课加入）</td><td>中断嵌套结束</td></tr>
+</table>
+
+<p>设计原则（本课反复强调）：<strong>OSSched 只管"问"——它检查就绪表，如果最高优先级任务不是当前任务就请求切换；绝不自己判断"该不该在此时调度"，那是各调用点的职责</strong>。µC/OS-III 原版的 OSSched 也是这样：一进来先过四道闸门。</p>
+
+<h2>2. OSSched()：四道闸门 + 一次选择</h2>
+
+<p>µC/OS-III 的 OSSched 源码（PDF p.133~136）结构如下，我们按骨架复刻：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_sched.c：调度器（第 9 课交付） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;os_core.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;cpu.h&quot;</span></span>
+
+<span style="color:#008000">/* 第 8 课的空壳转正：从位图里取最高优先级，映射到 TCB 池槽位。
+ * 由 PendSV 汇编调用（此时在 Handler 模式，用 MSP，任务栈不受影响） */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_SchedNew</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    OSPrioHighRdy   = OS_PrioGetHighest();
+    OSTCBHighRdyPtr = &amp;OSTCBTbl[OSPrioHighRdy];
+}
+
+<span style="color:#008000">/* 统一调度入口：任务级代码使用 */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OSSched</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_SR_ALLOC();
+
+    <span style="color:#0000FF">if</span> (OSRunning != OS_STATE_OS_RUNNING) {      <span style="color:#008000">/* 闸门①：内核没启动？ */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+    <span style="color:#0000FF">if</span> (OSIntNestingCtr &gt; <span style="color:#098658">0u</span>) {                  <span style="color:#008000">/* 闸门②：在中断里？中断用 OSIntExit 调度 */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+    <span style="color:#0000FF">if</span> (OSSchedLockNestingCtr &gt; <span style="color:#098658">0u</span>) {            <span style="color:#008000">/* 闸门③：调度器被锁？解锁时再补调 */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+
+    CPU_CRITICAL_ENTER();                        <span style="color:#008000">/* ④ 进临界区：保护&quot;查表+比较&quot;不被中断插队 */</span>
+    OSPrioHighRdy   = OS_PrioGetHighest();       <span style="color:#008000">/* ⑤ 查位图：最高就绪优先级（第 7 课，O(1)） */</span>
+    OSTCBHighRdyPtr = &amp;OSTCBTbl[OSPrioHighRdy];
+
+    <span style="color:#0000FF">if</span> (OSTCBHighRdyPtr == OSTCBCurPtr) {        <span style="color:#008000">/* ⑥ 还是自己？不用切，直接回 */</span>
+        CPU_CRITICAL_EXIT();
+        <span style="color:#0000FF">return</span>;
+    }
+
+    OS_TASK_SW();                                <span style="color:#008000">/* ⑦ 挂起 PendSV（此刻中断仍被屏蔽） */</span>
+    CPU_CRITICAL_EXIT();                         <span style="color:#008000">/* ⑧ 出临界区 → BASEPRI=0 → PendSV 立即执行 */</span>
+}</pre>
+
+<p>对照教材源码的四个要点：</p>
+
+<ul>
+<li><strong>闸门②的语义</strong>：中断里就绪集合变了，由 OSIntExit（第 6 课讲过）负责在"最外层中断退出"时调度——任务代码里的 OSSched 不该、也不能在中断里跑。</li>
+<li><strong>闸门③的语义</strong>：调度器被锁（OSSchedLock）期间，任何调度请求都被记账"悬空"，解锁到最外层时由 OSSchedUnlock 补一次调度——这就是第 6 课"锁定调度器代替关中断"的完整闭环。</li>
+<li><strong>⑦⑧的顺序</strong>：先挂起 PendSV、再出临界区。PendSV 挂起后因为优先级最低（第 6 课配的 0xFF），要等当前临界区出去、中断全部安静才执行——"换人区"永远在最后，这正是切换不被打断的底气。</li>
+<li><strong>为什么查表要进临界区</strong>：OS_PrioGetHighest 读位图是"读-算-读"多条指令，若中间被 SysTick 插队改了位图，可能读到半新半旧的状态。临界区只保护这几条指令，纳秒级。</li>
+</ul>
+
+<h2>3. 临界区落地：cpu.h 的 BASEPRI 三件套</h2>
+
+<p>第 6 课讲透了原理（宏链一路展开到 BASEPRI），本课把它落进 MiniOS（cpu.h + os_cpu_a.asm）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/cpu.h（第 9 课补全版） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">ifndef</span>  CPU_H</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_H</span>
+
+<span style="color:#0000FF">typedef</span>  <span style="color:#267F99">unsigned</span> <span style="color:#267F99">int</span>    CPU_INT32U;
+<span style="color:#0000FF">typedef</span>  CPU_INT32U      CPU_DATA;      <span style="color:#008000">/* 32 位机器：字 */</span>
+<span style="color:#0000FF">typedef</span>  CPU_INT32U      CPU_STK;       <span style="color:#008000">/* 栈单元：32 位 */</span>
+<span style="color:#0000FF">typedef</span>  CPU_INT32U      CPU_SR;        <span style="color:#008000">/* 保存中断状态的变量类型 */</span>
+<span style="color:#0000FF">typedef</span>  <span style="color:#795E26">void</span>          <span style="color:#001080">(*OS_TASK_PTR)</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>;
+<span style="color:#0000FF">typedef</span>  <span style="color:#267F99">unsigned</span> <span style="color:#267F99">int</span>    CPU_STK_SIZE;
+
+<span style="color:#008000">/* ---------- 中断配置（对应第 6 课：受管理中断 = 优先级 4~15） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_CFG_NVIC_PRIO_BITS   4u</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_CFG_KA_IPL_BOUNDARY  4u</span>
+
+<span style="color:#008000">/* ---------- 临界区三件套（宏链终点是 os_cpu_a.asm 的 CPU_SR_Save/Restore） ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_SR_ALLOC()           CPU_SR  cpu_sr = (CPU_SR)0</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_CRITICAL_ENTER()     do { cpu_sr = CPU_SR_Save( \
+        CPU_CFG_KA_IPL_BOUNDARY &lt;&lt; (8u - CPU_CFG_NVIC_PRIO_BITS)); } while (0)</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span>  CPU_CRITICAL_EXIT()      do { CPU_SR_Restore(cpu_sr); } while (0)</span>
+
+CPU_SR  <span style="color:#795E26">CPU_SR_Save</span>    <span style="color:#001080">(CPU_SR new_basepri)</span>;   <span style="color:#008000">/* 汇编实现，os_cpu_a.asm */</span>
+<span style="color:#267F99">void</span>    <span style="color:#795E26">CPU_SR_Restore</span> <span style="color:#001080">(CPU_SR basepri)</span>;       <span style="color:#008000">/* 汇编实现，os_cpu_a.asm */</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span></pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">; ---------- MiniOS/os_cpu_a.<span style="color:#0000FF">asm</span>：临界区汇编（第 <span style="color:#098658">6</span> 课 <span style="color:#098658">4.</span> 节已拆解，直接搬入） ----------
+CPU_SR_Save
+    CPSID   I
+    PUSH   {R1}
+    MRS    R1, BASEPRI        ; 读旧值
+    MSR    BASEPRI, R0        ; 设新阈值（<span style="color:#098658">0x40</span>：屏蔽优先级 <span style="color:#098658">4</span>~<span style="color:#098658">15</span>）
+    DSB
+    ISB
+    MOV    R0, R1             ; 返回旧值
+    POP    {R1}
+    CPSIE  I
+    BX     LR
+
+CPU_SR_Restore
+    CPSID   I
+    MSR    BASEPRI, R0        ; 恢复进入临界区前的阈值
+    DSB
+    ISB
+    CPSIE  I
+    BX     LR</pre>
+
+<div class="tip">
+  <p>💡 至此第 6 课的"宏链"知识全部闭环：<code>CPU_CRITICAL_ENTER()</code> → <code>CPU_SR_Save(0x40)</code> → 汇编设 BASEPRI。MiniOS 里临界区的每一次进出，都意味着"中断禁用时间只有十几条指令"——这就是 µC/OS-III 风格的实时性保障，我们亲手实现了它。</p>
+</div>
+
+<h2>4. OSTaskCreate：任务"出生即就绪"</h2>
+
+<p>µC/OS-III 的 OSTaskCreate 形参多达 13 个（PDF p.91~93），MiniOS 砍到 7 个，但内部五步不变：参数检查 → 填 TCB → 初始化任务栈 → 插入就绪表 → 运行中则调度（PDF p.119~127）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_task.c：任务创建与挂起/恢复（第 9 课交付） ---------- */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OSTaskCreate</span> <span style="color:#001080">(OS_TCB       *p_tcb,
+                    OS_TASK_PTR   p_task,
+                    <span style="color:#267F99">void</span>         *p_arg,
+                    OS_PRIO       prio,
+                    CPU_STK      *p_stk_base,
+                    CPU_STK_SIZE  stk_size,
+                    OS_ERR       *p_err)</span>
+{
+    CPU_SR_ALLOC();
+
+    <span style="color:#008000">/* ① 参数检查（对照 UCOS 的 OS_ERR_XXX 错误码，PDF p.92~93） */</span>
+    <span style="color:#0000FF">if</span> (p_tcb == (OS_TCB *)<span style="color:#098658">0</span>)        { *p_err = OS_ERR_TCB_INVALID;   <span style="color:#0000FF">return</span>; }
+    <span style="color:#0000FF">if</span> (p_task == (OS_TASK_PTR)<span style="color:#098658">0</span>)    { *p_err = OS_ERR_TASK_INVALID;  <span style="color:#0000FF">return</span>; }
+    <span style="color:#0000FF">if</span> (prio &gt;= (OS_CFG_PRIO_MAX - <span style="color:#098658">1u</span>)) { *p_err = OS_ERR_PRIO_INVALID; <span style="color:#0000FF">return</span>; }  <span style="color:#008000">/* 31 号留给空闲任务 */</span>
+
+    <span style="color:#008000">/* ② 填 TCB（UCOS 用 OS_TaskInitTCB()，PDF p.121） */</span>
+    p_tcb-&gt;Prio         = prio;
+    p_tcb-&gt;TaskState    = OS_TASK_STATE_RDY;
+    p_tcb-&gt;TickRemain   = <span style="color:#098658">0u</span>;
+    p_tcb-&gt;TaskEntryArg = p_arg;
+
+    <span style="color:#008000">/* ③ 初始化任务栈（第 8 课），栈顶存入 TCB 第一个成员 */</span>
+    p_tcb-&gt;StkPtr = OSTaskStkInit(p_task, p_arg, p_stk_base, stk_size);
+
+    <span style="color:#008000">/* ④ 插入就绪位图（UCOS：OS_PrioInsert + OS_RdyListInsertTail，PDF p.126） */</span>
+    CPU_CRITICAL_ENTER();
+    OS_PrioInsert(prio);
+    CPU_CRITICAL_EXIT();
+
+    *p_err = OS_ERR_NONE;
+
+    <span style="color:#008000">/* ⑤ 内核已运行时，新任务可能更高优先级 → 立即调度 */</span>
+    <span style="color:#0000FF">if</span> (OSRunning == OS_STATE_OS_RUNNING) {
+        OSSched();
+    }
+}
+
+<span style="color:#008000">/* 挂起任务：移出就绪表；挂起自己必须立即让出 CPU */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_TaskSuspend</span> <span style="color:#001080">(OS_TCB *p_tcb)</span>
+{
+    CPU_SR_ALLOC();
+
+    CPU_CRITICAL_ENTER();
+    p_tcb-&gt;TaskState = OS_TASK_STATE_SUSPENDED;
+    OS_PrioRemove(p_tcb-&gt;Prio);              <span style="color:#008000">/* 清位图 → 调度器再也选不到它 */</span>
+    CPU_CRITICAL_EXIT();
+
+    <span style="color:#0000FF">if</span> (p_tcb == OSTCBCurPtr) {
+        OSSched();                           <span style="color:#008000">/* 挂起自己：调度点① */</span>
+    }
+}
+
+<span style="color:#008000">/* 恢复任务：插回就绪表并调度一次（对方更高优先级 → 立即抢占） */</span>
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OS_TaskResume</span> <span style="color:#001080">(OS_TCB *p_tcb)</span>
+{
+    CPU_SR_ALLOC();
+
+    CPU_CRITICAL_ENTER();
+    <span style="color:#0000FF">if</span> (p_tcb-&gt;TaskState == OS_TASK_STATE_SUSPENDED) {  <span style="color:#008000">/* 已就绪则跳过，防重复置位 */</span>
+        p_tcb-&gt;TaskState = OS_TASK_STATE_RDY;
+        OS_PrioInsert(p_tcb-&gt;Prio);
+    }
+    CPU_CRITICAL_EXIT();
+
+    OSSched();                               <span style="color:#008000">/* 调度点② */</span>
+}</pre>
+
+<p>注意 <code>OS_TaskResume</code> 的幂等处理：恢复一个"本来就就绪"的任务时跳过插入——这个细节直接决定下面 demo 的正确性，也是真实 UCOS 会做的检查。优先级保留规则同 UCOS（PDF p.92）：0、1 保留给内核，31 是空闲任务，应用任务用 2~30。</p>
+
+<h2>5. 空闲任务与 OSStart：最后两块拼图</h2>
+
+<p>µC/OS-III 在 OSInit 里就悄悄创建了空闲任务（OS_IdleTaskInit，PDF p.116），优先级 OS_CFG_PRIO_MAX-1，常驻就绪表——<strong>保证位图永不为空</strong>（第 7 课练习 7.2 的思考题在此落地）。MiniOS 同款：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/os_core.c：OSInit 补空闲任务 + OSStart（第 9 课交付） ---------- */</span>
+<span style="color:#267F99">static</span>  OS_TCB   IdleTask_TCB;
+<span style="color:#267F99">static</span>  CPU_STK  IdleTaskStk[<span style="color:#098658">64</span>];
+<span style="color:#267F99">static</span>  <span style="color:#267F99">void</span>     <span style="color:#795E26">OS_IdleTask</span> <span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>      <span style="color:#008000">/* 空闲任务：永远最低优先级的&quot;管家&quot; */</span>
+{
+    <span style="color:#0000FF">for</span> (;;) {
+        OSIdleTaskCtr++;                        <span style="color:#008000">/* 闲着没事干就数数（调试用） */</span>
+    }
+}
+
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OSInit</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    OS_ERR  err;
+    CPU_DATA  i;
+
+    OS_PrioInit();                              <span style="color:#008000">/* ① 位图清零 */</span>
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0u</span>; i &lt; OS_CFG_PRIO_MAX; i++) {    <span style="color:#008000">/* ② TCB 池清零 */</span>
+        OSTCBTbl[i].StkPtr    = (CPU_STK *)<span style="color:#098658">0</span>;
+        OSTCBTbl[i].Prio      = (OS_PRIO)i;
+        OSTCBTbl[i].TaskState = OS_TASK_STATE_SUSPENDED;
+        OSTCBTbl[i].TickRemain = <span style="color:#098658">0u</span>;
+    }
+    OSTCBCurPtr     = (OS_TCB *)<span style="color:#098658">0</span>;
+    OSTCBHighRdyPtr = (OS_TCB *)<span style="color:#098658">0</span>;
+    OSPrioCur       = <span style="color:#098658">0u</span>;
+    OSPrioHighRdy   = <span style="color:#098658">0u</span>;
+    OSRunning       = OS_STATE_OS_STOPPED;
+    OSSchedLockNestingCtr = <span style="color:#098658">0u</span>;                 <span style="color:#008000">/* 第 6 课调度锁的计数（os_core.h 补声明） */</span>
+    OSIntNestingCtr       = <span style="color:#098658">0u</span>;                 <span style="color:#008000">/* 第 6 课中断嵌套计数（同上） */</span>
+
+    OSTaskCreate(&amp;IdleTask_TCB, OS_IdleTask, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>,
+                 (OS_CFG_PRIO_MAX - <span style="color:#098658">1u</span>), IdleTaskStk, <span style="color:#098658">64u</span>, &amp;err);  <span style="color:#008000">/* ③ 空闲任务常驻就绪表 */</span>
+}
+
+<span style="color:#267F99">void</span>  <span style="color:#795E26">OSStart</span> <span style="color:#001080">(OS_ERR *p_err)</span>
+{
+    <span style="color:#0000FF">if</span> (OSInitialized != OS_TRUE) {             <span style="color:#008000">/* 简化版：OSInit 里置位 */</span>
+        *p_err = OS_ERR_OS_NOT_INIT;
+        <span style="color:#0000FF">return</span>;
+    }
+    <span style="color:#0000FF">if</span> (OSRunning == OS_STATE_OS_STOPPED) {
+        OSPrioHighRdy   = OS_PrioGetHighest();  <span style="color:#008000">/* ① 查位图：谁最高谁先跑 */</span>
+        OSTCBHighRdyPtr = &amp;OSTCBTbl[OSPrioHighRdy];
+        OSTCBCurPtr     = OSTCBHighRdyPtr;
+        OSRunning       = OS_STATE_OS_RUNNING;
+        OSStartHighRdy();                       <span style="color:#008000">/* ② 汇编启动第一个任务（第 8 课）——不返回 */</span>
+        *p_err = OS_ERR_FATAL_RETURN;           <span style="color:#008000">/* 到不了这里 */</span>
+    } <span style="color:#0000FF">else</span> {
+        *p_err = OS_ERR_OS_RUNNING;
+    }
+}</pre>
+
+<p>对照教材 OSStart（PDF p.127~129）：取最高就绪优先级 → 取 TCB → 置 OSRunning → OSStartHighRdy 不归路。唯一简化是我们没做"内核任务数量统计"检查——因为 OSInit 已经创建了空闲任务，位图永不为空。</p>
+
+<h2>6. 本课交付：第一个多任务 demo</h2>
+
+<p>终于到最后一步。两个任务一高一低，用"恢复对方 + 挂起自己"的手势交替（抢占与让出齐活）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ---------- MiniOS/main.c：第 9 课验收 demo ---------- */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;os_core.h&quot;</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;usart.h&quot;</span></span>
+
+OS_TCB    Task1_TCB;
+CPU_STK   Task1Stk[<span style="color:#098658">128</span>];
+OS_TCB    Task2_TCB;
+CPU_STK   Task2Stk[<span style="color:#098658">128</span>];
+
+<span style="color:#267F99">void</span>  <span style="color:#795E26">task1</span> <span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>          <span style="color:#008000">/* 低优先级任务（数值 3） */</span>
+{
+    <span style="color:#0000FF">for</span> (;;) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 running\r\n&quot;</span>);
+        OS_TaskResume(&amp;Task2_TCB);     <span style="color:#008000">/* 恢复高优先级 task2 → 立即被抢占切换！
+                                        * 注意：这行执行后本任务就被切走了，
+                                        * 下面的 OS_TaskSuspend 永远执行不到（思考题！） */</span>
+        OS_TaskSuspend(&amp;Task1_TCB);
+    }
+}
+
+<span style="color:#267F99">void</span>  <span style="color:#795E26">task2</span> <span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>          <span style="color:#008000">/* 高优先级任务（数值 2） */</span>
+{
+    <span style="color:#0000FF">for</span> (;;) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task2 running\r\n&quot;</span>);
+        OS_TaskResume(&amp;Task1_TCB);     <span style="color:#008000">/* 恢复低优先级 task1：不切换（自己仍最高） */</span>
+        OS_TaskSuspend(&amp;Task2_TCB);    <span style="color:#008000">/* 挂起自己 → 让出 CPU 给 task1 */</span>
+    }
+}
+
+<span style="color:#267F99">int</span> <span style="color:#795E26">main</span> <span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    OS_ERR  err;
+
+    HAL_Init();
+    uart_init(<span style="color:#098658">115200</span>);
+    OSInit();                            <span style="color:#008000">/* ① 内核初始化（含空闲任务） */</span>
+
+    OSTaskCreate(&amp;Task1_TCB, task1, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, <span style="color:#098658">3u</span>,  Task1Stk, <span style="color:#098658">128u</span>, &amp;err);
+    OSTaskCreate(&amp;Task2_TCB, task2, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, <span style="color:#098658">2u</span>,  Task2Stk, <span style="color:#098658">128u</span>, &amp;err);
+
+    OSStart(&amp;err);                       <span style="color:#008000">/* ② 调度开始：task2 优先跑（数值 2 &lt; 3） */</span>
+    <span style="color:#0000FF">for</span> (;;) { ; }                       <span style="color:#008000">/* 永不返回 */</span>
+}</pre>
+
+<p>运行轨迹（值得对着源码逐行推一遍）：</p>
+
+<table>
+<tr><th>步骤</th><th>谁在跑</th><th>动作</th><th>结果</th></tr>
+<tr><td>1</td><td>—</td><td>OSStart 查位图：2、3 就绪</td><td>最高 = 2 → task2</td></tr>
+<tr><td>2</td><td>task2</td><td>打印 task2</td><td>串口输出</td></tr>
+<tr><td>3</td><td>task2</td><td>OS_TaskResume(task1)：task1 已就绪，跳过</td><td>不切换</td></tr>
+<tr><td>4</td><td>task2</td><td>OS_TaskSuspend(task2)：清 bit2</td><td>最高 = 3 → 切到 task1</td></tr>
+<tr><td>5</td><td>task1</td><td>打印 task1</td><td>串口输出</td></tr>
+<tr><td>6</td><td>task1</td><td>OS_TaskResume(task2)：置 bit2，task2 更高</td><td><strong>立即抢占</strong> → 切到 task2</td></tr>
+<tr><td>7</td><td>task2</td><td>回到步骤 2，循环</td><td>task2/task1 无限交替</td></tr>
+</table>
+
+<p>串口输出：<code>task2 task1 task2 task1 ...</code>。至此，从第 7 课的位图、第 8 课的切换，到本课的调度器——<strong>一个五脏俱全的最小内核诞生了</strong>。它和 µC/OS-III 的差距只是"功能数量"，不是"机制完整性"。</p>
+
+<div class="warn">
+  <p>⚠️ 理解 demo 里"执行不到的代码"：task1 的 <code>OS_TaskSuspend(&amp;Task1_TCB)</code> 每次都在恢复 task2 时被抢走，永远执行不到——所以 task1 始终处于就绪态。这不是 bug，而是抢占式调度的必然：<strong>恢复一个更高优先级任务 = 立即切换</strong>。把两处 OS_TaskResume 都注释掉再运行，两个任务会先后挂起，就轮到空闲任务数数了（观察 OSIdleTaskCtr）——这个对照实验能让你彻底分清"让出"与"抢占"。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 9.1：完成 MiniOS 初版并验证</h3>
+  <p class="step">1️⃣ 补齐第 9 课全部代码：<code>cpu.h</code>（临界区宏）、<code>os_cpu_a.asm</code>（CPU_SR_Save/Restore 搬入）、<code>os_sched.c</code>、<code>os_task.c</code> 补 OSTaskCreate/OS_TaskSuspend/OS_TaskResume、<code>os_core.c</code> 补空闲任务与 OSStart、main.c 用第 6 节 demo。</p>
+  <p class="step">2️⃣ 下载运行，串口应无限交替输出 task2/task1；在 <code>OS_CPU_PendSV_Handler</code> 打断点，确认每次切换前 OSSched 都"真的选了人"（对比第 8 课的手动指定）。</p>
+  <p class="step">3️⃣ 注释掉两个 OS_TaskResume，重新运行：两个任务先后挂起后，调试器里 <code>OSIdleTaskCtr</code> 是否在疯狂增长？（空闲任务接管 CPU）</p>
+  <p class="step">4️⃣ 验收标准：能口述 OSSched 的四道闸门 + 选择 + 比较 + 切换的完整流程，并解释"恢复高优先级任务为什么立即切换"。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 9.2：与 UCOS / FreeRTOS 同场景对比</h3>
+  <p class="step">1️⃣ 在你的 µC/OS-III 工程里写一个同款实验：两个任务（优先级 2、3），task2 用 <code>OSTaskResume</code> 恢复 task1、用 <code>OSTaskSuspend</code> 挂起自己，task1 只恢复 task2——跑起来观察现象是否与 MiniOS 完全一致。</p>
+  <p class="step">2️⃣ 再对照 FreeRTOS：同场景用 <code>vTaskSuspend/vTaskResume</code> 实现一遍，观察三者的串口输出节奏。注意：FreeRTOS 数值越大优先级越高，任务优先级配置要"反过来"。这说明什么？（提示：优先级方向只是约定，调度机制殊途同归。）</p>
+  <p class="step">3️⃣ 思考题：MiniOS 的 OSTaskCreate 里，为什么 <code>OS_PrioInsert</code> 要包在临界区里，而 <code>OSTaskStkInit</code> 不用？（提示：栈初始化只碰"自己的私有数据"；位图是"全局共享数据"。）</p>
+  <p class="step">4️⃣ 验收标准：三个内核同场景行为一致；能写出"私有数据 vs 共享数据"决定是否需要临界区的判断标准。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. OSSched 里哪一道闸门负责拦住"中断里调用调度"？</p>
+  <p class="opt">A. OSRunning 运行标志检查</p>
+  <p class="opt">B. OSIntNestingCtr 中断嵌套检查</p>
+  <p class="opt">C. OSSchedLockNestingCtr 锁检查</p>
+  <p class="opt">D. CPU_CRITICAL_ENTER 临界区</p>
+  <details><summary>查看答案</summary><div class="answer">B。中断中改变就绪集合由 OSIntExit 在中断退出时统一调度，任务级 OSSched 若被中断调用会与 OSIntExit 冲突，所以直接返回（PDF p.133）。</div></details>
+
+  <p class="q">Q2. OS_TaskResume 恢复了一个更高优先级任务，会发生什么？</p>
+  <p class="opt">A. 目标任务被立即抢占切换执行</p>
+  <p class="opt">B. 目标任务保持挂起等待调度</p>
+  <p class="opt">C. 当前任务继续运行直到延时</p>
+  <p class="opt">D. 系统进入空闲任务运行</p>
+  <details><summary>查看答案</summary><div class="answer">A。OS_TaskResume 末尾调用 OSSched，查到最高就绪优先级比当前高 → 挂起 PendSV，恢复动作本身变成一次抢占切换（PDF 表 8.2.1 中"任务的挂起状态被终止"）。</div></details>
+
+  <p class="q">Q3. MiniOS 创建空闲任务的根本原因是？</p>
+  <p class="opt">A. 提供系统时基节拍服务</p>
+  <p class="opt">B. 保证就绪位图永不为空，调度恒有解</p>
+  <p class="opt">C. 恢复所有被挂起的任务</p>
+  <p class="opt">D. 统计 CPU 使用率</p>
+  <details><summary>查看答案</summary><div class="answer">B。空闲任务常驻最低优先级位（bit0），OS_PrioGetHighest 的 while 循环永不越界，系统永远有任务可跑（PDF p.113 的 OS_PrioInit 注释）。</div></details>
+
+  <p class="q">Q4. OSTaskCreate 中需要进临界区保护的操作是？</p>
+  <p class="opt">A. 初始化任务栈帧</p>
+  <p class="opt">B. OS_PrioInsert 置位操作</p>
+  <p class="opt">C. 任务函数参数赋值</p>
+  <p class="opt">D. 空闲任务计数器自增</p>
+  <details><summary>查看答案</summary><div class="answer">B。栈初始化只碰任务私有数据，无需保护；位图是全局共享结构，置位必须与调度器的读取互斥（PDF p.126 的 CPU_CRITICAL_ENTER）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》8.2~8.3 节（<span class="pg">PDF p.132~140</span>）——调度触发条件表与 OSSched/OSIntExit 完整源码，本课的对照基准</li>
+<li>📖 同书 7.4 节（<span class="pg">PDF p.118~127</span>）——OSTaskCreate 全流程，本课第 4 节的母版</li>
+<li>🔁 对照：<a href="../../FreeRTOS/lessons/0006-scheduler-startup.html">FreeRTOS 课程第 6 课（系统启动流程）</a>——vTaskStartScheduler 与 OSStart 两种启动仪式的对比</li>
+<li>📕《µC/OS-III: The Real-Time Kernel》——Labrosse 原书第 4 章（Scheduling）对调度点设计的权威讲解</li>
+</ul>
+
+<div class="footer-note">
+  <p>恭喜——你亲手造出了一个能跑的操作系统内核。下一课 MiniOS④：时基与任务延时（SysTick + OSTimeDly），把"任务主动睡一会儿"的能力加上，也让抢占式调度真正频繁运转起来。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0008-minios-2-context-switch.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0010-minios-4-tick-and-delay.html">下一课：MiniOS④ 时基与任务延时 →</a>
+</nav>
+
+</div>
+</body>
+</html>

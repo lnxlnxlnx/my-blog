@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0005 · 定时器与延时</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>定时器与延时</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0005 · 预计 15 分钟</p>
+
+<p>STM32 里你有 SysTick、TIM、HAL_Delay。ESP32 世界里有<strong>三层"时间"</strong>:FreeRTOS ticks、<code>esp_timer</code>、硬件定时器(gptimer)。分清它们,才不会在看 xiaozhi 代码时晕。</p>
+
+<h2>知识点 1:三层时间体系</h2>
+<table>
+<tr><th>机制</th><th>精度</th><th>用途</th><th>STM32 类比</th></tr>
+<tr><td><code>vTaskDelay / pdMS_TO_TICKS</code></td><td>ms 级</td><td>任务里"让位睡觉"</td><td>HAL_Delay</td></tr>
+<tr><td><code>esp_timer</code>(软件定时器)</td><td>µs 级</td><td>回调定时任务,不占任务栈</td><td>TIM + 回调</td></tr>
+<tr><td><code>gptimer</code>(硬件定时器)</td><td>ns 级</td><td>精确 PWM/测量</td><td>TIM 高级定时器</td></tr>
+</table>
+
+<h2>知识点 2:esp_timer(最常用)</h2>
+<pre lang="c" class="highlight"><span style="color: #00F">static</span> <span style="color: #00F">void</span> <span style="color: #795E26">tick_cb</span>(<span style="color: #00F">void</span> *arg) {
+    <span style="color: #795E26">ESP_LOGI</span>(TAG, <span style="color: #A31515">&quot;tick!&quot;</span>);          <span style="color: #008000">// 在 esp_timer 任务上下文执行</span>
+}
+<span style="color: #795E26">esp_timer_create_args_t</span> args = { .callback = tick_cb };
+<span style="color: #795E26">esp_timer_handle_t</span> t;
+<span style="color: #795E26">esp_timer_create</span>(&amp;args, &amp;t);
+<span style="color: #795E26">esp_timer_start_periodic</span>(t, <span style="color: #098658">1000</span> * <span style="color: #098658">1000</span>);  <span style="color: #008000">// 每 1 秒(µs 为单位)</span>
+</pre>
+<p>注意:<code>esp_timer</code> 回调跑在系统任务里,<strong>不能做阻塞操作</strong>——和 STM32 中断回调一个脾气。</p>
+
+<h2>知识点 3:测量时间戳</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">int64_t</span> now = <span style="color: #795E26">esp_timer_get_time</span>();  <span style="color: #008000">// µs 时间戳,常用于性能测量</span>
+</pre>
+
+<h2>动手</h2>
+<p>去 <code>basic_routines/05_esp_timer</code>(或 <code>06_gp_timer</code>)看例程:对照上面的三层体系,<strong>说出这个例程用了几种"时间"机制、各是什么</strong>。再看 <code>02_key</code> 例程,猜猜按键消抖为什么不用 HAL 式 delay。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">esp_timer 回调里能做长时间阻塞吗?</p>
+  <button class="opt" data-ok="true">不能</button>
+  <button class="opt" data-ok="false">可以</button>
+  <button class="opt" data-ok="false">随便</button>
+  <p class="reveal">不能,它跑在系统任务里,阻塞会卡住其他定时器。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">esp_timer_get_time 返回的单位是?</p>
+  <button class="opt" data-ok="true">微秒</button>
+  <button class="opt" data-ok="false">毫秒</button>
+  <button class="opt" data-ok="false">时钟周期</button>
+  <p class="reveal">微秒(µs),int64_t 类型。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《esp_timer 文档》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/esp_timer.html">esp_timer</a>):表格看"该用哪个定时器"那节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:中断与 ISR——GPIO 中断怎么注册、怎么从 ISR 安全地通知任务。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0004-GPIO驱动与日志.html">← 上一篇:GPIO</a>
+  <a href="index.html">课程地图</a>
+  <a href="0006-中断与ISR.html">下一篇:中断 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

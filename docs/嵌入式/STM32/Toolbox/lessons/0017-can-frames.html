@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 17 课：CAN 报文格式与仲裁 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 17 课</nav>
+
+<h1>第 17 课：CAN 报文格式与仲裁</h1>
+<p class="subtitle">标准帧/扩展帧/遥控帧：读懂总线上流动的每一个位（瑞萨《CAN 入门教程》第 7~8.7 章）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课认识了"线"，这一课认识"话"。学完你能说出 CAN 的五种帧、画出标准数据帧 7 个段的完整位布局，说清扩展帧 29 位 ID 与标准帧 11 位 ID 的区别，并会用手算推演"两个节点同时发消息，谁赢得仲裁"。</p>
+</div>
+
+<h2>1. 标准规格：ISO11898 vs ISO11519-2</h2>
+
+<p>CAN 协议经 ISO 标准化后有两套物理层规格（<span class="pg">PDF p.12~16</span>）：</p>
+
+<table>
+<tr><th></th><th>ISO11898（高速）</th><th>ISO11519-2（低速容错）</th></tr>
+<tr><td><strong>通信速度</strong></td><td>最高 1Mbps（常用 125k~1M）</td><td>最高 125kbps（10k~125k）</td></tr>
+<tr><td><strong>总线长度</strong></td><td>40m / 1Mbps</td><td>1km / 40kbps</td></tr>
+<tr><td><strong>连接单元数</strong></td><td>最大 30</td><td>最大 20</td></tr>
+<tr><td><strong>总线拓扑</strong></td><td>闭环总线 + 120Ω 终端电阻</td><td>开环总线 + 2.2kΩ 终端电阻</td></tr>
+<tr><td><strong>数据链路层</strong></td><td colspan="2">两种规格<strong>定义相同</strong>（所以报文格式一脉相承）</td></tr>
+</table>
+
+<p>按 SAE 分类：<strong>Class A</strong>（车身，10kbps）→ <strong>Class B</strong>（状态信息，10k~125k）→ <strong>Class C</strong>（实时控制：发动机/ABS/悬挂，125k~1M）→ Class D（多媒体，走 MOST/FlexRay）。你要做的是 F407 的高速 CAN，对标 Class C。</p>
+
+<h2>2. 帧类型总览</h2>
+
+<p>CAN 通信靠 5 种帧（<span class="pg">PDF p.17~18</span>）：</p>
+
+<ul>
+<li><strong>数据帧</strong>：发送单元向接收单元传送数据</li>
+<li><strong>遥控帧</strong>：接收单元向具有相同 ID 的发送单元<strong>请求数据</strong></li>
+<li><strong>错误帧</strong>：检测出错误时向其它单元通知错误</li>
+<li><strong>过载帧</strong>：接收单元通知"我还没准备好接收"</li>
+<li><strong>帧间隔</strong>：把数据帧/遥控帧与前面的帧隔开</li>
+</ul>
+
+<p>数据帧和遥控帧又有两种格式：<strong>标准格式（11 位 ID）</strong>和<strong>扩展格式（29 位 ID）</strong>。STM32 bxCAN 默认用标准格式，够用且省带宽。</p>
+
+<h2>3. 数据帧详解：7 个段</h2>
+
+<p>数据帧由 7 个段构成（<span class="pg">PDF p.21~27</span>）：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 标准数据帧（8 字节数据，不含填充位时共 47 位）</span>
+┌──────┬────────────────────┬─────────────┬──────────────────────┬──────────────┬──────────┬────────┐
+│ SOF  │     仲裁段          │  控制段      │      数据段          │   CRC 段     │  ACK 段  │  EOF   │
+│ 1 位 │ 11×ID + 1×RTR       │ 1×IDE 1×r0  │  0~8 字节            │ 15+1 位      │ 1+1 位   │ 7 位   │
+├──────┼────────────────────┼─────────────┼──────────────────────┼──────────────┼──────────┼────────┤
+│显性 0│ ID 从高位到低位      │ 显性 显性    │ MSB 先行，最长 8 字节 │ CRC + 界定符 │ 槽+界定符│ 隐性×7 │
+│      │ RTR=0 数据 / 1 请求 │ + DLC(4 位) │                      │              │          │        │
+└──────┴────────────────────┴─────────────┴──────────────────────┴──────────────┴──────────┴────────┘
+<span style="color:#008000"># DLC = 数据长度码，与字节数对应：0~8；CRC 计算范围 = SOF~数据段</span></pre>
+
+<ul>
+<li><strong>SOF（帧起始）</strong>：1 个显性位，宣告"我要发帧了"</li>
+<li><strong>仲裁段</strong>：11 位 ID（从最高位 ID28 依次发出）+ 1 位 RTR。RTR 显性(0) 表示数据帧，隐性(1) 表示遥控帧。<strong>禁止 ID 高 7 位全为隐性</strong>（即 ID=1111111xxxx 不允许）</li>
+<li><strong>控制段</strong>：IDE + r0（保留位，发显性）+ 4 位 DLC，表示数据字节数 0~8</li>
+<li><strong>数据段</strong>：0~8 字节，从 MSB 开始发</li>
+<li><strong>CRC 段</strong>：15 位 CRC 序列 + 1 位 CRC 界定符（隐性），用于检传输错误</li>
+<li><strong>ACK 段</strong>：发送方发 2 个隐性位；<strong>接收方</strong>在 ACK 槽里回 1 个显性位表示"收到且没错"——这就是著名的"返回 ACK"</li>
+<li><strong>EOF（帧结束）</strong>：7 个隐性位</li>
+</ul>
+
+<p><strong>扩展帧</strong>只是把仲裁段拉长：11 位基本 ID + SRR + IDE + 18 位扩展 ID + RTR，共 29 位 ID，其余段与标准帧相同（<span class="pg">PDF p.22~23</span>）。29 位 ID 空间更大，适合复杂的工业协议（CANopen 等常用扩展帧）。</p>
+
+<h2>4. 遥控帧：伸手要数据</h2>
+
+<p>遥控帧用来<strong>请求数据</strong>（<span class="pg">PDF p.28~29</span>）：它只有 6 个段——没有数据段！结构 = SOF + 仲裁段 + 控制段 + CRC + ACK + EOF，其中 RTR=1（隐性）。"请把 ID 和我一样的那份数据发给我。"对方节点看到后回一个同 ID 的数据帧。</p>
+
+<h2>5. 错误帧与过载帧</h2>
+
+<p><strong>错误帧</strong>：检测出错误的节点立刻输出错误标志（<span class="pg">PDF p.30, 39</span>）。主动错误状态输出 <strong>6 个显性位</strong>的错误标志，之后是 8 个隐性位的错误界定符。发送方发完错误帧后会<strong>重新发送</strong>刚才失败的帧。</p>
+
+<p><strong>过载帧</strong>：接收方"忙不过来"时输出，结构与错误帧相同（6 显性 + 8 隐性），作用只是让对方等一等（<span class="pg">PDF p.31</span>）。</p>
+
+<h2>6. 帧间隔：帧与帧之间的喘息</h2>
+
+<p>帧间隔用于把数据帧/遥控帧与前面的帧分开（<span class="pg">PDF p.32</span>）：</p>
+
+<ul>
+<li><strong>间隔</strong>：3 个隐性位</li>
+<li><strong>总线空闲</strong>：隐性电平，长度不限（可为 0）——此时任何单元都可开始访问总线</li>
+<li><strong>延迟传送</strong>：8 个隐性位，<strong>只有处于被动错误状态的单元</strong>发完一个消息后才插入（防止它霸占总线）</li>
+</ul>
+
+<h2>7. 优先级仲裁：谁先赢</h2>
+
+<p>总线空闲时<strong>最先开始发的单元获得发送权</strong>；多个单元同时开始发送时，从仲裁段第一位起逐位仲裁（<span class="pg">PDF p.33~35</span>）：</p>
+
+<ul>
+<li>规则一句话：<strong>连续输出显性电平最多的单元继续发送，输的立刻转为接收</strong>——所以 <strong>ID 越小优先级越高</strong></li>
+<li>同一 ID 的数据帧 vs 遥控帧：最后一位 RTR，数据帧是显性(0)，<strong>数据帧赢</strong></li>
+<li>同一 ID 的标准帧 vs 扩展帧：标准帧的 SRR 位是显性，<strong>标准帧赢</strong></li>
+</ul>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>CAN 的 ID 不是"门牌号"，是"优先级号码"——数字越小越靠前</strong>。0x000 相当于总冠军，0x7FF 只能等大家都发完。设计命令帧时，越紧急的 ID 越小。</p>
+</div>
+
+<div class="warn">
+  <p>⚠️ ID 规划要避开禁区：标准帧<strong>禁止高 7 位全为隐性</strong>（ID = 1111111xxxx 即 0x7C0~0x7FF 之间不可用），否则仲裁会出错。另外，数据帧和遥控帧共享同一个 ID 空间——同 ID 的"请求"和"应答"别混着用。</p>
+</div>
+
+<h2>代码示例</h2>
+
+<p>下面两段代码：第一段把一个命令封装成"标准帧"的概念模型（对应 STM32 的 CAN_TxHeaderTypeDef），第二段模拟逐位仲裁。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 一个 CAN 标准帧的&quot;概念模型&quot;（HAL 里对应 CAN_TxHeaderTypeDef） */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span>
+    <span style="color:#267F99">uint32_t</span> StdId;   <span style="color:#008000">/* 11 位标准 ID：0x000 ~ 0x7FF */</span>
+    <span style="color:#267F99">uint8_t</span>  RTR;     <span style="color:#008000">/* 0=数据帧, 1=遥控帧 */</span>
+    <span style="color:#267F99">uint8_t</span>  DLC;     <span style="color:#008000">/* 数据长度码：0~8 */</span>
+    <span style="color:#267F99">uint8_t</span>  Data[<span style="color:#098658">8</span>]; <span style="color:#008000">/* 数据内容，最多 8 字节 */</span>
+} CAN_StdFrame;
+
+<span style="color:#008000">/* 填充一帧&quot;播放曲目&quot;命令：ID=0x123，数据=2 字节曲目号 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">fill_play_frame</span><span style="color:#001080">(CAN_StdFrame *f, <span style="color:#267F99">uint16_t</span> track_no)</span>
+{
+    f-&gt;StdId   = <span style="color:#098658">0x123</span>;                 <span style="color:#008000">/* 命令帧 ID */</span>
+    f-&gt;RTR     = <span style="color:#098658">0</span>;                     <span style="color:#008000">/* 数据帧 */</span>
+    f-&gt;DLC     = <span style="color:#098658">2</span>;                     <span style="color:#008000">/* 2 字节数据 */</span>
+    f-&gt;Data[<span style="color:#098658">0</span>] = (<span style="color:#267F99">uint8_t</span>)(track_no &gt;&gt; <span style="color:#098658">8</span>); <span style="color:#008000">/* 曲目号高字节（MSB 先行） */</span>
+    f-&gt;Data[<span style="color:#098658">1</span>] = (<span style="color:#267F99">uint8_t</span>)(track_no);      <span style="color:#008000">/* 曲目号低字节 */</span>
+}
+</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 模拟逐位仲裁：从最高位开始比，显性(0)获胜 */</span>
+<span style="color:#008000">/* 返回 1 表示 id_a 赢得仲裁 */</span>
+<span style="color:#267F99">int</span> <span style="color:#795E26">arbitration_winner</span><span style="color:#001080">(<span style="color:#267F99">uint16_t</span> id_a, <span style="color:#267F99">uint16_t</span> id_b)</span>
+{
+    <span style="color:#267F99">int</span> bit;
+    <span style="color:#0000FF">for</span> (bit = <span style="color:#098658">10</span>; bit &gt;= <span style="color:#098658">0</span>; bit--) {        <span style="color:#008000">/* 标准帧 11 位，从 ID28 开始 */</span>
+        <span style="color:#267F99">int</span> a = (id_a &gt;&gt; bit) &amp; <span style="color:#098658">1</span>;          <span style="color:#008000">/* 0 = 显性, 1 = 隐性 */</span>
+        <span style="color:#267F99">int</span> b = (id_b &gt;&gt; bit) &amp; <span style="color:#098658">1</span>;
+        <span style="color:#0000FF">if</span> (a != b)
+            <span style="color:#0000FF">return</span> (a == <span style="color:#098658">0</span>);                 <span style="color:#008000">/* 先出现显性(0)的赢 */</span>
+    }
+    <span style="color:#0000FF">return</span> <span style="color:#098658">1</span>;                                <span style="color:#008000">/* ID 相同，继续比 RTR 等 */</span>
+}
+
+<span style="color:#008000">/* 例：节点 A 发 0x188，节点 B 发 0x123，谁赢？ */</span>
+<span style="color:#267F99">int</span> winner = arbitration_winner(<span style="color:#098658">0x188</span>, <span style="color:#098658">0x123</span>);   <span style="color:#008000">/* 1 → 0x123 赢 */</span>
+</pre>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 17.1：手画标准数据帧完整位序列</h3>
+  <p class="step">1️⃣ 设 ID=0x123（二进制 00100010011），DLC=8，画出：SOF + 11 位 ID + RTR + IDE + r0 + 4 位 DLC + 64 位数据 + 15 位 CRC + 界定符 + ACK 槽 + 界定符 + 7 位 EOF。</p>
+  <p class="step">2️⃣ 数一数总位数（不含填充）：1+11+1+1+1+4+64+15+1+1+1+7 = 108 位。</p>
+  <p class="step">3️⃣ 对照第 3 节位布局图，验证每个段的位置对不对——这就是你给硬件"喂"的原始格式。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 17.2：仲裁实例推演</h3>
+  <p class="step">1️⃣ 总线空闲瞬间，节点 A 发 ID=0x188，节点 B 同时发 ID=0x123。</p>
+  <p class="step">2️⃣ 把两个 ID 写成 11 位二进制（0x188=00110001000，0x123=00100010011），从最高位开始逐位比较。</p>
+  <p class="step">3️⃣ 找出"第一个不同的位"，判断谁输谁赢，并说清输的一方从哪一位开始转为接收（对照教材 p.33 图 28）。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 标准格式数据帧的 ID 是多少位？</p>
+  <p class="opt">A. 8 位，和 UART 地址一致</p>
+  <p class="opt">B. 11 位，表示消息优先级</p>
+  <p class="opt">C. 29 位，全部用于寻址</p>
+  <details><summary>查看答案</summary><div class="answer">B。标准格式 11 位 ID，不是地址而是优先级（PDF p.17, 23）。</div></details>
+
+  <p class="q">Q2. 数据帧 DLC 最大能表示几个字节的数据？</p>
+  <p class="opt">A. 最多 8 字节（DLC=8）</p>
+  <p class="opt">B. 最多 4 字节（DLC=4）</p>
+  <p class="opt">C. 最多 16 字节（DLC=16）</p>
+  <details><summary>查看答案</summary><div class="answer">A。数据段 0~8 字节，DLC 与字节数对应表见 PDF p.24 表 8。</div></details>
+
+  <p class="q">Q3. 相同 ID 的数据帧和遥控帧竞争时，谁赢？</p>
+  <p class="opt">A. 遥控帧，因为它更轻量</p>
+  <p class="opt">B. 数据帧，因为 RTR 是显性</p>
+  <p class="opt">C. 先发出去的赢，与帧型无关</p>
+  <details><summary>查看答案</summary><div class="answer">B。仲裁段最后一位 RTR，数据帧为显性(0)，显性覆盖隐性所以数据帧获胜（PDF p.34）。</div></details>
+
+  <p class="q">Q4. 接收方"返回 ACK"是怎么做的？</p>
+  <p class="opt">A. 在 ACK 槽发送一个显性位</p>
+  <p class="opt">B. 发一帧专用的应答帧</p>
+  <p class="opt">C. 提高自己的 ID 优先级</p>
+  <details><summary>查看答案</summary><div class="answer">A。接收方在 ACK 槽（发隐性位的位置）回一个显性位，表示正常接收（PDF p.26）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 瑞萨《CAN 入门教程》第 7~8.7 章（PDF p.12~35）——本课全部依据</li>
+<li>📖 第 8.1 节表 7（PDF p.17~18）——五种帧的用途速查表</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 18 课——把"一个位"拆开看时序（采样点、波特率怎么算），以及 CAN 的五种错误和"主动/被动/总线关闭"三级错误状态机。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0016-can-basics.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0018-can-timing-errors.html">下一课：CAN 位时序与错误处理 →</a>
+</nav>
+
+</div>
+</body>
+</html>

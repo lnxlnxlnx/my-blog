@@ -1,10 +1,14 @@
----
+﻿---
 title: Qt 开发：03 QML 与 C++ 混合编程
 published: 2026-08-12
 description: qmlRegisterType/contextProperty、Q_PROPERTY、信号槽、多线程。
 tags: [Qt, QML, C++]
 category: Qt
 draft: false
+prevTitle: "Qt 开发：04 硬件交互详解"
+prevSlug: "qt/04-硬件交互"
+nextTitle: "Qt 开发：02 QML 核心与常用组件"
+nextSlug: "qt/02-qml核心组件"
 ---
 
 # 03 QML 与 C++ 混合编程
@@ -219,3 +223,4 @@ int main(int argc, char *argv[])
     return app.exec();
 }
 ```
+| [← 上一课](/my-blog/posts/qt/04-硬件交互/) | [课程目录](/my-blog/posts/qt/00-总览/) | [下一课 →](/my-blog/posts/qt/02-qml核心组件/) |

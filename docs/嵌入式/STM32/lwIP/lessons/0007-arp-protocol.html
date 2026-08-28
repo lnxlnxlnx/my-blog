@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 7 课：ARP 协议 — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 7 课</nav>
+
+<h1>第 7 课：ARP 协议</h1>
+<p class="subtitle">IP 地址如何翻译成 MAC 地址：请求、应答、缓存与老化（预计 60~90 分钟）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>🎯 第 5 课说过，IP 层发数据前要先经过 <code>netif->output</code>（etharp_output）把"目标 IP"翻译成"目标 MAC"。这个翻译官就是 ARP。学完你能说清：ARP 协议为什么存在、一次"请求→应答→缓存"的完整流程、ARP 缓存表怎么老化、28 字节 ARP 报文每个字节是干嘛的、lwIP 里 <code>etharp_raw</code> / <code>ethernet_input</code> / <code>etharp_input</code> 的收发源码逻辑，以及如何用 Wireshark 亲手抓住那两包 ARP 报文逐字段验证。</p>
+</div>
+
+<h2>1. ARP 是什么：IP 是门牌号，MAC 是身份证号</h2>
+
+<p>ARP（Address Resolution Protocol，地址解析协议）：<strong>根据 IP 地址获取物理地址（MAC）的协议</strong>（第 8.1 节 <span class="pg">PDF p.215</span>）。为什么需要它？以太网帧的"信封"上写的是目标 MAC 地址——网卡硬件只认 MAC 收不收包。而我们的程序只知道"我要发给 192.168.1.2"，不知道它的 MAC 是多少。IP 是给人用的逻辑地址，MAC 是给硬件用的物理地址，中间缺一个"翻译器"，ARP 就是这个翻译器。</p>
+
+<p>工作原理一句话：<strong>在局域网里广播问"谁是 192.168.1.2？报上你的 MAC！"，然后记住答案，下次直接用</strong>。注意 ARP 只在本局域网（网段）里工作，跨网段靠网关（路由器）回答——这一点直连实验里感受最深：你的板子和电脑同网段，ARP 一问一个准。</p>
+
+<h2>2. 一次完整的地址解析</h2>
+
+<p>教材用主机 A（192.168.0.10）找主机 B（192.168.0.11）举例（<span class="pg">PDF p.215~216</span>），流程四步：</p>
+
+<ol>
+<li><strong>查缓存</strong>：A 先翻自己的 ARP 表，有没有 B 的 IP→MAC 记录？有就直接用，封装以太网帧发出</li>
+<li><strong>广播请求</strong>：没有就先把数据包"挂起"，然后广播一个 ARP 请求——"我是 192.168.0.10，MAC 是 00-02-88-88-16-88，谁是 192.168.0.11？告诉我你的 MAC！"。请求里目标 MAC 填全 0，帧的目的 MAC 填广播地址 ff:ff:ff:ff:ff:ff（同网段所有主机都能收到）</li>
+<li><strong>单播应答</strong>：B 收到后发现问的是自己，先把 A 的 IP→MAC 存进自己的 ARP 表，然后单播回复——"我是 192.168.0.11，我的 MAC 是 00-02-16-88-88-88"</li>
+<li><strong>更新缓存并发送</strong>：A 收到应答，把 B 的映射存入 ARP 表，取出挂起的 IP 数据包，填上 B 的 MAC 封装成帧发出去。数据这才真正上线路</li>
+</ol>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">主机A <span style="color:#098658">192.168</span><span style="color:#098658">.0</span><span style="color:#098658">.10</span> ──────────► 主机B <span style="color:#098658">192.168</span><span style="color:#098658">.0</span><span style="color:#098658">.11</span>
+  <span style="color:#098658">00</span><span style="color:#098658">-02</span><span style="color:#098658">-88</span><span style="color:#098658">-88</span><span style="color:#098658">-16</span><span style="color:#098658">-88</span>              <span style="color:#098658">00</span><span style="color:#098658">-02</span><span style="color:#098658">-16</span><span style="color:#098658">-88</span><span style="color:#098658">-88</span><span style="color:#098658">-88</span>
+      │  ①查缓存：没有 B 的 MAC，数据包挂起
+      │  ②广播 ARP 请求：目标MAC填全<span style="color:#098658">0</span>，帧发往 ff:ff:ff:ff:ff:ff
+      │        <span style="color:#A31515">&quot;谁是 192.168.0.11？我的MAC是 00-02-88-88-16-88&quot;</span>
+      │◄──────────┘（同网段所有主机都收到，只有B应答）
+      │  ③B 存 A 的记录，单播 ARP 应答：我的MAC是 <span style="color:#098658">00</span><span style="color:#098658">-02</span><span style="color:#098658">-16</span><span style="color:#098658">-88</span><span style="color:#098658">-88</span><span style="color:#098658">-88</span>
+      │  ④A 存 B 的记录，取出挂起包，填上 B 的 MAC 发出
+      ▼
+    真正的 IP 数据包（ICMP echo / TCP / UDP...）
+</pre>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>请求是"寻人广播"（目标 MAC 全 0，帧目标全 F），应答是"回信单播"（有明确的收件人）</strong>。两个全 0 / 全 F 的地址要记住，后面抓包一眼就能认出是哪种。</p>
+</div>
+
+<h2>3. ARP 缓存表：协议栈的"小本本"</h2>
+
+<p>lwIP 用一张固定大小的表缓存 IP→MAC 映射（第 8.1 节 <span class="pg">PDF p.216~218</span>），表项结构（<code>etharp.c</code>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">etharp_entry</span> {</span>
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> ARP_QUEUEING</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">etharp_q_entry</span> *<span style="color:#795E26">q</span>;</span>   <span style="color:#008000">/* 数据包缓存队列（等待应答期间挂起的包） */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">else</span></span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">q</span>;</span>             <span style="color:#008000">/* 单个挂起数据包的指针 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+    <span style="color:#267F99">ip4_addr_t</span> ipaddr;          <span style="color:#008000">/* 目标 IP 地址 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">netif</span> *<span style="color:#795E26">netif</span>;</span>        <span style="color:#008000">/* 对应网卡信息 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">eth_addr</span> <span style="color:#795E26">ethaddr</span>;</span>    <span style="color:#008000">/* 对应的 MAC 地址 */</span>
+    <span style="color:#267F99">u16_t</span> ctime;                <span style="color:#008000">/* 生存时间（表项年龄，秒） */</span>
+    <span style="color:#267F99">u8_t</span> state;                 <span style="color:#008000">/* 表项的状态 */</span>
+};
+<span style="color:#267F99">static</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">etharp_entry</span> <span style="color:#795E26">arp_table</span>[<span style="color:#795E26">ARP_TABLE_SIZE</span>];</span>   <span style="color:#008000">/* 默认 10 个表项 */</span>
+</pre>
+
+<p>表只有 10 个表项，查找方式简单粗暴——<strong>遍历</strong>。每个表项有状态机：</p>
+
+<table>
+<tr><th>状态</th><th>含义</th><th>结局</th></tr>
+<tr><td><code>ETHARP_STATE_EMPTY</code></td><td>空闲，可被新表项占用</td><td>被分配</td></tr>
+<tr><td><code>ETHARP_STATE_PENDING</code></td><td>已发 ARP 请求、还没收到应答，只记了 IP 没记 MAC，数据包挂在 q 上</td><td>收到应答 → STABLE；超 5 秒（ARP_MAXPENDING）→ 删除</td></tr>
+<tr><td><code>ETHARP_STATE_STABLE</code></td><td>解析成功，IP→MAC 有效映射，正常使用</td><td>超 300 秒（ARP_MAXAGE）→ 删除</td></tr>
+<tr><td><code>STABLE_REREQUESTING_1/2</code></td><td>过渡状态：快到期的稳定表项被重新请求确认</td><td>1 → 2 → 回到 STABLE</td></tr>
+</table>
+
+<p>老化由"闹钟管家"（第 6 课）里的 <code>etharp_tmr</code> 驱动，每 1 秒（ARP_TMR_INTERVAL）被调用一次，逻辑是（<span class="pg">PDF p.217~218</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span>
+<span style="color:#795E26">etharp_tmr</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99">u8_t</span> i;
+    <span style="color:#008000">/* 第一步：遍历整张缓存表（ARP_TABLE_SIZE = 10） */</span>
+    <span style="color:#0000FF">for</span> (i = <span style="color:#098658">0</span>; i &lt; ARP_TABLE_SIZE; ++i)
+    {
+        <span style="color:#267F99">u8_t</span> state = arp_table[i].state;
+        <span style="color:#0000FF">if</span> (state != ETHARP_STATE_EMPTY)      <span style="color:#008000">/* 空闲表项跳过 */</span>
+        {
+            arp_table[i].ctime++;             <span style="color:#008000">/* 表项年龄 +1 秒 */</span>
+            <span style="color:#008000">/* 第三步：超龄的删掉：稳定表项 300 秒，挂起表项 5 秒 */</span>
+            <span style="color:#0000FF">if</span> ((arp_table[i].ctime &gt;= ARP_MAXAGE) ||
+                ((arp_table[i].state == ETHARP_STATE_PENDING) &amp;&amp;
+                 (arp_table[i].ctime &gt;= ARP_MAXPENDING)))
+            {
+                etharp_free_entry(i);         <span style="color:#008000">/* 删除表项，释放挂起的包 */</span>
+            }
+            <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (arp_table[i].state == ETHARP_STATE_STABLE_REREQUESTING_1)
+            {
+                arp_table[i].state = ETHARP_STATE_STABLE_REREQUESTING_2;
+            }
+            <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (arp_table[i].state == ETHARP_STATE_STABLE_REREQUESTING_2)
+            {
+                arp_table[i].state = ETHARP_STATE_STABLE;  <span style="color:#008000">/* 重新确认完成 */</span>
+            }
+            <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (arp_table[i].state == ETHARP_STATE_PENDING)
+            {
+                <span style="color:#008000">/* 还没等到应答，再广播一次 ARP 请求 */</span>
+                etharp_request(arp_table[i].netif, &amp;arp_table[i].ipaddr);
+            }
+        }
+    }
+}
+</pre>
+
+<p>这就是 ARP 表"自动打扫卫生"的机制：稳定表项 300 秒不刷新就清理，挂起的表项每 1 秒重发一次请求、撑到 5 秒还没应答就放弃。所以你会发现：长时间不通信后再 ping，会重新看到 ARP 请求——缓存过期了。</p>
+
+<h2>4. ARP 报文结构：28 字节的"寻人启事"</h2>
+
+<p>ARP 报文 28 字节，前面还要套一层 14 字节的以太网首部（第 8.2 节 <span class="pg">PDF p.219</span>），完整布局如下：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"> <span style="color:#098658">6</span>字节       <span style="color:#098658">6</span>字节       <span style="color:#098658">2</span>字节   <span style="color:#098658">2</span>字节  <span style="color:#098658">2</span>字节  <span style="color:#098658">1</span>字节 <span style="color:#098658">1</span>字节  <span style="color:#098658">2</span>字节   <span style="color:#098658">6</span>字节    <span style="color:#098658">4</span>字节   <span style="color:#098658">6</span>字节    <span style="color:#098658">4</span>字节
++----------+----------+-------+------+------+-----+-----+-------+--------+-------+--------+-------+
+| 以太网目的 | 以太网源  | 帧类型 |硬件类|协议类|硬件 |协议 | 操作码 | 发送方  | 发送方 | 接收方  | 接收方 |
+| MAC      | MAC      |<span style="color:#098658">0x0806</span>| 型    | 型   |长度 |长度 |<span style="color:#098658">1</span>请求  | MAC    | IP    | MAC    | IP    |
+|          |          |       | <span style="color:#098658">1</span>    |<span style="color:#098658">0x0800</span>| <span style="color:#098658">6</span>   | <span style="color:#098658">4</span>   |<span style="color:#098658">2</span>应答  |        |       |        |       |
++----------+----------+-------+------+------+-----+-----+-------+--------+-------+--------+-------+
+|←——————— 以太网首部（<span style="color:#098658">14</span> 字节）————————→|←—————————— ARP 报文（<span style="color:#098658">28</span> 字节）——————————→|
+</pre>
+
+<p>各字段（对照 Wireshark 就能找到）：</p>
+
+<table>
+<tr><th>字段</th><th>取值</th><th>含义</th></tr>
+<tr><td>硬件类型 hwtype</td><td>1</td><td>链路层类型：1 = 以太网 MAC</td></tr>
+<tr><td>协议类型 proto</td><td>0x0800</td><td>要解析的协议地址类型：0x0800 = IP</td></tr>
+<tr><td>硬件地址长度 hwlen</td><td>6</td><td>MAC 地址长度</td></tr>
+<tr><td>协议地址长度 protolen</td><td>4</td><td>IP 地址长度</td></tr>
+<tr><td>操作码 opcode</td><td>1 / 2</td><td>1 = ARP 请求，2 = ARP 应答</td></tr>
+<tr><td>发送方 MAC + IP</td><td>—</td><td>提问人（应答时就是回答人）</td></tr>
+<tr><td>接收方 MAC + IP</td><td>—</td><td>请求时接收方 MAC 全 0；应答时填目标 MAC</td></tr>
+</table>
+
+<p>留出"长度"字段是为了让 ARP 能用在任何网络（不只是以太网+IP）。lwIP 对应的结构体（<code>etharp.h</code>，<span class="pg">PDF p.219~220</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">etharp_hdr</span> {</span>              <span style="color:#008000">/* ARP 报文（28 字节，紧凑打包） */</span>
+    <span style="color:#267F99">u16_t</span> hwtype;                <span style="color:#008000">/* 硬件类型：1 = 以太网 */</span>
+    <span style="color:#267F99">u16_t</span> proto;                 <span style="color:#008000">/* 协议类型：0x0800 = IP */</span>
+    <span style="color:#267F99">u8_t</span>  hwlen;                 <span style="color:#008000">/* 硬件地址长度：6 */</span>
+    <span style="color:#267F99">u8_t</span>  protolen;              <span style="color:#008000">/* 协议地址长度：4 */</span>
+    <span style="color:#267F99">u16_t</span> opcode;                <span style="color:#008000">/* 操作码：1 请求 / 2 应答 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">eth_addr</span> <span style="color:#795E26">shwaddr</span>;</span>     <span style="color:#008000">/* 发送方 MAC（6 字节） */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip4_addr2</span> <span style="color:#795E26">sipaddr</span>;</span>    <span style="color:#008000">/* 发送方 IP（4 字节） */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">eth_addr</span> <span style="color:#795E26">dhwaddr</span>;</span>     <span style="color:#008000">/* 目标 MAC（6 字节） */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip4_addr2</span> <span style="color:#795E26">dipaddr</span>;</span>    <span style="color:#008000">/* 目标 IP（4 字节） */</span>
+};
+
+<span style="color:#267F99"><span style="color:#0000FF">enum</span> <span style="color:#795E26">etharp_opcode</span> {</span>
+    ARP_REQUEST = <span style="color:#098658">1</span>,             <span style="color:#008000">/* 请求包 */</span>
+    ARP_REPLY   = <span style="color:#098658">2</span>              <span style="color:#008000">/* 应答包 */</span>
+};
+</pre>
+
+<h2>5. 源码走读：请求怎么发、应答怎么收</h2>
+
+<h3>5.1 发送 ARP 请求：etharp_raw</h3>
+
+<p>构建 ARP 请求/应答包的核心函数是 <code>etharp_raw</code>（<span class="pg">PDF p.221~222</span>），逻辑很直白：申请 pbuf → 填 ARP 字段 → 交给 ethernet_output 加以太网首部发出去：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">err_t</span>
+<span style="color:#795E26">etharp_raw</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> netif *netif, <span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> eth_addr *ethsrc_addr,
+           <span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> eth_addr *ethdst_addr,
+           <span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> eth_addr *hwsrc_addr, <span style="color:#267F99">const</span> <span style="color:#267F99">ip4_addr_t</span> *ipsrc_addr,
+           <span style="color:#267F99">const</span> <span style="color:#0000FF">struct</span> eth_addr *hwdst_addr, <span style="color:#267F99">const</span> <span style="color:#267F99">ip4_addr_t</span> *ipdst_addr,
+           <span style="color:#267F99">const</span> <span style="color:#267F99">u16_t</span> opcode)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">p</span>;</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">etharp_hdr</span> *<span style="color:#795E26">hdr</span>;</span>
+    <span style="color:#008000">/* 申请 pbuf，预留以太网首部空间，装一个 ARP 报文 */</span>
+    p = pbuf_alloc(PBUF_LINK, SIZEOF_ETHARP_HDR, PBUF_RAM);
+    <span style="color:#0000FF">if</span> (p == <span style="color:#098658">NULL</span>) {
+        <span style="color:#0000FF">return</span> ERR_MEM;
+    }
+    <span style="color:#008000">/* 把 payload 强转成 ARP 报文首部，开始填字段 */</span>
+    hdr = (<span style="color:#0000FF">struct</span> etharp_hdr *)p-&gt;payload;
+    hdr-&gt;opcode  = lwip_htons(opcode);        <span style="color:#008000">/* 1 请求 / 2 应答 */</span>
+    SMEMCPY(&amp;hdr-&gt;shwaddr, hwsrc_addr, ETH_HWADDR_LEN);   <span style="color:#008000">/* 发送方 MAC */</span>
+    SMEMCPY(&amp;hdr-&gt;dhwaddr, hwdst_addr, ETH_HWADDR_LEN);   <span style="color:#008000">/* 目标 MAC */</span>
+    hdr-&gt;hwtype  = PP_HTONS(HWTYPE_ETHERNET); <span style="color:#008000">/* 硬件类型 = 1 */</span>
+    hdr-&gt;proto   = PP_HTONS(ETHTYPE_IP);      <span style="color:#008000">/* 协议类型 = 0x0800 */</span>
+    hdr-&gt;hwlen   = ETH_HWADDR_LEN;            <span style="color:#008000">/* = 6 */</span>
+    hdr-&gt;protolen = <span style="color:#0000FF">sizeof</span>(<span style="color:#267F99">ip4_addr_t</span>);       <span style="color:#008000">/* = 4 */</span>
+    <span style="color:#008000">/* 加以太网首部并发送（请求走广播地址，应答走单播地址） */</span>
+    ethernet_output(netif, p, ethsrc_addr, ethdst_addr, ETHTYPE_ARP);
+    pbuf_free(p);
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<p>两个关键常量：<code>ethbroadcast = {0xff,0xff,...}</code>（广播）、<code>ethzero = {0,0,...}</code>（全 0）。请求包怎么拼的？</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 发送要求 ipaddr 的 ARP 请求：源=本机 MAC/IP，目标MAC=全0，帧发广播 */</span>
+<span style="color:#267F99">err_t</span>
+<span style="color:#795E26">etharp_request</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> netif *netif, <span style="color:#267F99">const</span> <span style="color:#267F99">ip4_addr_t</span> *ipaddr)</span>
+{
+    <span style="color:#0000FF">return</span> etharp_request_dst(netif, ipaddr, &amp;ethbroadcast);
+}
+<span style="color:#008000">/* etharp_request_dst 内部调用 etharp_raw：
+   ethsrc = 本机MAC,  hwsrc = 本机MAC,  ipsrc = 本机IP,
+   hwdst = ethzero（全0）,  ipdst = 目标IP,  opcode = ARP_REQUEST */</span>
+</pre>
+
+<h3>5.2 发送 IP 包前的"地址体检"：etharp_output</h3>
+
+<p>还记得第 5 课说 <code>netif->output = etharp_output</code> 吗？IP 层发出的每个包都要经过它。它的逻辑就是第 2 节那四步的代码化：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">etharp_output(netif, p, ipaddr)   <span style="color:#008000">/* 准备把 IP 包发给 ipaddr */</span>
+   │  ① 查 ARP 缓存表：有 ipaddr 的 STABLE 表项吗？
+   │  ② 有 → 填好以太网目的 MAC，直接 netif-&gt;linkoutput 发出去
+   │  ③ 没有 → 创建/找到 PENDING 表项，把 pbuf 挂到表项的 q 上
+   │           etharp_query() → etharp_request() 广播 ARP 请求
+   │           收到应答后（etharp_input 里）把挂起的包补发出去
+   ▼
+   完成
+</pre>
+
+<p>这就是"数据包挂起"机制：<strong>包先排队，解析完 MAC 再放行</strong>。教材图 8.1.1.2 里 PENDING 表项挂着 pbuf 指的就是这个（<span class="pg">PDF p.217</span>）。</p>
+
+<h3>5.3 接收：ethernet_input 按帧类型分发</h3>
+
+<p>网卡收到的帧先统一进 <code>ethernet_input</code>（<span class="pg">PDF p.224~226</span>），它看以太网首部的帧类型字段分流：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">err_t</span>
+<span style="color:#795E26">ethernet_input</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> pbuf *p, <span style="color:#0000FF">struct</span> netif *netif)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">eth_hdr</span> *<span style="color:#795E26">ethhdr</span>;</span>
+    <span style="color:#008000">/* 长度校验：小于等于以太网首部就丢弃 */</span>
+    <span style="color:#0000FF">if</span> (p-&gt;len &lt;= SIZEOF_ETH_HDR) {
+        pbuf_free(p);
+        <span style="color:#0000FF">return</span> ERR_OK;
+    }
+    ethhdr = (<span style="color:#0000FF">struct</span> eth_hdr *)p-&gt;payload;      <span style="color:#008000">/* 指向以太网首部 */</span>
+    <span style="color:#008000">/* 判断广播/多播并打标记（略） */</span>
+    <span style="color:#0000FF">switch</span> (ethhdr-&gt;type)                       <span style="color:#008000">/* 看帧类型字段 */</span>
+    {
+        <span style="color:#0000FF">case</span> <span style="color:#795E26">PP_HTONS</span><span style="color:#001080">(ETHTYPE_IP)</span>:              <span style="color:#008000">/* 0x0800：IP 数据包 */</span>
+            <span style="color:#008000">/* 去掉以太网首部（pbuf_header 向后挪指针） */</span>
+            <span style="color:#795E26">pbuf_header</span><span style="color:#001080">(p, (<span style="color:#267F99">s16_t</span>)-SIZEOF_ETH_HDR)</span>;
+            ip4_input(p, netif);                <span style="color:#008000">/* 交给 IP 层 */</span>
+            <span style="color:#0000FF">break</span>;
+        <span style="color:#0000FF">case</span> <span style="color:#795E26">PP_HTONS</span><span style="color:#001080">(ETHTYPE_ARP)</span>:             <span style="color:#008000">/* 0x0806：ARP 报文 */</span>
+            <span style="color:#795E26">pbuf_header</span><span style="color:#001080">(p, (<span style="color:#267F99">s16_t</span>)-SIZEOF_ETH_HDR)</span>;
+            etharp_input(p, netif);             <span style="color:#008000">/* 交给 ARP 处理 */</span>
+            <span style="color:#0000FF">break</span>;
+        <span style="color:#0000FF">default</span>:                                <span style="color:#008000">/* 未知类型 */</span>
+            pbuf_free(p);
+            <span style="color:#0000FF">break</span>;
+    }
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<h3>5.4 收应答/收请求：etharp_input</h3>
+
+<p><code>etharp_input</code> 处理两类情况（教材图 8.3.1 的流程总结，<span class="pg">PDF p.226~227</span>）：</p>
+
+<ul>
+<li><strong>收到 ARP 应答</strong>：先校验硬件类型/协议类型；然后把"发送方 IP→MAC"更新进缓存表（<code>etharp_update_arp_entry</code>）；若该表项之前挂着数据包，把它们取出来通过 ethernet_output 发出去（<strong>挂起的包终于放行</strong>）</li>
+<li><strong>收到 ARP 请求</strong>：同样先把发送方信息更新进缓存表（双向学习！）；再判断"目标 IP 是不是我自己"——是的话调用 <code>etharp_raw</code> 构造应答包（opcode = ARP_REPLY，单播发给请求方）</li>
+</ul>
+
+<p>注意"双向学习"这个细节：<strong>不管是请求还是应答，只要收到 ARP 报文，就把发送方 IP→MAC 记进缓存</strong>。这就是为什么你 ping 板子一次，板子和电脑都记住了对方。</p>
+
+<div class="warn">
+  <p>⚠️ ARP 是建立在"局域网互相信任"基础上的——应答不验证真伪，收到就记缓存。所以才有 ARP 欺骗这种安全漏洞（冒充网关广播应答）。直连实验环境没这风险，但做产品时要留个心眼。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 7.1：清缓存后 ping，抓完整的"请求-应答"两包</h3>
+  <p class="step">1️⃣ 电脑上先清掉板子的 ARP 缓存记录：管理员 CMD 执行 <code>arp -d 192.168.1.10</code>（顺便 <code>arp -a</code> 确认记录已消失）。</p>
+  <p class="step">2️⃣ Wireshark 开抓（过滤条件填 <code>arp</code>），然后 <code>ping 192.168.1.10</code>。</p>
+  <p class="step">3️⃣ 应该抓到两个 ARP 包，逐字段对照第 4 节的 ASCII 布局：</p>
+  <p class="step">　• 请求包：以太网目的 MAC = ff:ff:ff:ff:ff:ff（广播），OP = 1，接收方 MAC = 00:00:00:00:00:00</p>
+  <p class="step">　• 应答包：以太网目的 MAC = 你的电脑网卡 MAC（单播），OP = 2，接收方 MAC 已填好</p>
+  <p class="step">4️⃣ 再 ping 一次（别清缓存）：应该<b>没有新的 ARP 包</b>了——缓存命中，直接发包。用 <code>arp -a</code> 能看到 192.168.1.10 的 MAC 已记录，类型为"动态"。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 7.2：观察缓存老化与"重新解析"</h3>
+  <p class="step">1️⃣ 连续 ping 板子 10 秒，Wireshark 过滤 <code>arp || icmp</code>，观察时间线：开头 1 个 ARP 请求 + 1 个应答，随后全是 ICMP。</p>
+  <p class="step">2️⃣ 停止 ping，静置几分钟（电脑 ARP 缓存条目会过期，Windows 一般几十秒到几分钟不等），期间用 <code>arp -a</code> 隔一会儿看一眼，记录表项消失的时间。</p>
+  <p class="step">3️⃣ 表项消失后重新 ping：Wireshark 里又出现一对 ARP 请求/应答——这就是"缓存过期 → 重新解析"。</p>
+  <p class="step">4️⃣ 进阶：把板子复位再 ping，同样会重新 ARP（板子侧缓存清空了）。对比教材里 PENDING 状态 5 秒超时、STABLE 状态 300 秒老化的机制，说说电脑侧的行为和 lwIP 有什么异同。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. ARP 请求帧的以太网目的 MAC 地址是？</p>
+  <p class="opt">A. 目标主机的真实 MAC 地址</p>
+  <p class="opt">B. 广播地址 ff:ff:ff:ff:ff:ff</p>
+  <p class="opt">C. 全 0 地址 00:00:00:00:00:00</p>
+  <p class="opt">D. 网关路由器的 MAC 地址</p>
+  <details><summary>查看答案</summary><div class="answer">B。请求以广播方式发送，同网段所有主机都能收到；只有目标 IP 匹配的主机应答（PDF p.215）。</div></details>
+
+  <p class="q">Q2. ARP 报文 OP 字段取值为 1 和 2 时分别表示？</p>
+  <p class="opt">A. 1 表示请求，2 表示应答</p>
+  <p class="opt">B. 1 表示应答，2 表示请求</p>
+  <p class="opt">C. 1 表示广播，2 表示单播</p>
+  <p class="opt">D. 1 表示 IPv4，2 表示 IPv6</p>
+  <details><summary>查看答案</summary><div class="answer">A。opcode：ARP_REQUEST = 1，ARP_REPLY = 2（PDF p.219）。</div></details>
+
+  <p class="q">Q3. ARP 缓存表项处于 PENDING 状态表示什么？</p>
+  <p class="opt">A. 已经解析到对方的 MAC 地址</p>
+  <p class="opt">B. 已发请求等待应答，还没有 MAC 地址</p>
+  <p class="opt">C. 表项空闲，可以被新映射占用</p>
+  <p class="opt">D. 表项已过期，等待被删除</p>
+  <details><summary>查看答案</summary><div class="answer">B。PENDING = 只记了 IP 没记 MAC，数据包挂起，5 秒（ARP_MAXPENDING）内收不到应答就删除（PDF p.216）。</div></details>
+
+  <p class="q">Q4. lwIP 中 ARP 缓存表的老化由哪个函数周期驱动？</p>
+  <p class="opt">A. tcp_tmr 函数</p>
+  <p class="opt">B. dns_tmr 函数</p>
+  <p class="opt">C. etharp_tmr 函数</p>
+  <p class="opt">D. dhcp_fine_tmr 函数</p>
+  <details><summary>查看答案</summary><div class="answer">C。etharp_tmr 每 1 秒（ARP_TMR_INTERVAL）遍历缓存表，ctime 加 1，超龄表项删除，PENDING 期间重发请求（PDF p.217~218）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 8 章（<span class="pg">PDF p.215~227</span>）——本课全部依据</li>
+<li>🌐 <a href="https://datatracker.ietf.org/doc/html/rfc826">RFC 826：Ethernet Address Resolution Protocol</a>——ARP 协议原始规范，报文格式的权威定义</li>
+<li>🌐 <a href="https://wiki.wireshark.org/AddressResolutionProtocol">Wireshark 官方 ARP 解析说明</a>——每个字段在 Wireshark 里的显示方式</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 8 课——IP 与 ICMP 协议：20 字节 IP 首部逐字段解剖、数据报怎么分片怎么重装，以及"ping 通"背后的 ICMP 回显机制。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0006-kernel-internals.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0008-ip-and-icmp.html">下一课：IP 与 ICMP 协议 →</a>
+</nav>
+
+</div>
+</body>
+</html>

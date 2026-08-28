@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numpy 0001 · 创建数组与基础</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>创建数组与基础</h1>
+<p class="meta">Numpy 专题 · 课程 0001 · 预计 20 分钟 · 配套 100 题 1~14、17</p>
+
+<p>numpy 的核心对象是 <strong>ndarray</strong>(多维数组):一个同类型元素的网格,比 Python list 快得多、且能整体运算。这一课先搞定<strong>怎么创建数组</strong>、看它的<strong>形状/类型</strong>,以及习题 1~14、17 会用到的全部 API。</p>
+
+<h2>知识点 1:导入与版本(题 1、2)</h2>
+<p>惯例是 <code>import numpy as np</code>,然后看版本与配置:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">__version__</span><span style="color: #000">)</span>          <span style="color: #008000"># &#39;2.4.4&#39;</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">show_config</span><span style="color: #000">()</span>               <span style="color: #008000"># 打印编译/系统配置(题 2)</span>
+</pre>
+
+<h2>知识点 2:三种最基础的创建——array / arange / linspace</h2>
+<p><code>np.array</code> 从现有列表造; <code>np.arange</code> 造整数序列(半开区间); <code>np.linspace</code> 造等距浮点(含两端):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">array</span><span style="color: #000">([</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">])</span>                  <span style="color: #008000"># 一维:array([1,2,3])</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">array</span><span style="color: #000">([[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">],</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]])</span>           <span style="color: #008000"># 二维:传入嵌套列表</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>                        <span style="color: #008000"># array([0..9]) 题7 → np.arange(10,50)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">)</span>                  <span style="color: #008000"># 0,2,4,6,8 (start, stop, step)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">linspace</span><span style="color: #000">(</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">100</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">)</span>               <span style="color: #008000"># 0,25,50,75,100 (含端点)</span>
+</pre>
+<p>题 7 用 <code>np.arange(10, 50)</code>;题 9 要先 <code>np.arange(9)</code> 再 reshape(下一课讲reshape)。</p>
+
+<h2>知识点 3:预填数组——zeros/ones/eye/empty</h2>
+<p>要"全 0、全 1、单位阵"这类按需填充的数组,别用循环:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">zeros</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>                 <span style="color: #008000"># 10 个 0(题3:a size-10 null vector)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">zeros</span><span style="color: #000">((</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">))</span>             <span style="color: #008000"># 3x4 全 0(shape 用元组)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">ones</span><span style="color: #000">((</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">))</span>              <span style="color: #008000"># 2x3 全 1</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">eye</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">)</span>                    <span style="color: #008000"># 3x3 单位阵(题11)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">empty</span><span style="color: #000">((</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">))</span>             <span style="color: #008000"># 未初始化(垃圾值,别乱用)</span>
+</pre>
+<p>题 3 是 <code>np.zeros(10)</code>;题 6 想在"第 5 个元素为 1":先 zeros 再 <code>Z[4] = 1</code>(索引下一课详细讲)。</p>
+
+<h2>知识点 4:形状与类型属性——shape/ndim/dtype/itemsize/size</h2>
+<p>一个数组的"体检"属性,题 4 的陷阱就在 size/itemsize:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">zeros</span><span style="color: #000">((</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">))</span>
+<span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">shape</span>          <span style="color: #008000"># (10, 10) 各维长度</span>
+<span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">ndim</span>           <span style="color: #008000"># 2 维度数</span>
+<span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">size</span>           <span style="color: #008000"># 100 元素总数</span>
+<span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">dtype</span>          <span style="color: #008000"># dtype(&#39;float64&#39;) 每个元素类型</span>
+<span style="color: #001080">Z</span><span style="color: #000">.</span><span style="color: #001080">itemsize</span>       <span style="color: #008000"># 8 每个元素字节数(float64 = 8 字节)</span>
+</pre>
+<p>题 4 问"内存多大":<code>Z.size * Z.itemsize</code>(元素数 × 每元素字节)。这 5 个属性是 numpy 的基础读法,务必都记住。</p>
+
+<h2>知识点 5:随机数组——np.random(题 12、13、14)</h2>
+<p>造随机数组(均匀分布)是 numpy 高频需求:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">rng</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">.</span><span style="color: #001080">default_rng</span><span style="color: #000">()</span>          <span style="color: #008000"># 现代做法(推荐)</span>
+<span style="color: #001080">rng</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">))</span>                  <span style="color: #008000"># 题12:3x3x3 随机(0~1)</span>
+<span style="color: #001080">rng</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">((</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">))</span>                   <span style="color: #008000"># 题13:10x10 随机</span>
+<span style="color: #001080">rng</span><span style="color: #000">.</span><span style="color: #001080">random</span><span style="color: #000">(</span><span style="color: #098658">30</span><span style="color: #000">)</span>                         <span style="color: #008000"># 题14:30 个随机</span>
+</pre>
+<p>旧式写法 <code>np.random.random((3,3,3))</code> 仍可运行;新代码建议 <code>default_rng()</code>。随后取 min/max(题13)与 mean(题14):直接 <code>Z.min() / Z.max() / Z.mean()</code>(下一课讲聚合)。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">创建 3 行 4 列全 0 数组?</p>
+  <button class="opt" data-ok="false">np.zeros(12)</button>
+  <button class="opt" data-ok="true">np.zeros((3,4))</button>
+  <button class="opt" data-ok="false">np.empty(3,4)</button>
+  <button class="opt" data-ok="false">np.zero(3,4)</button>
+  <p class="reveal">shape 用元组:np.zeros((3,4));np.zeros(12) 是一维 12 个。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">一数组 size=100、itemsize=8,占多少字节?</p>
+  <button class="opt" data-ok="false">100</button>
+  <button class="opt" data-ok="true">800</button>
+  <button class="opt" data-ok="false">8</button>
+  <button class="opt" data-ok="false">108</button>
+  <p class="reveal">size×itemsize = 100×8 = 800 字节。题4的核心。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">0~1 之间 5 个等距浮点?</p>
+  <button class="opt" data-ok="false">np.arange(0,1,5)</button>
+  <button class="opt" data-ok="true">np.linspace(0,1,5)</button>
+  <button class="opt" data-ok="false">np.random(5)</button>
+  <button class="opt" data-ok="false">np.array(0,1)</button>
+  <p class="reveal">linspace 含端点等距;arange 是等距整数步长,不是造 N 个点。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">Z.size 表示?</p>
+  <button class="opt" data-ok="false">每维长度</button>
+  <button class="opt" data-ok="true">元素总数</button>
+  <button class="opt" data-ok="false">维度个数</button>
+  <button class="opt" data-ok="false">字节数</button>
+  <p class="reveal">size=总元素数;每维长度是 shape;维度数是 ndim;字节数 itemsize。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/numpy/0001_创建数组与基础.ipynb</code>:</p>
+<ul>
+  <li><strong>题 1~14</strong>:numpy-100 原题,先自己写、再展开答案核对</li>
+  <li><strong>题 17</strong>:几个奇怪的表达式结果(python vs numpy 的坑)</li>
+  <li><strong>额外</strong>:动手打一遍本篇 5 个知识点里的每个例子</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>numpy 官方 <a href="https://numpy.org/doc/stable/reference/routines.array-creation.html">Array creation routines</a> 与 <a href="https://numpy.org/doc/stable/reference/arrays.ndarray.html#array-attributes">ndarray 属性</a>:刷一遍创建函数表,今天只需用到 zeros/ones/eye/random/arange/linspace。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完 1~17 题回来告诉我:最不顺手的是哪个创建方式?下一课讲<strong>索引、切片与形状</strong>——怎么改数组的某一部分、怎么变形(题 15、16、19~22、24、25、35~37、63)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-索引切片与形状.html">下一篇:索引、切片与形状 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

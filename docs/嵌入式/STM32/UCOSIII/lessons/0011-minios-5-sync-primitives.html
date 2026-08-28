@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 11 课：MiniOS⑤：同步原语（信号量） — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 11 课</nav>
+
+<h1>第 11 课：MiniOS⑤：同步原语（信号量）</h1>
+<p class="subtitle">让任务之间能"打招呼"——手写一个信号量，MiniOS 实现第 5 步</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课任务会睡觉了，但这还不够——任务之间怎么互相协调？一个任务等数据、一个任务发数据，谁来通知谁？答案是信号量。本课参照 µC/OS-III 的 <code>OS_SEM</code>/<code>OSSemPend</code>/<code>OSSemPost</code>，在 MiniOS 里实现一个精简版信号量，并验证"生产者-消费者"同步。学完你就明白：所谓同步原语，就是"计数 + 等待队列"两个字段加上两个函数。</p>
+</div>
+
+<h2>1. 为什么需要信号量：同步与互斥</h2>
+
+<p>多任务系统里有两类经典问题，信号量就是为它们而生的（PDF 11.1 节 <span class="pg">PDF p.194</span>）：</p>
+
+<ul>
+<li><strong>同步</strong>：任务 A 干完某件事，任务 B 才能继续（比如传感器数据采集完，显示任务才能刷新）。B 需要"等一个通知"。</li>
+<li><strong>互斥</strong>：两个任务同时操作共享资源（串口、LCD、全局变量），必须"你用完我再进"。二值信号量就是一把锁。</li>
+</ul>
+
+<p>信号量的本质就两个要素：一个<strong>计数器</strong>（还有多少资源可用）+ 一个<strong>等待任务链表</strong>（资源用完了，谁在排队等）。µC/OS-III 的 <code>OS_SEM</code> 结构体里，最重要的成员就是 <code>Ctr</code>（资源计数器）和 <code>PendList</code>（挂起等待任务链表）（PDF 11.2 节 <span class="pg">PDF p.197</span>）。教材里说的"二值信号量"（计数只能是 0/1，当锁用）和"计数型信号量"（计数可以 >1，当资源池用）共用同一套 API，区别只在初始计数值（PDF 11.5 节 <span class="pg">PDF p.240</span>）。</p>
+
+<div class="tip">
+  <p>💡 一句话记忆：信号量 = 计数器（资源还剩几个）+ 等待链表（谁在排队）。Pend 是"申请资源"，Post 是"归还资源"——教科书里 P/V 操作、FreeRTOS 的 Take/Give、UCOS 的 Pend/Post，全是这两个动作。</p>
+</div>
+
+<h2>2. 信号量结构体设计：简化版 OS_SEM</h2>
+
+<p>µC/OS-III 的完整 <code>OS_SEM</code> 带名字、调试指针、时间戳等一大堆字段（PDF p.196~197）。MiniOS 只要最核心的三个：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS/mini_sem.h：简化版 OS_SEM ========== */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">mini_sem</span>
+{</span>
+    <span style="color:#267F99">uint32_t</span>   ctr;            <span style="color:#008000">/* 资源计数器，对应 UCOS 的 OS_SEM.Ctr */</span>
+    MiniTCB   *wait_head;      <span style="color:#008000">/* 等待任务链表头，按优先级排序（对应 UCOS 的 PendList） */</span>
+} MiniSem;
+
+<span style="color:#008000">/* 创建信号量：传入指针 + 初始计数值（对应 UCOS 的 OSSemCreate） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemCreate</span><span style="color:#001080">(MiniSem *sem, <span style="color:#267F99">uint32_t</span> cnt)</span>;
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPend</span><span style="color:#001080">(MiniSem *sem)</span>;          <span style="color:#008000">/* 申请资源，拿不到就阻塞（对应 OSSemPend） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPost</span><span style="color:#001080">(MiniSem *sem)</span>;          <span style="color:#008000">/* 归还资源，唤醒等待者（对应 OSSemPost） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPostFromISR</span><span style="color:#001080">(MiniSem *sem)</span>;   <span style="color:#008000">/* 中断版 Post：只置位不调度（对应 OSSemPostFromISR） */</span></pre>
+
+<p>三个字段背后是三个问题：还有多少资源？（<code>ctr</code>）谁在等？（<code>wait_head</code>）等的人先唤醒谁？（链表按优先级排序——最高优先级先醒，这是 µC/OS-III 与 FreeRTOS 共同的策略）。</p>
+
+<h2>3. OSSemPend：拿到就用，拿不到就等</h2>
+
+<p><code>OSSemPend(p_sem, timeout, opt, p_ts, p_err)</code> 的完整实现有一堆参数检查和错误码（PDF 11.2 节 <span class="pg">PDF p.205~211</span>），核心逻辑其实只有两条路：</p>
+
+<ol>
+<li><strong>有资源</strong>（<code>Ctr &gt; 0</code>）：<code>Ctr--</code>，直接返回，任务继续跑。</li>
+<li><strong>没资源</strong>（<code>Ctr == 0</code>）：把当前任务加入信号的等待链表（任务状态 → 等待），<strong>触发调度</strong>让出 CPU，挂起等待。直到有人 Post 把它唤醒，代码才继续往下执行。</li>
+</ol>
+
+<p>这就是"阻塞式 API"的奥妙：<code>OSSemPend</code> 后半段代码要等任务被唤醒后才执行，而 µC/OS-III 里用 <code>PendStatus</code>（挂起结果）区分"成功拿到 / 超时 / 被中止"三种醒来的原因——这也是为什么它带 timeout 参数（PDF p.210~211）。MiniOS 第一步先不做超时，保持最简。</p>
+
+<h2>4. OSSemPost：唤醒等待者，而不是攒资源</h2>
+
+<p><code>OSSemPost(p_sem, opt, p_err)</code> 的逻辑和 Pend 正好镜像（PDF 11.2 节 <span class="pg">PDF p.216~219</span>）：</p>
+
+<ol>
+<li><strong>有等待者</strong>（等待链表非空）：不累加计数，直接把资源交给等待链表中<strong>优先级最高的任务</strong>——把它从等待链表摘下、状态改回就绪、加入就绪表，然后触发调度。资源"直达"，不经过计数器。</li>
+<li><strong>没等待者</strong>：<code>Ctr++</code>，资源攒着给将来的 Pend 用。</li>
+</ol>
+
+<p>教材代码里还有两个选项：<code>OS_OPT_POST_ALL</code>（唤醒所有等待者，计数型信号量广播用）和 <code>OS_OPT_POST_NO_SCHED</code>（只唤醒不调度，批量 Post 时最后再统一调度一次）。MiniOS 只要默认的"唤醒最高优先级一个 + 调度"即可。</p>
+
+<h2>5. 中断里也能 Post：只置位，不调度</h2>
+
+<p>真实系统里经常有这种场景：串口收到一字节 → 中断里 Post 信号量 → 等待中的解析任务被唤醒。但中断里<strong>不能直接调度</strong>（上下文切换要等所有中断退出，这是第 5 课中断知识的延伸）。</p>
+
+<p>µC/OS-III 的做法：<code>OSSemPost()</code> 检测到自己在中断里（<code>OSIntNestingCtr &gt; 0</code>）就跳过 <code>OSSched()</code>；FreeRTOS 则专门提供 <code>xSemaphoreGiveFromISR()</code>，把"需要切换"标记成 <code>pxHigherPriorityTaskWoken = pdTRUE</code>，由中断退出路径统一处理。MiniOS 的 <code>MiniSemPostFromISR</code> 就学 FreeRTOS：唤醒任务、置一个标志，调度推迟到中断退出后。等第 13 课学完中断管理，你能把这个标志接到 PendSV 上。</p>
+
+<div class="warn">
+  <p>⚠️ 千万别在中断里调用普通版 <code>MiniSemPost()</code>：它会直接调用 <code>MiniSched()</code> 触发上下文切换，在中断上下文中做切换会破坏中断现场，行为不可预测。UCOS 对这种误用会返回 <code>OS_ERR_POST_ISR</code> 之类的错误码拦下来（PDF p.216），MiniOS 至少要在代码注释里写清楚这个约定。</p>
+</div>
+
+<h2>6. 与 UCOS / FreeRTOS 对照 + 本课交付</h2>
+
+<table>
+<tr><th>维度</th><th>µC/OS-III</th><th>FreeRTOS（已学）</th><th>MiniOS（本课）</th></tr>
+<tr><td>结构体</td><td><code>OS_SEM</code>：Ctr + PendList + 调试字段</td><td><code>SemaphoreHandle_t</code> 背后是 Queue</td><td><code>MiniSem</code>：ctr + wait_head</td></tr>
+<tr><td>申请</td><td><code>OSSemPend</code>（带超时）</td><td><code>xSemaphoreTake</code>（带超时）</td><td><code>MiniSemPend</code>（无超时）</td></tr>
+<tr><td>释放</td><td><code>OSSemPost</code></td><td><code>xSemaphoreGive</code></td><td><code>MiniSemPost</code></td></tr>
+<tr><td>中断版</td><td>Post 内部自动判断</td><td><code>xSemaphoreGiveFromISR</code></td><td><code>MiniSemPostFromISR</code></td></tr>
+<tr><td>唤醒顺序</td><td>按优先级</td><td>按优先级</td><td>按优先级</td></tr>
+</table>
+
+<p><strong>本课交付：</strong>MiniSem 结构体 + Create/Pend/Post 三个函数，用"生产者-消费者"demo 验证同步。学完这一步，MiniOS 就集齐了"调度 + 延时 + 同步"三件套，具备跑通真实同步场景的能力。</p>
+
+<h2>核心代码：信号量完整实现</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS/mini_sem.c：Pend/Post 核心逻辑（对应 UCOS 的 OSSemPend/OSSemPost） ========== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;minios.h&quot;</span></span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemCreate</span><span style="color:#001080">(MiniSem *sem, <span style="color:#267F99">uint32_t</span> cnt)</span>
+{
+    sem-&gt;ctr       = cnt;        <span style="color:#008000">/* 初始资源数 */</span>
+    sem-&gt;wait_head = <span style="color:#098658">NULL</span>;       <span style="color:#008000">/* 等待链表为空 */</span>
+}
+
+<span style="color:#008000">/* 申请资源：拿到就用，拿不到就挂起等待 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPend</span><span style="color:#001080">(MiniSem *sem)</span>
+{
+    MiniTCB *cur = g_cur_tcb;
+
+    <span style="color:#008000">/* 关中断保护：计数与链表操作不能被打断（对应 UCOS 的 CPU_CRITICAL_ENTER） */</span>
+    <span style="color:#267F99">uint32_t</span> sr = enter_critical();
+
+    <span style="color:#0000FF">if</span> (sem-&gt;ctr &gt; <span style="color:#098658">0</span>)
+    {
+        sem-&gt;ctr--;              <span style="color:#008000">/* 1. 有资源：直接拿走 */</span>
+        exit_critical(sr);
+        <span style="color:#0000FF">return</span>;
+    }
+
+    <span style="color:#008000">/* 2. 没资源：当前任务加入等待链表（按优先级排序），状态改为等待 */</span>
+    cur-&gt;state = TASK_WAIT;
+    sem_wait_insert_sorted(sem, cur);   <span style="color:#008000">/* 优先级高的排在前面，先被唤醒 */</span>
+    exit_critical(sr);
+
+    <span style="color:#008000">/* 3. 触发调度让出 CPU——任务在这里&quot;睡着&quot;，直到被 Post 唤醒 */</span>
+    MiniSched();
+}
+
+<span style="color:#008000">/* 归还资源：有等待者就直接唤醒，没有才攒进计数器 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPost</span><span style="color:#001080">(MiniSem *sem)</span>
+{
+    <span style="color:#267F99">uint32_t</span> sr = enter_critical();
+
+    <span style="color:#0000FF">if</span> (sem-&gt;wait_head != <span style="color:#098658">NULL</span>)
+    {
+        <span style="color:#008000">/* 1. 有等待者：唤醒优先级最高的那个，资源&quot;直达&quot;不经过计数器 */</span>
+        MiniTCB *tcb = sem-&gt;wait_head;
+        sem-&gt;wait_head = tcb-&gt;sem_next;
+        tcb-&gt;state = TASK_RDY;
+        rdy_insert(tcb);         <span style="color:#008000">/* 回就绪表，对应 UCOS 的 OS_RdyListInsert */</span>
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        sem-&gt;ctr++;              <span style="color:#008000">/* 2. 没等待者：资源攒起来 */</span>
+    }
+    exit_critical(sr);
+
+    MiniSched();                 <span style="color:#008000">/* 3. 触发调度：唤醒者可能优先级更高 */</span>
+}
+
+<span style="color:#008000">/* 中断版 Post：只唤醒不调度，切换留到中断退出后（对应 FreeRTOS 的 GiveFromISR） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniSemPostFromISR</span><span style="color:#001080">(MiniSem *sem)</span>
+{
+    <span style="color:#0000FF">if</span> (sem-&gt;wait_head != <span style="color:#098658">NULL</span>)
+    {
+        MiniTCB *tcb = sem-&gt;wait_head;
+        sem-&gt;wait_head = tcb-&gt;sem_next;
+        tcb-&gt;state = TASK_RDY;
+        rdy_insert(tcb);
+        g_pendsv_pending = <span style="color:#098658">1</span>;    <span style="color:#008000">/* 标记：中断退出后需要切换 */</span>
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        sem-&gt;ctr++;
+    }
+}</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS 生产-消费者 demo（main 或 start_task 里创建） ========== */</span>
+MiniSem g_sem;                    <span style="color:#008000">/* 全局信号量：数据就绪通知 */</span>
+
+<span style="color:#008000">/* 生产者：每 100ms &quot;生产&quot;一个数据，Post 一次 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">producer_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg)</span>
+{
+    <span style="color:#267F99">uint32_t</span> count = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        count++;
+        g_shared_data = count;    <span style="color:#008000">/* 模拟往缓冲区放数据 */</span>
+        MiniSemPost(&amp;g_sem);      <span style="color:#008000">/* 通知消费者：有数据了 */</span>
+        MiniTimeDly(<span style="color:#098658">100</span>);         <span style="color:#008000">/* 上一课的延时 */</span>
+    }
+}
+
+<span style="color:#008000">/* 消费者：等通知才消费，否则阻塞 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">consumer_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg)</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        MiniSemPend(&amp;g_sem);      <span style="color:#008000">/* 拿不到就&quot;睡觉&quot;，不空转 */</span>
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;消费: %lu\r\n&quot;</span>, g_shared_data);
+        LED1_TOGGLE();            <span style="color:#008000">/* 用 LED 肉眼验证节奏 */</span>
+    }
+}
+
+<span style="color:#267F99">int</span> <span style="color:#795E26">main</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* ...硬件初始化... */</span>
+    MiniSemCreate(&amp;g_sem, <span style="color:#098658">0</span>);     <span style="color:#008000">/* 初始 0：消费者必须先等生产者 */</span>
+    MiniTaskCreate(producer_task, <span style="color:#098658">2</span>);   <span style="color:#008000">/* 第 7 课的任务创建 */</span>
+    MiniTaskCreate(consumer_task, <span style="color:#098658">3</span>);
+    MiniStart();                  <span style="color:#008000">/* 第 9 课的调度器启动 */</span>
+}</pre>
+
+<div class="tip">
+  <p>💡 验证要点：把 <code>g_sem</code> 初始计数改成 3 再跑一遍——消费者会一口气消费 3 次才停下来等，这就直观看到了"计数型信号量"和"二值信号量"的差别（对应教材 11.5 节计数型信号量实验 <span class="pg">PDF p.240</span>）。</p>
+</div>
+
+<h2>动手练习（约 50~70 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1：实现信号量并用生产者-消费者验证</h3>
+  <p class="step">1️⃣ 在 MiniOS 分支新建 <code>mini_sem.h / mini_sem.c</code>，实现上面的 Create/Pend/Post 三个函数（<code>enter_critical/exit_critical</code> 用你第 5 课学的临界区实现，<code>rdy_insert</code> 用第 8 课的）。</p>
+  <p class="step">2️⃣ 跑通生产-消费 demo。验收标准：串口打印的消费计数连续无丢失，LED1 闪烁频率与生产者 100ms 节拍一致。</p>
+  <p class="step">3️⃣ 写一个"互斥"实验：两个任务都不加信号量地打印一串字符到串口（观察乱码），再用一个初始计数为 1 的信号量包住打印区域（观察整齐）。这就是二值信号量当锁用的意义。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2：优先级唤醒验证 + FromISR 改造</h3>
+  <p class="step">1️⃣ 让三个不同优先级的任务同时 Pend 同一个空信号量，再让一个任务 Post 一次。验收标准：被唤醒的是优先级最高的那个，而不是先 Pend 的那个（顺序列表 vs 优先级列表的差别）。</p>
+  <p class="step">2️⃣ 改造：把生产者换成"定时器中断里调用 <code>MiniSemPostFromISR</code>"，消费者在任务里 Pend。验证中断里也能完成同步，且系统不崩。</p>
+  <p class="step">3️⃣ 思考题：为什么 Post 唤醒的是"最高优先级等待者"而不是"最早等待者"？提示：结合第 4 课位图就绪表的 O(1) 设计目标想 3 分钟。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. MiniSemPend 在信号量计数为 0 时会做什么？</p>
+  <p class="opt">A. 空转等待直到计数变化</p>
+  <p class="opt">B. 把自己挂进等待链表并触发调度</p>
+  <p class="opt">C. 直接返回错误码</p>
+  <details><summary>查看答案</summary><div class="answer">B。计数为 0 时任务状态改为等待、加入等待链表，然后 OSSched() 让出 CPU（PDF p.209~210）。</div></details>
+
+  <p class="q">Q2. OSSemPost 时等待链表非空，计数器会怎样？</p>
+  <p class="opt">A. 计数器加一，唤醒等待者</p>
+  <p class="opt">B. 计数器不变，唤醒最高优先级等待者</p>
+  <p class="opt">C. 计数器加一，但没人被唤醒</p>
+  <details><summary>查看答案</summary><div class="answer">B。有等待者时资源"直达"，不经过计数器（PDF p.218 的 OS_Post 逻辑）。</div></details>
+
+  <p class="q">Q3. 中断服务函数里调用 Post 版函数，最关键的限制是？</p>
+  <p class="opt">A. 不能修改计数器</p>
+  <p class="opt">B. 不能直接触发任务切换</p>
+  <p class="opt">C. 不能访问全局变量</p>
+  <details><summary>查看答案</summary><div class="answer">B。切换要等所有中断退出后由 PendSV 完成，中断里直接调度会破坏中断现场。</div></details>
+
+  <p class="q">Q4. 二值信号量与计数型信号量的本质区别是？</p>
+  <p class="opt">A. 使用不同的 API 函数</p>
+  <p class="opt">B. 初始计数值不同（0/1 还是 >1）</p>
+  <p class="opt">C. 等待链表排序方式不同</p>
+  <details><summary>查看答案</summary><div class="answer">B。共用同一套 API，区别只在创建时初始计数：1 当锁（互斥），>1 当资源池（PDF 11.5 节 <span class="pg">PDF p.240</span>）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 11 章（PDF p.194~245）——信号量简介、OS_SEM 结构体、OSSemPend/OSSemPost 全流程</li>
+<li>🔁 对照：FreeRTOS 课程 <a href="../../FreeRTOS/lessons/0009-semaphores.html">第 9 课：信号量</a>——xSemaphoreTake/Give 与 FromISR 的对照基准</li>
+<li>📕 内核结构参考：µC/OS-III 源码 <code>os_sem.c</code>（你的分支工程里）——对照 Pend/Post 的真实实现和错误码设计</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 12 课——MiniOS⑥：三内核验收对比。MiniOS 功能齐了，该跟 UCOS 和 FreeRTOS 正式"同台比武"：比代码量、比内存、比架构。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0010-minios-4-tick-and-delay.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0012-minios-6-kernel-review.html">下一课：MiniOS⑥：三内核验收对比 →</a>
+</nav>
+
+</div>
+</body>
+</html>

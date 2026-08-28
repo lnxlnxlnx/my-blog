@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0008 · UART / I2C / SPI 通信</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>UART / I2C / SPI 通信</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0008 · 预计 20 分钟</p>
+
+<p>STM32 的 <code>HAL_UART_Transmit</code>、<code>HAL_I2C_Mem_Read</code>、<code>HAL_SPI_Transmit</code>……IDF 里对应 <code>uart_</code>、<code>i2c_</code>、<code>spi_</code> 系列,且<strong>多半是"先传配置结构体,再收发"</strong>。这一课给出三个总线的对照翻译,外加 ESP32 特有的"任意引脚映射总线(管脚矩阵)"。</p>
+
+<h2>知识点 1:UART 对照</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">uart_config_t</span> cfg = {
+    .baud_rate = <span style="color: #098658">115200</span>,
+    .data_bits = UART_DATA_8_BITS,
+    .parity = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+};
+<span style="color: #795E26">uart_param_config</span>(UART_NUM_1, &amp;cfg);
+<span style="color: #795E26">uart_set_pin</span>(UART_NUM_1, TX_PIN, RX_PIN, -<span style="color: #098658">1</span>, -<span style="color: #098658">1</span>);  <span style="color: #008000">// 任意引脚!管脚矩阵</span>
+<span style="color: #795E26">uart_driver_install</span>(UART_NUM_1, <span style="color: #098658">1024</span> * <span style="color: #098658">2</span>, <span style="color: #098658">0</span>, <span style="color: #098658">0</span>, <span style="color: #00F">NULL</span>, <span style="color: #098658">0</span>);
+<span style="color: #795E26">uart_write_bytes</span>(UART_NUM_1, <span style="color: #A31515">&quot;hello&quot;</span>, <span style="color: #098658">5</span>);
+</pre>
+
+<h2>知识点 2:I2C 对照(读寄存器风格)</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">i2c_master_bus_config_t</span> bus_cfg = { .i2c_port = I2C_NUM_0, .sda_io_num = SDA, .scl_io_num = SCL };
+<span style="color: #795E26">i2c_new_master_bus</span>(&amp;bus_cfg, &amp;bus);
+<span style="color: #795E26">i2c_master_bus_add_device</span>(bus, &amp;dev_cfg, &amp;dev);
+<span style="color: #795E26">i2c_master_transmit_receive</span>(dev, reg, <span style="color: #098658">1</span>, buf, len, -<span style="color: #098658">1</span>);  <span style="color: #008000">// 写寄存器读数据</span>
+</pre>
+<p>对照记忆:STM32 的 <code>HAL_I2C_Mem_Read</code> ≈ IDF 的 <code>i2c_master_transmit_receive</code>(新 driver 风格)。</p>
+
+<h2>知识点 3:总线的"管脚矩阵"特权</h2>
+<p>ESP32 的 UART/I2C/SPI 大部分信号<strong>可以映射到任意 GPIO</strong>(S3 部分引脚受限)。这意味着换引脚只改配置、不改硬件设计——xiaozhi 各开发板差异大,全靠这套。</p>
+
+<h2>动手</h2>
+<p>去 <code>basic_routines/09_iic_exio</code>(I2C)和 <code>12_spilcd</code>(SPI)看例程:<strong>找出"配置→驱动→读写"三步分别调用了哪几个 API</strong>,写下来。再去 <code>xiaozhi-esp32-2.2.4/main/boards/bread-compact-wifi/config.h</code> 看 OLED 的 I2C 引脚定义——体会"引脚可配"。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">ESP32 的总线引脚有什么特权?</p>
+  <button class="opt" data-ok="true">任意映射</button>
+  <button class="opt" data-ok="false">固定分配</button>
+  <button class="opt" data-ok="false">自动扫描</button>
+  <p class="reveal">管脚矩阵,信号可映射到大部分 GPIO。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">I2C 读寄存器的新 driver 函数是?</p>
+  <button class="opt" data-ok="true">i2c_master_transmit_receive</button>
+  <button class="opt" data-ok="false">i2c_read</button>
+  <button class="opt" data-ok="false">HAL_I2C_Mem_Read</button>
+  <p class="reveal">i2c_master_transmit_receive,写寄存器地址再读数据。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方 I2C/SPI/UART 驱动文档</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/i2c.html">I2C</a>):各读"Overview + 例程"即可。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课进入网络:Wi-Fi 连接与事件——这是 xiaozhi 的命脉,也是 ESP32 与 STM32 最大的分水岭。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0007-内存Flash与分区表.html">← 上一篇:内存与分区</a>
+  <a href="index.html">课程地图</a>
+  <a href="0009-Wi-Fi与网络.html">下一篇:Wi-Fi →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

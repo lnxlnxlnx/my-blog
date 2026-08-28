@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0018 · 元编程</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>元编程:写代码的代码</h1>
+<p class="meta">Pythonic 代码 · 课程 0018 · 预计 25 分钟</p>
+
+<p><strong>元编程</strong> = 写「用来描述/生成/改造其他代码」的代码。Python 因为对象模型开放,很多地方能「动代码」:属性访问可以被接管(<code>__getattr__</code>)、属性读写能加逻辑(<code>__setattr__</code>)、类能被加工(装饰器/元类)、属性还能委托。你会频繁在框架(django、sqlalchemy)里见到这些。本课讲最常见的三件,并劝你别滥用。</p>
+
+<h2>知识点 1:属性访问拦截——__getattr__ / __setattr__</h2>
+<p>当「访问一个不存在的属性」时,<code>__getattr__</code> 会被调用,可以动态返回东西。<code>__setattr__</code> 在<strong>任何</strong>属性赋值时被调用(可用来记录写入、校验)。这是框架「魔法属性」的来源之一:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Config</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">data</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_data</span> <span style="color: #000">=</span> <span style="color: #001080">data</span>          <span style="color: #008000"># 注意:这也会触发 __setattr__!</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__getattr__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">):</span>   <span style="color: #008000"># 只有属性不存在才来</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">name</span> <span style="color: #AF00DB">in</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_data</span><span style="color: #000">:</span>
+            <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_data</span><span style="color: #000">[</span><span style="color: #001080">name</span><span style="color: #000">]</span>
+        <span style="color: #00F">raise</span> <span style="color: #CD3131">AttributeError</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;no {</span><span style="color: #001080">name</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__setattr__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">value</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">name</span><span style="color: #000">.</span><span style="color: #001080">startswith</span><span style="color: #000">(</span><span style="color: #A31515">&quot;_&quot;</span><span style="color: #000">):</span>   <span style="color: #008000"># 内部带下划线直接存</span>
+            <span style="color: #0070C1">super</span><span style="color: #000">().</span><span style="color: #795E26">__setattr__</span><span style="color: #000">(</span><span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">value</span><span style="color: #000">)</span>
+        <span style="color: #00F">else</span><span style="color: #000">:</span>
+            <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;写配置 {</span><span style="color: #001080">name</span><span style="color: #A31515">} = {</span><span style="color: #001080">value</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>
+            <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_data</span><span style="color: #000">[</span><span style="color: #001080">name</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">value</span>
+
+<span style="color: #001080">c</span> <span style="color: #000">=</span> <span style="color: #001080">Config</span><span style="color: #000">({</span><span style="color: #A31515">&quot;host&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;localhost&quot;</span><span style="color: #000">})</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">c</span><span style="color: #000">.</span><span style="color: #001080">host</span><span style="color: #000">)</span>          <span style="color: #008000"># localhost:动态从 _data 取</span>
+</pre>
+<p>关键区别:<code>__getattr__</code> 只在「找不到」时调用;<code>__getattribute__</code> 每次访问都调(更危险少用)。<code>__setattr__</code> 每次赋值都拦截。这类工具最常见的正确用法:<code>__getattr__</code> 给「懒加载/代理/兼容旧名」提供便利。</p>
+
+<h2>知识点 2:property vs 元编程——多数时候 property 就够</h2>
+<p>上一课(0006)学过 <code>@property</code> 给「单个属性」加逻辑。元编程的 <code>__getattr__</code> 是「接管所有未知属性」。**提醒**:能用 <code>@property</code> 或普通字段解决就别用 <code>__getattr__</code>——后者让 IDE 补全、类型检查、可读性都变差。元编程是「最后的手段」。</p>
+
+<h2>知识点 3:类装饰器——给类「加料」</h2>
+<p>装饰器不仅能装饰函数(0008),还能装饰<strong>类</strong>:收到类,返回「加工过的类」。这是比元类更轻量、更常用的「动类」方式:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">add_repr</span><span style="color: #000">(</span><span style="color: #267F99">cls</span><span style="color: #000">):</span>
+    <span style="color: #267F99">cls</span><span style="color: #000">.</span><span style="color: #795E26">__repr__</span> <span style="color: #000">=</span> <span style="color: #00F">lambda</span> <span style="color: #267F99">self</span><span style="color: #000">:</span> <span style="color: #A31515">f&quot;&lt;{</span><span style="color: #267F99">cls</span><span style="color: #000">.</span><span style="color: #001080">__name__</span><span style="color: #A31515">} {</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">__dict__</span><span style="color: #A31515">}&gt;&quot;</span>
+    <span style="color: #00F">return</span> <span style="color: #267F99">cls</span>
+
+<span style="color: #AF00DB">@add_repr</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">User</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">name</span> <span style="color: #000">=</span> <span style="color: #001080">name</span>
+
+<span style="color: #001080">u</span> <span style="color: #000">=</span> <span style="color: #001080">User</span><span style="color: #000">(</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">u</span><span style="color: #000">)</span>   <span style="color: #008000"># &lt;User {&#39;name&#39;: &#39;Ann&#39;}&gt;:类装饰器帮我们加了 __repr__</span>
+</pre>
+<p>也可以给类动态加属性/方法。对照 0007 的装饰器:<code>@add_repr</code> ≡ <code>User = add_repr(User)</code>。类装饰器是「不碰继承也能统一给一批类加能力」的最轻办法。</p>
+
+<h2>知识点 4:元类 metaclass——类的类(不常写,但要懂)</h2>
+<p>类是对象,它的「类」就是<strong>元类</strong>。默认元类是 <code>type</code>。自定义元类 = 在「类被创建时」打点/加工(比如自动注册、校验方法、注入行为)。你基本不会自己写,但要能认出它:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">AutoRegister</span><span style="color: #000">(</span><span style="color: #0070C1">type</span><span style="color: #000">):</span>          <span style="color: #008000"># 元类:继承 type</span>
+    <span style="color: #001080">registry</span> <span style="color: #000">=</span> <span style="color: #000">{}</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__new__</span><span style="color: #000">(</span><span style="color: #001080">mcs</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">bases</span><span style="color: #000">,</span> <span style="color: #001080">ns</span><span style="color: #000">):</span>
+        <span style="color: #267F99">cls</span> <span style="color: #000">=</span> <span style="color: #0070C1">super</span><span style="color: #000">().</span><span style="color: #795E26">__new__</span><span style="color: #000">(</span><span style="color: #001080">mcs</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">,</span> <span style="color: #001080">bases</span><span style="color: #000">,</span> <span style="color: #001080">ns</span><span style="color: #000">)</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">name</span> <span style="color: #000">!=</span> <span style="color: #A31515">&quot;Base&quot;</span><span style="color: #000">:</span>         <span style="color: #008000"># 除基类外都注册</span>
+            <span style="color: #001080">AutoRegister</span><span style="color: #000">.</span><span style="color: #001080">registry</span><span style="color: #000">[</span><span style="color: #001080">name</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #267F99">cls</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">cls</span>
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Base</span><span style="color: #000">(</span><span style="color: #001080">metaclass</span><span style="color: #000">=</span><span style="color: #001080">AutoRegister</span><span style="color: #000">):</span>   <span style="color: #008000"># 指定元类</span>
+    <span style="color: #00F">pass</span>
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Foo</span><span style="color: #000">(</span><span style="color: #001080">Base</span><span style="color: #000">):</span> <span style="color: #00F">pass</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Bar</span><span style="color: #000">(</span><span style="color: #001080">Base</span><span style="color: #000">):</span> <span style="color: #00F">pass</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">AutoRegister</span><span style="color: #000">.</span><span style="color: #001080">registry</span><span style="color: #000">)</span>   <span style="color: #008000"># {&#39;Foo&#39;:..., &#39;Bar&#39;:...}(自动收集子类)</span>
+</pre>
+<p>用途:像「插件注册」「orm 表映射」「校验器自动登记」这种「类一创建就想登记」的需求用元类。**现实提示**:能不用元类就不用(类装饰器常常更简单);读代码时能「认出 __metaclass__/metaclass= 是类级魔法」就够了。</p>
+
+<h2>知识点 5:最实用的元编程一件——__getattr__ 做「快速代理」</h2>
+<p>想给一个对象包一层、把未知属性/方法「转发」给内部对象,<code>__getattr__</code> 是轻量代理的利器:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Proxy</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">target</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">target</span> <span style="color: #000">=</span> <span style="color: #001080">target</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__getattr__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">):</span>        <span style="color: #008000"># 属性不存在:转发给 target</span>
+        <span style="color: #00F">return</span> <span style="color: #0070C1">getattr</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">target</span><span style="color: #000">,</span> <span style="color: #001080">name</span><span style="color: #000">)</span>
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Math</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">square</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span>
+
+<span style="color: #001080">p</span> <span style="color: #000">=</span> <span style="color: #001080">Proxy</span><span style="color: #000">(</span><span style="color: #001080">Math</span><span style="color: #000">())</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">square</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)</span>          <span style="color: #008000"># 25:Proxy 自己没有 square,转发给了内部 Math</span>
+</pre>
+<p>这就是「代理/门面」(你在架构课见过)的 Python 极简实现:<code>__getattr__</code> 把未知调用转发给被代理对象。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">访问不存在的属性时调用?</p>
+  <button class="opt" data-ok="false">__init__</button>
+  <button class="opt" data-ok="true">__getattr__</button>
+  <button class="opt" data-ok="false">__setattr__</button>
+  <button class="opt" data-ok="false">__str__</button>
+  <p class="reveal">__getattr__ 只在找不到属性时被调用,可动态返回或代理转发。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">给「一批类」统一加能力,最轻办法?</p>
+  <button class="opt" data-ok="false">写元类</button>
+  <button class="opt" data-ok="true">类装饰器</button>
+  <button class="opt" data-ok="false">__setattr__</button>
+  <button class="opt" data-ok="false">多重继承</button>
+  <p class="reveal">类装饰器@f 接收类返回加工类,比元类简单;元类常可被它替代。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">类的「类」默认是?</p>
+  <button class="opt" data-ok="false">object</button>
+  <button class="opt" data-ok="true">type</button>
+  <button class="opt" data-ok="false">class</button>
+  <button class="opt" data-ok="false">meta</button>
+  <p class="reveal">默认元类是 type;自定义元类继承 type,在类创建时打点加工。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">给对象做轻量「代理转发」,用?</p>
+  <button class="opt" data-ok="false">__init__ 拷贝</button>
+  <button class="opt" data-ok="true">__getattr__ 转发</button>
+  <button class="opt" data-ok="false">继承实现</button>
+  <button class="opt" data-ok="false">__str__ 原样</button>
+  <p class="reveal">__getattr__ 把未知属性 getattr 转发给内部对象,实现轻量代理。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0018_元编程.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写一个用 __getattr__ 动态读 __dict__ 配件的类;写 __setattr__ 记录写入口志</li>
+  <li><strong>练习 B</strong>:写一个类装饰器(给类加 __repr__ 或注册);对照读一个简单元类例子</li>
+  <li><strong>练习 C</strong>:做一个 Proxy 代理类(转发给内部对象);判断题「该用 property 还是 __getattr__」</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 参考文档「<a href="https://docs.python.org/zh-cn/3/reference/datamodel.html">数据模型</a>」「<a href="https://docs.python.org/zh-cn/3/reference/datamodel.html#metaclasses">元类</a>」</strong>:属性、方法、特殊方法大全。想深读者看 <strong>Fluent Python</strong> 元编程那一整块——但现实建议「先会用 __getattr__/类装饰器,元类看懂即可」。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:__getattr__ 转发和类装饰器用起来如何?最后一节我们讲组织代码的**模块与包**——import、__init__、怎么写清晰的项目结构。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0017-协程与异步.html">← 上一篇:协程与异步 asyncio</a>
+  <a href="index.html">课程地图</a>
+  <a href="0019-模块与包.html">下一篇:模块与包:组织代码 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

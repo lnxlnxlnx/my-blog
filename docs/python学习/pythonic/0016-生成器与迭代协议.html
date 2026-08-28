@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0016 · 生成器与迭代协议</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>生成器与迭代协议</h1>
+<p class="meta">Pythonic 代码 · 课程 0016 · 预计 25 分钟</p>
+
+<p>C 里你要写「惰性序列」成本很高(手写迭代器结构体、状态机)。Python 里 <code>yield</code> 一个关键字就造出<strong>生成器</strong>——一个能「暂停/继续」、按需产出元素、不一次性占内存的函数。本课讲透 yield 与 Python 的迭代协议(iter/next),这是协程(asyncio)的地基。</p>
+
+<h2>知识点 1:生成器函数——用 yield 而不是 return</h2>
+<p>任何函数里只要出现 <code>yield</code>,它就变成<strong>生成器函数</strong>:调用它<strong>不会执行函数体</strong>,而是返回一个生成器对象;只有迭代它时函数体才跑,而且每次到 yield 就暂停、把值吐出来,下次从这继续:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">countdown</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">):</span>
+    <span style="color: #00F">while</span> <span style="color: #001080">n</span> <span style="color: #000">&gt;</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+        <span style="color: #00F">yield</span> <span style="color: #001080">n</span>           <span style="color: #008000"># 产出 n,暂停</span>
+        <span style="color: #001080">n</span> <span style="color: #000">-=</span> <span style="color: #098658">1</span>            <span style="color: #008000"># 下次回来从这一行继续</span>
+
+<span style="color: #001080">g</span> <span style="color: #000">=</span> <span style="color: #001080">countdown</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">)</span>          <span style="color: #008000"># 现在还没开始跑!</span>
+<span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">g</span><span style="color: #000">)</span>                   <span style="color: #008000"># 迭代才开始 → [3, 2, 1]</span>
+</pre>
+<p>对比 return:return 一次性结束;<code>yield</code> 能<strong>多次产出</strong>、函数变「可暂停的序列」。这就是「生成器」。</p>
+
+<h2>知识点 2:惰性求值——省内存,处理大/无限序列</h2>
+<p>之前的生成器表达式是「惰性」的;生成器函数同样惰性。好处:不用把整个序列塞进内存。你甚至能表示「无限序列」而不炸内存:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">naturals</span><span style="color: #000">():</span>
+    <span style="color: #001080">n</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>
+    <span style="color: #00F">while</span> <span style="color: #00F">True</span><span style="color: #000">:</span>
+        <span style="color: #00F">yield</span> <span style="color: #001080">n</span>          <span style="color: #008000"># 无限产出 0,1,2,3,...</span>
+        <span style="color: #001080">n</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span>
+
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">itertools</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">islice</span>
+<span style="color: #001080">first5</span> <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">islice</span><span style="color: #000">(</span><span style="color: #001080">naturals</span><span style="color: #000">(),</span> <span style="color: #098658">5</span><span style="color: #000">))</span>   <span style="color: #008000"># [0,1,2,3,4] 只取前 5 个</span>
+</pre>
+<p>要点:<code>while True + yield</code> = 无限流。<code>islice</code>(上一课 itertools 学过)截取前 N 个,永远不会真正跑完。<code>yield from heapq.merge(...)</code> 这类还能做流式合并。</p>
+
+<h2>知识点 3:迭代协议——for 到底怎么工作(iter/next)</h2>
+<p><code>for x in obj</code> 背后是协议:<code>iter(obj)</code> 拿到迭代器,再不断 <code>next(it)</code> 直到 StopIteration。任何对象实现 <code>__iter__</code>(返回迭代器)就能被 for 用:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">nums</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">]</span>
+<span style="color: #001080">it</span> <span style="color: #000">=</span> <span style="color: #0070C1">iter</span><span style="color: #000">(</span><span style="color: #001080">nums</span><span style="color: #000">)</span>          <span style="color: #008000"># 迭代器</span>
+<span style="color: #0070C1">next</span><span style="color: #000">(</span><span style="color: #001080">it</span><span style="color: #000">)</span>                 <span style="color: #008000"># 1</span>
+<span style="color: #0070C1">next</span><span style="color: #000">(</span><span style="color: #001080">it</span><span style="color: #000">)</span>                 <span style="color: #008000"># 2</span>
+<span style="color: #008000"># 手动 next 到底会抛 StopIteration</span>
+
+<span style="color: #008000"># 自定义可迭代对象:实现 __iter__ + __next__</span>
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Evens</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">n</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">n</span> <span style="color: #000">=</span> <span style="color: #001080">n</span><span style="color: #000">;</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">i</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__iter__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__next__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">if</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">i</span> <span style="color: #000">&gt;=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">n</span><span style="color: #000">:</span> <span style="color: #00F">raise</span> <span style="color: #CD3131">StopIteration</span>
+        <span style="color: #001080">r</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">i</span> <span style="color: #000">*</span> <span style="color: #098658">2</span><span style="color: #000">;</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">i</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span><span style="color: #000">;</span> <span style="color: #00F">return</span> <span style="color: #001080">r</span>
+
+<span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">Evens</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">))</span>           <span style="color: #008000"># [0, 2, 4, 6]</span>
+</pre>
+<p>`for` 会自动调 <code>next</code> 并捕获 StopIteration 结束,所以你平时不用碰这些;但写自定义可迭代类就要实现 <code>__iter__</code>(懒人做法:内部用 generator 即 <code>yield</code> 即可,见下一条)。</p>
+
+<h2>知识点 4:最省事——类里用 yield 变可迭代</h2>
+<p>自定义类想被 for 迭代,最省事是实现 <code>__iter__</code> 为生成器函数:<code>yield</code> 会自动处理暂停和 StopIteration,不用手写 <code>__next__</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Squares</span><span style="color: #000">:</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">n</span><span style="color: #000">):</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">n</span> <span style="color: #000">=</span> <span style="color: #001080">n</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__iter__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">n</span> <span style="color: #000">+</span> <span style="color: #098658">1</span><span style="color: #000">):</span>
+            <span style="color: #00F">yield</span> <span style="color: #001080">i</span> <span style="color: #000">*</span> <span style="color: #001080">i</span>        <span style="color: #008000"># 自动实现迭代协议</span>
+
+<span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #001080">Squares</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">))</span>           <span style="color: #008000"># [1, 4, 9, 16]</span>
+</pre>
+<p>能 yield 就别手写 <code>__next__</code>/<code>StopIteration</code>,更少出错。yield 帮你自动实现迭代器。</p>
+
+<h2>知识点 5:yield 还能「省内存地生产」再「分批消费」</h2>
+<p>生成器的经典场景:一次读一个大文件/大结果集,逐行(分片)不息整块进内存:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">read_big</span><span style="color: #000">(</span><span style="color: #001080">path</span><span style="color: #000">):</span>
+    <span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #001080">path</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">line</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+            <span style="color: #00F">yield</span> <span style="color: #001080">line</span><span style="color: #000">.</span><span style="color: #001080">strip</span><span style="color: #000">()</span>    <span style="color: #008000"># 逐行产出,不一次全读</span>
+
+<span style="color: #00F">for</span> <span style="color: #001080">line</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">read_big</span><span style="color: #000">(</span><span style="color: #A31515">&quot;big.txt&quot;</span><span style="color: #000">):</span>   <span style="color: #008000"># 边读边处理</span>
+    <span style="color: #00F">pass</span>                            <span style="color: #008000"># 内存占用恒定</span>
+</pre>
+<p>对「处理大文件 / 流式管道」,生成器能让你把多个步骤串成交互式管道,每段只占一个元素的内存。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">调用生成器函数会立刻执行函数体吗?</p>
+  <button class="opt" data-ok="false">会,立即跑</button>
+  <button class="opt" data-ok="true">不会,返回对象</button>
+  <button class="opt" data-ok="false">只跑第一行</button>
+  <button class="opt" data-ok="false">看有无参数</button>
+  <p class="reveal">调用生成器函数返回生成器对象,函数体要等迭代时才跑。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">生成器用哪个关键字产元素?</p>
+  <button class="opt" data-ok="false">return</button>
+  <button class="opt" data-ok="true">yield</button>
+  <button class="opt" data-ok="false">break</button>
+  <button class="opt" data-ok="false">print</button>
+  <p class="reveal">yield 让函数暂停并产出值,可多次产出,不像 return 一次结束。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">for 循环背后每个元素取用靠?</p>
+  <button class="opt" data-ok="false">next 直到 None</button>
+  <button class="opt" data-ok="true">next 直到异常</button>
+  <button class="opt" data-ok="false">下标递增</button>
+  <button class="opt" data-ok="false">len 限定</button>
+  <p class="reveal">iter() 拿迭代器,next() 逐个取,直到 StopIteration 异常结束。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">自定义类被 for 用,最省事是实现?</p>
+  <button class="opt" data-ok="false">__next__ 手写</button>
+  <button class="opt" data-ok="true">__iter__ 用 yield</button>
+  <button class="opt" data-ok="false">__len__ 返回</button>
+  <button class="opt" data-ok="false">__getitem__ 下标</button>
+  <p class="reveal">__iter__ 写成生成器(yield)自动处理协议,比手写 __next__ 省事。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0016_生成器与迭代协议.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写 countdown、fibonacci 生成器;观察「不迭代不执行」</li>
+  <li><strong>练习 B</strong>:实现一个可迭代类(用 __iter__ + yield);用 next/iter 手动走一个迭代器</li>
+  <li><strong>练习 C</strong>:写一个「逐行读大文件并过滤」的生成器,替换 repo 里一次 read 全部的方式</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档<a href="https://docs.python.org/zh-cn/3/tutorial/classes.html#generators">生成器</a></strong>与 <strong>Fluent Python</strong> 第 17 章「Iterables, Iterators and Generators」:想深入就翻这本,它把迭代协议和协程的关系讲得很透。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:刚才 while True + yield 是不是很震撼?下一课把它推向极致——<strong>协程与异步 asyncio</strong>:yield 不止能吐值,还能「等别人」,这是写并发 IO 的基础。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0015-测试与日志.html">← 上一篇:测试与日志 pytest / logging</a>
+  <a href="index.html">课程地图</a>
+  <a href="0017-协程与异步.html">下一篇:协程与异步 asyncio →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

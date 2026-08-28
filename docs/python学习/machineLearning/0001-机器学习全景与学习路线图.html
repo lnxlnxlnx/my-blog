@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0001 · 机器学习全景与学习路线图</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>机器学习全景与学习路线图</h1>
+<p class="meta">课程 0001 · 预计 15 分钟</p>
+
+<p>你的目标很明确：<strong>面试级理解经典算法</strong>、能<strong>读论文</strong>、能用在<strong>数学建模</strong>里。你已经能跑通 PyTorch 的 MLP/CNN，但经典机器学习算法的地图还没有拼起来——这节课就是给你拼这张地图。</p>
+
+<h2>这节课的收获</h2>
+<p>学完之后，任何算法你都能放进一张两层的图里：<strong>它是有监督还是无监督？它是回归还是分类？</strong>能回答这两个问题，你就拿到了整个领域的地基。</p>
+
+<h2>一切算法的共同骨架</h2>
+<p>不管是什么算法，都围绕同一个骨架：</p>
+<pre>样本 x（特征向量）──→  模型 f  ──→  预测 ŷ
+                        ↑
+              通过训练集和损失函数学出来</pre>
+<p>三个关键词，对应李航书里的「统计学习方法三要素」（记下来，全书都在用）：</p>
+<div class="grid">
+  <div class="card"><h3>模型</h3><p>假设空间：你决定用哪种函数族（线性？树？神经网络？）。</p></div>
+  <div class="card"><h3>策略</h3><p>损失函数：怎么衡量「预测得差」？选择最小化什么。</p></div>
+  <div class="card"><h3>算法</h3><p>求解方法：用什么迭代/解析方法去最小化损失。</p></div>
+</div>
+
+<h2>算法地图：先分监督 vs 无监督</h2>
+<p>第一刀，问数据<strong>有没有标签 y</strong>：</p>
+<ul>
+  <li><strong>监督学习</strong>（有标签）：回归（y 连续）· 分类（y 离散）</li>
+  <li><strong>无监督学习</strong>（无标签）：聚类 · 降维</li>
+</ul>
+<p>你已会的神经网络、迁移学习，都属于监督学习；你还不熟的线性回归、逻辑回归、决策树、SVM、朴素贝叶斯、随机森林、K-Means、PCA，全在这张图里。完整地图见<a href="../../reference/0001-机器学习术语表与算法地图.html">参考文档</a>。</p>
+
+<h2>你在哪，要去哪</h2>
+<p>你从深度学习这条线进来（数据→神经网络→优化），它其实是经典算法的「高阶版」。经典算法学完后，你会拥有一套<strong>更完整的工具箱</strong>：</p>
+<ul>
+  <li><strong>面试</strong>：决策树、SVM、集成学习、偏差-方差是高频题</li>
+  <li><strong>数学建模</strong>：回归、聚类、PCA 是建模题的主力</li>
+  <li><strong>读论文</strong>：看懂「模型/损失/算法」三要素，任何论文方法都能拆</li>
+</ul>
+<p>推荐路线（详情在参考文档）：<strong>总纲 → 线性模型 → 感知机衔接神经网络 → kNN/朴素贝叶斯 → 决策树与集成 → SVM → 聚类与 PCA</strong>。</p>
+
+<h2>测一测（先自己答，再点答案）</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">下面哪个属于无监督学习？</p>
+  <button class="opt" data-ok="false">逻辑回归</button>
+  <button class="opt" data-ok="false">决策树</button>
+  <button class="opt" data-ok="true">K-Means</button>
+  <button class="opt" data-ok="false">支持向量机</button>
+  <p class="reveal">K-Means 聚类没有标签，是典型的无监督学习；其余三个都是带标签的分类器（监督学习）。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">「训练集得分很高、测试集得分很差」描述的是？</p>
+  <button class="opt" data-ok="false">欠拟合</button>
+  <button class="opt" data-ok="false">正则化</button>
+  <button class="opt" data-ok="false">泛化</button>
+  <button class="opt" data-ok="true">过拟合</button>
+  <p class="reveal">过拟合 = 模型记住了训练数据的噪声，泛化能力差。这是整个 ML 最重要的问题之一，后面的课程会反复回到它。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">训练过程中，测试集应该怎么处理？</p>
+  <button class="opt" data-ok="false">每轮都看</button>
+  <button class="opt" data-ok="false">只调参用</button>
+  <button class="opt" data-ok="false">混入训练</button>
+  <button class="opt" data-ok="true">绝不可碰</button>
+  <p class="reveal">测试集只能用来做最终评估；训练和调参期间碰了它，评估结果就是「作弊」——你其实是在针对测试集过拟合。</p>
+</div>
+
+<h2>推荐阅读（今天就读第一章）</h2>
+<blockquote>
+  <p><strong>李航《统计学习方法》第 1 章</strong>——「统计学习及监督学习概论」：三要素、模型评估、正则化与交叉验证，是全书地基。<a href="https://book.douban.com/subject/33437381/">豆瓣页面</a>。</p>
+  <p>配合 <strong>ISL（An Introduction to Statistical Learning）第 1 章</strong>，直觉化、免费：<a href="https://www.statlearning.com/">statlearning.com</a>。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>读完教材第一章、做完测验后，回来告诉我：你对「三要素」和「偏差-方差权衡」有哪些地方还不清楚。下一课我们会进入<strong>线性模型</strong>（线性回归 → 逻辑回归），这是最简单、也最能练熟「模型/策略/算法」框架的一课。</p>
+<p><strong>有任何不清楚的地方，随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="index.html">← 上一篇:课程地图(首页)</a>
+  <a href="index.html">课程地图</a>
+  <a href="0002-模型与算法三要素.html">下一篇:模型 vs 算法：三要素一次讲透 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

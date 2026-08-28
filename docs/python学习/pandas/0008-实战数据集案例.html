@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandas 0008 · 实战:书第14章三案例</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>实战:书第14章三案例</h1>
+<p class="meta">Pandas 专题 · 课程 0008 · 预计 40 分钟 · 书第14章</p>
+
+<p>把前面 7 课全部串起来。书 <a href="https://github.com/BrambleXu/pydata-notebook">第14章</a> 给了三个真实案例:</p>
+<ul>
+  <li><strong>14.1 USA.gov Bitly 数据</strong>:URL 缩短日志 → 时区统计、逐小时热度</li>
+  <li><strong>14.2 MovieLens 1M</strong>:电影评分 → 评分分布、顶级电影(join + groupby)</li>
+  <li><strong>14.3 美国婴儿姓名 1880–2010</strong>:一年一文件 → 拼接、流行度排序、单字图</li>
+</ul>
+
+<h2>知识点 1:USA.gov——读 JSON、时区分布(14.1)</h2>
+<p>先读 JSON 成 DataFrame,再"计数"高频时区(<code>tz.value_counts</code>)与缺失处理(<code>fillna</code> / <code>isnull</code>):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">pandas</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">pd</span><span style="color: #000">, </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #008000"># 书里的 records 来自在线 JSON;这里模拟读取</span>
+<span style="color: #001080">df</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_json</span><span style="color: #000">(</span><span style="color: #A31515">&quot;usa_gov.json&quot;</span><span style="color: #000">,</span> <span style="color: #001080">lines</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>
+<span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;tz&quot;</span><span style="color: #000">].</span><span style="color: #001080">fillna</span><span style="color: #000">(</span><span style="color: #A31515">&quot;Missing&quot;</span><span style="color: #000">)</span>            <span style="color: #008000"># 缺时区给个占位</span>
+<span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;tz&quot;</span><span style="color: #000">][</span><span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;tz&quot;</span><span style="color: #000">].</span><span style="color: #001080">isnull</span><span style="color: #000">()].</span><span style="color: #001080">count</span><span style="color: #000">()</span>   <span style="color: #008000"># 缺失数</span>
+<span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;tz&quot;</span><span style="color: #000">].</span><span style="color: #001080">value_counts</span><span style="color: #000">().</span><span style="color: #001080">head</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>      <span style="color: #008000"># Top 时区</span>
+<span style="color: #008000"># 加一列&quot;是哪一天&quot;再按天计数 → 一天热度</span>
+<span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;date&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">to_datetime</span><span style="color: #000">(</span><span style="color: #001080">df</span><span style="color: #000">[</span><span style="color: #A31515">&quot;timestamp&quot;</span><span style="color: #000">]).</span><span style="color: #001080">dt</span><span style="color: #000">.</span><span style="color: #001080">date</span>
+<span style="color: #001080">df</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;date&quot;</span><span style="color: #000">).</span><span style="color: #001080">size</span><span style="color: #000">()</span>             <span style="color: #008000"># 每天多少条</span>
+</pre>
+<p>这套"读 → 清洗缺失 → value_counts → 分组热度"是日志分析的通路。</p>
+
+<h2>知识点 2:MovieLens——join 拓表 + groupby 评级(14.2)</h2>
+<p>核心是两张表通过 merge 关联(survey 你 0005 学的 join),再按电影算平均分:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># ratings: user, movie, rating; movies: movie, title</span>
+<span style="color: #001080">rating</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_table</span><span style="color: #000">(</span><span style="color: #A31515">&quot;ratings.dat&quot;</span><span style="color: #000">,</span> <span style="color: #001080">sep</span><span style="color: #000">=</span><span style="color: #A31515">&quot;::&quot;</span><span style="color: #000">,</span> <span style="color: #001080">names</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;user&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;movie&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;rating&quot;</span><span style="color: #000">],</span> <span style="color: #001080">engine</span><span style="color: #000">=</span><span style="color: #A31515">&quot;python&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">movie</span>  <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_table</span><span style="color: #000">(</span><span style="color: #A31515">&quot;movies.dat&quot;</span><span style="color: #000">,</span> <span style="color: #001080">sep</span><span style="color: #000">=</span><span style="color: #A31515">&quot;::&quot;</span><span style="color: #000">,</span> <span style="color: #001080">names</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;movie&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;title&quot;</span><span style="color: #000">,</span><span style="color: #A31515">&quot;genre&quot;</span><span style="color: #000">])</span>
+<span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">merge</span><span style="color: #000">(</span><span style="color: #001080">rating</span><span style="color: #000">,</span> <span style="color: #001080">movie</span><span style="color: #000">,</span> <span style="color: #001080">on</span><span style="color: #000">=</span><span style="color: #A31515">&quot;movie&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 把电影名接进来</span>
+<span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">head</span><span style="color: #000">()</span>
+
+<span style="color: #008000"># 每部电影的平均分 &amp; 评分次数 → 找出&quot;又多人评又高分&quot;的</span>
+<span style="color: #001080">mean_rating</span> <span style="color: #000">=</span> <span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;title&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;rating&quot;</span><span style="color: #000">].</span><span style="color: #001080">mean</span><span style="color: #000">()</span>
+<span style="color: #001080">count_rating</span> <span style="color: #000">=</span> <span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">groupby</span><span style="color: #000">(</span><span style="color: #A31515">&quot;title&quot;</span><span style="color: #000">)[</span><span style="color: #A31515">&quot;rating&quot;</span><span style="color: #000">].</span><span style="color: #001080">count</span><span style="color: #000">()</span>
+<span style="color: #001080">top</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">concat</span><span style="color: #000">([</span><span style="color: #001080">mean_rating</span><span style="color: #000">,</span> <span style="color: #001080">count_rating</span><span style="color: #000">],</span> <span style="color: #001080">axis</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">).</span><span style="color: #001080">sort_values</span><span style="color: #000">(</span><span style="color: #A31515">&quot;rating&quot;</span><span style="color: #000">,</span> <span style="color: #001080">ascending</span><span style="color: #000">=</span><span style="color: #00F">False</span><span style="color: #000">)</span>
+<span style="color: #001080">data</span><span style="color: #000">.</span><span style="color: #001080">rating</span><span style="color: #000">.</span><span style="color: #001080">value_counts</span><span style="color: #000">().</span><span style="color: #001080">sort_index</span><span style="color: #000">()</span>       <span style="color: #008000"># 评分分布(直方图用)</span>
+</pre>
+<p>merge 两张表 → groupby("title").mean/count → sort_values = 排行榜 标准套路。</p>
+
+<h2>知识点 3:婴儿姓名——多个文件 concat + 年代演化(14.3)</h2>
+<p>一年一个 txt,用循环统一读入再 concat 成长表,再按年/性别统计:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">glob</span><span style="color: #000">, </span><span style="color: #001080">os</span>
+<span style="color: #001080">pieces</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">year</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">1880</span><span style="color: #000">,</span> <span style="color: #098658">2011</span><span style="color: #000">):</span>
+    <span style="color: #001080">frame</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">read_csv</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;names/yob{</span><span style="color: #001080">year</span><span style="color: #A31515">}.txt&quot;</span><span style="color: #000">,</span>
+                        <span style="color: #001080">names</span><span style="color: #000">=[</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;sex&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;births&quot;</span><span style="color: #000">])</span>
+    <span style="color: #001080">frame</span><span style="color: #000">[</span><span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #001080">year</span>              <span style="color: #008000"># 补一列年份</span>
+    <span style="color: #001080">pieces</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">frame</span><span style="color: #000">)</span>
+<span style="color: #001080">names</span> <span style="color: #000">=</span> <span style="color: #001080">pd</span><span style="color: #000">.</span><span style="color: #001080">concat</span><span style="color: #000">(</span><span style="color: #001080">pieces</span><span style="color: #000">,</span> <span style="color: #001080">ignore_index</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>
+<span style="color: #001080">names</span><span style="color: #000">.</span><span style="color: #001080">shape</span>                          <span style="color: #008000"># (~2M 行)</span>
+
+<span style="color: #008000"># 每年出生总数按性别</span>
+<span style="color: #001080">total_births</span> <span style="color: #000">=</span> <span style="color: #000">(</span><span style="color: #001080">names</span><span style="color: #000">.</span><span style="color: #001080">pivot_table</span><span style="color: #000">(</span><span style="color: #001080">index</span><span style="color: #000">=</span><span style="color: #A31515">&quot;year&quot;</span><span style="color: #000">,</span> <span style="color: #001080">columns</span><span style="color: #000">=</span><span style="color: #A31515">&quot;sex&quot;</span><span style="color: #000">,</span>
+                                  <span style="color: #001080">values</span><span style="color: #000">=</span><span style="color: #A31515">&quot;births&quot;</span><span style="color: #000">,</span> <span style="color: #001080">aggfunc</span><span style="color: #000">=</span><span style="color: #A31515">&quot;sum&quot;</span><span style="color: #000">))</span>
+<span style="color: #008000"># 名字流行度:按 (年,性别) 算排名 top1000 再计数</span>
+<span style="color: #008000"># 单字名:name 长度==1 的比例逐年</span>
+<span style="color: #008000"># 这就是&quot;读N个文件→concat→groupby/pivot→画出演化&quot;</span>
+</pre>
+<p>多文件循环 concat + 补年份列 + pivot_table 按年×性别聚合 —— 这是时间演化分析的通用套路。</p>
+
+<h2>知识点 4:把分析画出来(matplotlib 一招)</h2>
+<p>分析结果配张图立刻变直观:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">matplotlib.pyplot</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">plt</span>
+<span style="color: #001080">total_births</span><span style="color: #000">.</span><span style="color: #001080">plot</span><span style="color: #000">()</span>                 <span style="color: #008000"># 绘多年曲线(用 y 轴图)</span>
+<span style="color: #008000"># 或按性别的两条线:total_births[[&quot;F&quot;,&quot;M&quot;]].plot()</span>
+<span style="color: #001080">plt</span><span style="color: #000">.</span><span style="color: #001080">title</span><span style="color: #000">(</span><span style="color: #A31515">&quot;births by year&quot;</span><span style="color: #000">);</span> <span style="color: #001080">plt</span><span style="color: #000">.</span><span style="color: #001080">show</span><span style="color: #000">()</span>
+</pre>
+<p>DataFrame.plot 一行画图(matplotlib 已装)。这三个案例"输出大多是时序/分布图",这一招够起步。(matplotlib 专题可另行深入。)</p>
+
+<h2>知识点 5:综合心法——分析一条龙</h2>
+<p>把三案例的共同套路提炼成一条龙:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 1 读取:read_csv/read_json/read_table(看分隔符/编码)</span>
+<span style="color: #008000"># 2 体检:shape/dtypes/isnull/head</span>
+<span style="color: #008000"># 3 清洗:fillna/replace/astype(to_datetime)</span>
+<span style="color: #008000"># 4 关联/重塑:merge 拓列 / concat 堆行 / set_index/pivot</span>
+<span style="color: #008000"># 5 聚合:groupby+agg / value_counts / pivot_table</span>
+<span style="color: #008000"># 6 展示:result.plot() / describe / to_csv</span>
+</pre>
+<p>以后拿到任何数据,都按这 6 步走;前面 7 课就是给这 6 步加料的。你现在已经具备完整的数据分析工作流。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">多张表按共同键拼字段用?</p>
+  <button class="opt" data-ok="false">concat(axis=0)</button>
+  <button class="opt" data-ok="true">merge / join</button>
+  <button class="opt" data-ok="false">stack</button>
+  <button class="opt" data-ok="false">cut</button>
+  <p class="reveal">merge/join 按共同键拼列(如 movie 的 title);concat(axis=0) 是堆行。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">一年一个文件拼成一张长表?</p>
+  <button class="opt" data-ok="false">merge 多表</button>
+  <button class="opt" data-ok="true">循环+concat(axis=0)</button>
+  <button class="opt" data-ok="false">pivot_table</button>
+  <button class="opt" data-ok="false">fillna</button>
+  <p class="reveal">结构相同的文件用循环 concat 堆成一张表再统一分析。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">按年×性别 聚合成一张宽表用?</p>
+  <button class="opt" data-ok="false">merge</button>
+  <button class="opt" data-ok="true">pivot_table</button>
+  <button class="opt" data-ok="false">cut</button>
+  <button class="opt" data-ok="false">shift</button>
+  <p class="reveal">pivot_table(index=年, columns=性别, aggfunc=sum) 转宽表便于画图。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">排行榜:每部电影平均分排序用?</p>
+  <button class="opt" data-ok="false">fillna</button>
+  <button class="opt" data-ok="true">groupby+mean→sort_values</button>
+  <button class="opt" data-ok="false">qcut+n</button>
+  <button class="opt" data-ok="false">pd.crosstab</button>
+  <p class="reveal">groupby("title")["rating"].mean() 再 sort_values(升/降)就是排行榜。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pandas/0008_实战数据集案例.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A(14.1)</strong>:模拟 usa_gov 数据,做时区 value_counts + 每天热度</li>
+  <li><strong>练习 B(14.2)</strong>:用 MovieLens 结构造两表,merge 后 groupby 平均分、找 Top5 又多人又高分</li>
+  <li><strong>练习 C(14.3)</strong>:用 3 个假年份文件循环 concat、pivot_table 按年×性别,画一条婴儿数增长曲线</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>书 <a href="https://github.com/BrambleXu/pydata-notebook">第14章 三个小节</a>：这是全书综合实战,建议把这三个案例完整跑一遍,对照书里的输出。</p>
+</blockquote>
+
+<h2>完工了</h2>
+<p>8 课完成,你拥有了完整 pandas 工作流:数据结构 → 基础功能 → 载入 → 清洗 → 合并重塑 → 分组聚合 → 时间/类别 → 实战。**小提醒:仓库缺的第 6/8/10 章我已在 0003/0005/0006 补齐;作图(matplotlib)和建模(sklearn)若深入,可以另开分线。** 有不懂的随时回来拆任何一部分。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0007-时间序列与类别数据.html">← 上一篇:时间序列与类别数据</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">下一篇:课程地图(收尾) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

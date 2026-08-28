@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numpy 0002 · 索引、切片与形状</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>索引、切片与形状</h1>
+<p class="meta">Numpy 专题 · 课程 0002 · 预计 25 分钟 · 配套 100 题 15、16、19~22、24、25、35</p>
+
+<p>上一课会创建数组了。这一课是 numpy 的"手指":<strong>索引</strong>(取某个元素/一块)、<strong>切片</strong>(取一段)、<strong>形状操作</strong>(reshape/转置/拼接),以及<strong>in-place 修改</strong>。习题 15/16/19/21/35/25 都在这。</p>
+
+<h2>知识点 1:基本索引与切片——含省略号和负号</h2>
+<p>和 list 切片很像,但维度更多(下标用 <code>[a, b]</code> 而不是 <code>[a][b]</code>):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">numpy</span><span style="color: #000"> </span><span style="color: #00F">as</span><span style="color: #000"> </span><span style="color: #001080">np</span>
+<span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">)</span>            <span style="color: #008000"># [0..9]</span>
+<span style="color: #001080">A</span><span style="color: #000">[</span><span style="color: #098658">4</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #098658">1</span>                     <span style="color: #008000"># 题6:第5个元素变1</span>
+<span style="color: #001080">A</span><span style="color: #000">[::-</span><span style="color: #098658">1</span><span style="color: #000">]</span>                      <span style="color: #008000"># 题8:反转 → [9..0]</span>
+<span style="color: #001080">A</span><span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">:</span><span style="color: #098658">8</span><span style="color: #000">]</span>                       <span style="color: #008000"># [3,4,5,6,7] (半开)</span>
+
+<span style="color: #001080">B</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">16</span><span style="color: #000">).</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">)</span>
+<span style="color: #001080">B</span><span style="color: #000">[</span><span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">]</span>        <span style="color: #008000"># 第0行第0列</span>
+<span style="color: #001080">B</span><span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">:</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">:</span><span style="color: #098658">3</span><span style="color: #000">]</span>    <span style="color: #008000"># 第1、2行的第1、2列 → 2x2 子块</span>
+<span style="color: #001080">B</span><span style="color: #000">[:,</span> <span style="color: #000">-</span><span style="color: #098658">1</span><span style="color: #000">]</span>       <span style="color: #008000"># 所有行的最后一列</span>
+</pre>
+<p>关键:<code>arr[i, j]</code> 是二维下标;<code>arr[i][j]</code> 也能用但慢。题8反转用 <code>Z[::-1]</code>。</p>
+
+<h2>知识点 2:边界与填充——题 15、16(pad)</h2>
+<p>题15:造一个 10x10,四周是 1、中间是 0。先 all 1,再挖空中间:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">ones</span><span style="color: #000">((</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #098658">10</span><span style="color: #000">))</span>          <span style="color: #008000"># 全 1</span>
+<span style="color: #001080">Z</span><span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">:-</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">:-</span><span style="color: #098658">1</span><span style="color: #000">]</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>              <span style="color: #008000"># 中间挖空为 0</span>
+<span style="color: #008000"># 结果:边框=1, 内部=0</span>
+</pre>
+<p>题16:给已有数组"加一圈 0 边框",用 <code>np.pad</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">ones</span><span style="color: #000">((</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">))</span>
+<span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">pad</span><span style="color: #000">(</span><span style="color: #001080">Z</span><span style="color: #000">,</span> <span style="color: #001080">pad_width</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #001080">mode</span><span style="color: #000">=</span><span style="color: #A31515">&quot;constant&quot;</span><span style="color: #000">,</span> <span style="color: #001080">constant_values</span><span style="color: #000">=</span><span style="color: #098658">0</span><span style="color: #000">)</span>
+<span style="color: #008000"># 变成 7x7,外圈是 0(可控制每边宽度/填充值)</span>
+</pre>
+<p><code>pad_width=1</code> 四边各加一圈; <code>constant_values=0</code> 填 0。这是题16的标准解。</p>
+
+<h2>知识点 3:形状操作——reshape / transpose / flatten</h2>
+<p>形状不代表数据变,只是"怎么看"。</p>
+<pre lang="python" class="highlight"><span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">9</span><span style="color: #000">).</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">)</span>     <span style="color: #008000"># 题9:0~8 排成 3x3</span>
+<span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">16</span><span style="color: #000">).</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">)</span>
+<span style="color: #001080">A</span><span style="color: #000">.</span><span style="color: #001080">T</span>                       <span style="color: #008000"># 转置(4x4→4x4)</span>
+<span style="color: #001080">A</span><span style="color: #000">.</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">)</span>           <span style="color: #008000"># 变形(不复制,同内存)</span>
+<span style="color: #001080">A</span><span style="color: #000">.</span><span style="color: #001080">flatten</span><span style="color: #000">()</span>               <span style="color: #008000"># 展平成 1 维(复制)</span>
+<span style="color: #001080">A</span><span style="color: #000">.</span><span style="color: #001080">ravel</span><span style="color: #000">()</span>                 <span style="color: #008000"># 展平(尽量不复制,推荐)</span>
+</pre>
+<p>题21 用 <code>np.tile</code> 拼棋盘:<code>np.tile(np.array([[0,1],[1,0]]), (4,4))</code>(tile=重复铺瓷砖)。题19 是手工切片 1::2 / ::1 交替填。</p>
+
+<h2>知识点 4:矩乘与矩阵运算——题 24</h2>
+<p>矩阵乘法用 <code>@</code> 或 <code>np.dot</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">15</span><span style="color: #000">).</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">)</span>      <span style="color: #008000"># 5x3</span>
+<span style="color: #001080">B</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">6</span><span style="color: #000">).</span><span style="color: #001080">reshape</span><span style="color: #000">(</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">)</span>       <span style="color: #008000"># 3x2</span>
+<span style="color: #001080">C</span> <span style="color: #000">=</span> <span style="color: #001080">A</span> <span style="color: #000">@</span> <span style="color: #001080">B</span>                            <span style="color: #008000"># 5x2:真正矩阵乘</span>
+<span style="color: #008000"># 或 np.dot(A, B)</span>
+<span style="color: #008000"># 千万别用 A * B(那是逐元素乘,要求形状一致)</span>
+</pre>
+<p><code>@</code> 是矩阵乘; <code>*</code> 是逐元素乘。题24 用 <code>np.dot(A, B)</code> 或 <code>A @ B</code>。</p>
+
+<h2>知识点 5:in-place 修改——切片赋值 & 布尔掩码(题 25、35)</h2>
+<p>想"就地改数组的满足条件的元素",用布尔掩码:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">Z</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">11</span><span style="color: #000">)</span>
+<span style="color: #001080">Z</span><span style="color: #000">[(</span><span style="color: #001080">Z</span> <span style="color: #000">&gt;</span> <span style="color: #098658">3</span><span style="color: #000">)</span> <span style="color: #000">&amp;</span> <span style="color: #000">(</span><span style="color: #001080">Z</span> <span style="color: #000">&lt;=</span> <span style="color: #098658">8</span><span style="color: #000">)]</span> <span style="color: #000">*=</span> <span style="color: #000">-</span><span style="color: #098658">1</span>       <span style="color: #008000"># 题25:3&lt;x&lt;=8 的取负(就地)</span>
+<span style="color: #008000"># &amp; 是逻辑与;别写 and(会报错)</span>
+</pre>
+<p>题35 要求"不复制地算 ((A+B)*(-A/2))",用 ufunc 的 <code>out=</code> 参数原地算:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">A</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #001080">dtype</span><span style="color: #000">=</span><span style="color: #0070C1">float</span><span style="color: #000">)</span>
+<span style="color: #001080">B</span> <span style="color: #000">=</span> <span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">arange</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #001080">dtype</span><span style="color: #000">=</span><span style="color: #0070C1">float</span><span style="color: #000">)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">add</span><span style="color: #000">(</span><span style="color: #001080">A</span><span style="color: #000">,</span> <span style="color: #001080">B</span><span style="color: #000">,</span> <span style="color: #001080">out</span><span style="color: #000">=</span><span style="color: #001080">B</span><span style="color: #000">)</span>      <span style="color: #008000"># B = A+B (原地)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">divide</span><span style="color: #000">(</span><span style="color: #001080">A</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #001080">out</span><span style="color: #000">=</span><span style="color: #001080">A</span><span style="color: #000">)</span>   <span style="color: #008000"># A = A/2 (原地)</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">multiply</span><span style="color: #000">(</span><span style="color: #001080">A</span><span style="color: #000">,</span> <span style="color: #001080">B</span><span style="color: #000">,</span> <span style="color: #001080">out</span><span style="color: #000">=</span><span style="color: #001080">A</span><span style="color: #000">)</span> <span style="color: #008000"># A = (A/2)*(A+B) 原地</span>
+<span style="color: #001080">np</span><span style="color: #000">.</span><span style="color: #001080">negative</span><span style="color: #000">(</span><span style="color: #001080">A</span><span style="color: #000">,</span> <span style="color: #001080">out</span><span style="color: #000">=</span><span style="color: #001080">A</span><span style="color: #000">)</span>    <span style="color: #008000"># A = -(...) 原地</span>
+</pre>
+<p><code>ufunc(x, out=target)</code> 把结果写进 target 而不新造数组,就是"in place、无复制"的关键(下一课正式讲 ufunc)。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">取 4x4 数组所有行的最后一列?</p>
+  <button class="opt" data-ok="false">arr[:,-1:]</button>
+  <button class="opt" data-ok="true">arr[:, -1]</button>
+  <button class="opt" data-ok="false">arr[-1]</button>
+  <button class="opt" data-ok="false">arr[::,3:]</button>
+  <p class="reveal">arr[:, -1]:所有行的最后一列(得到1维)。arr[:,-1:] 是保留维度的列。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">给数组四周加0 border 用什么?</p>
+  <button class="opt" data-ok="false">reshape</button>
+  <button class="opt" data-ok="true">np.pad</button>
+  <button class="opt" data-ok="false">np.tile</button>
+  <button class="opt" data-ok="false">np.dot</button>
+  <p class="reveal">np.pad 四边加边框(mode/constant_values 控制)。题16。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">两个矩阵真正相乘用?</p>
+  <button class="opt" data-ok="false">A * B</button>
+  <button class="opt" data-ok="true">A @ B</button>
+  <button class="opt" data-ok="false">np.multiply(A,B)</button>
+  <button class="opt" data-ok="false">A + B</button>
+  <p class="reveal">@ 或 np.dot 是矩阵乘;* 和 np.multiply 是逐元素乘。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">就地改 3&lt;x≤8 的元素为负?</p>
+  <button class="opt" data-ok="false">if x>3 and x&lt;=8</button>
+  <button class="opt" data-ok="true">Z[(Z>3)&amp;(Z&lt;=8)] *= -1</button>
+  <button class="opt" data-ok="false">Z[3:9] *= -1</button>
+  <button class="opt" data-ok="false">np.negate(Z)</button>
+  <p class="reveal">布尔掩码 + &amp; 组合条件,整体赋值。题25。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/numpy/0002_索引切片与形状.ipynb</code>:</p>
+<ul>
+  <li><strong>题 15、16、19~22、24、25、35</strong>:numpy-100 原题,先自己写再核对</li>
+  <li><strong>额外</strong>:试着用 reshape 把 9 个数变成 3x3;用 tile 铺一个 4x4 棋盘</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>numpy 官方 <a href="https://numpy.org/doc/stable/user/basics.indexing.html">Indexing basics</a> 与 <a href="https://numpy.org/doc/stable/reference/routines.array-manipulation.html#routines-array-manipulation">Array manipulation</a>。今天只需 reshape/transpose/pad/tile/dot。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:切片赋值和 pad 顺手吗?下一课是 numpy 的"发动机"——<strong>运算、广播与通用函数 ufunc</strong>(题 18、23、26~34、38~42)。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0001-创建数组与基础.html">← 上一篇:创建数组与基础</a>
+  <a href="index.html">课程地图</a>
+  <a href="0003-运算广播与ufunc.html">下一篇:运算、广播与通用函数 ufunc →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

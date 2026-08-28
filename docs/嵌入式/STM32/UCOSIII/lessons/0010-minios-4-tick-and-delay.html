@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 10 课：MiniOS④：时基与任务延时 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 10 课</nav>
+
+<h1>第 10 课：MiniOS④：时基与任务延时</h1>
+<p class="subtitle">给内核装上一颗"心脏"（SysTick 时基），让任务学会"睡觉"——MiniOS 实现第 4 步</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>前几课 MiniOS 已经有了 TCB、位图就绪表、上下文切换和调度器，但任务只会"抢 CPU"，不会"让 CPU"。本课给它补上时基：SysTick 中断驱动 tick 处理，实现延时 API，让任务能按节拍"睡一觉"再醒来。学完你能说清 µC/OS-III 的 OSTimeTick/OSTimeDly 是怎么工作的，并在 MiniOS 里亲手实现一遍。</p>
+</div>
+
+<h2>1. 时基来源：SysTick 就是 RTOS 的心跳</h2>
+
+<p>任何操作系统都需要一个"心跳"——固定的时间脉冲，内核靠它感知时间的流逝。µC/OS-III 用一个全局计数器 <code>OSTickCtr</code> 记录系统启动以来跳了多少次（os.h 中定义，本质就是一个 32 位无符号整数，PDF 10.1.1 节 <span class="pg">PDF p.175</span>）。每跳一次加 1，延时、超时、时间片轮转全建立在它上面。</p>
+
+<p>这个脉冲从哪来？最优解就是 <strong>SysTick（滴答定时器）</strong>——它就是为操作系统提供心跳而设计的（PDF 10.1.2 节 <span class="pg">PDF p.175</span>）。µC/OS-III 里由 <code>OS_CPU_SysTickInit(cnts)</code> 配置：</p>
+
+<ul>
+<li><strong>重装载值</strong>：<code>cnts = HAL_RCC_GetSysClockFreq() / OSCfg_TickRate_Hz</code>。你的 F407 主频 168MHz，教材默认节拍率 <code>OS_CFG_TICK_RATE_HZ = 1000</code>，所以 <code>cnts = 168000</code>，1 个 tick = 1ms。</li>
+<li><strong>时钟源</strong>：强制 SysTick 与 CPU 内核同频（不像 F1 系列是 1/8，F407 这里直接用内核频率）。</li>
+<li><strong>中断使能</strong>：SysTick 溢出就进 <code>SysTick_Handler()</code>。</li>
+</ul>
+
+<p>教材里的中断入口长这样（PDF 10.1.3 节 <span class="pg">PDF p.177</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材：SysTick_Handler 里判断内核是否已运行 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">SysTick_Handler</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#0000FF">if</span> (OSRunning == OS_STATE_OS_RUNNING)   <span style="color:#008000">/* OS 跑起来才处理节拍事务 */</span>
+    {
+        OS_CPU_SysTickHandler();            <span style="color:#008000">/* 内部：OSIntEnter() → OSTimeTick() → OSIntExit() */</span>
+    }
+    HAL_IncTick();                          <span style="color:#008000">/* HAL 库的毫秒计数，别删 */</span>
+}</pre>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS 课第 14 课：FreeRTOS 用 <code>configTICK_RATE_HZ = 1000</code> 和 <code>xTickCount</code>，进入 <code>xPortSysTickHandler() → xTaskIncrementTick()</code>。两者的结构惊人相似——时基的架构几乎是所有 RTOS 的公共知识，只是名字不同。</p>
+</div>
+
+<h2>2. OSTimeTick 等价物：tick 中断里干什么</h2>
+
+<p>µC/OS-III 里 <code>OSTimeTick()</code> 主要干两件事（PDF 10.1.3 节 <span class="pg">PDF p.177~180</span>）：</p>
+
+<ol>
+<li><strong>更新节拍计数器</strong>：<code>OSTickCtr += 1</code>（由 <code>OS_TickUpdate()</code> 完成）。</li>
+<li><strong>处理 Tick 任务链表</strong>：<code>OS_TickListUpdate()</code> 遍历"因延时或等待事件而挂起"的任务，谁的超时时间到了，谁就从 Tick 链表挪回就绪态任务链表（PDF 10.1.3 节 <span class="pg">PDF p.181~185</span>）。</li>
+</ol>
+
+<p>注意一个精妙的细节：µC/OS-III 的 Tick 链表<strong>按剩余挂起时间升序排列</strong>，每个任务 TCB 里存 <code>TickRemain</code>（相对剩余节拍数）。tick 处理时先看链表头的任务：如果头任务都没到期，后面更不会到期，直接结束——这就是 O(1) 的到期判断。</p>
+
+<div class="warn">
+  <p>⚠️ 教材的 <code>OS_TickListUpdate()</code> 源码里还有互斥量优先级继承、消息清空等一大坨代码（PDF p.183~185），那是给完整内核用的。MiniOS 阶段先砍掉，只保留核心骨架：到期→回就绪表。等第 14 课学互斥量再回头看这段，你会豁然开朗。</p>
+</div>
+
+<h2>3. 延时实现：OSTimeDly 的三步曲</h2>
+
+<p><code>OSTimeDly(dly, opt, p_err)</code> 以系统时钟节拍为单位延时（PDF 10.2 节 <span class="pg">PDF p.186</span>）。函数本体很短，因为它只是"搬家"：</p>
+
+<ol>
+<li><strong>加入 Tick 任务链表</strong>：<code>OS_TickListInsertDly()</code>，把当前任务挂进延时链表并记下超时时间。</li>
+<li><strong>移出就绪表</strong>：<code>OS_RdyListRemove()</code>，任务不再参与调度。</li>
+<li><strong>触发调度</strong>：<code>OSSched()</code>，让出 CPU——从此任务进入"睡眠"，直到 tick 把它叫醒。</li>
+</ol>
+
+<p>错误检查也是内核该有的样子：<code>OS_ERR_TIME_DLY_ISR</code>（中断里不能延时）、<code>OS_ERR_SCHED_LOCKED</code>（调度器锁着不能延时）、<code>OS_ERR_TIME_ZERO_DLY</code>（延时 0 无意义）。这些"护栏"是专业内核和玩具内核的分水岭，MiniOS 至少留一个调度器锁定检查。</p>
+
+<h2>4. 延时任务怎么组织：计数版 vs 排序链表版</h2>
+
+<p>这是本课最有嚼头的设计决策，两种方案都讲：</p>
+
+<table>
+<tr><th>方案</th><th>做法</th><th>每个 tick 的开销</th><th>评价</th></tr>
+<tr><td><strong>简单计数版</strong></td><td>每个 TCB 一个 <code>DelayCtr</code>，tick 里<strong>遍历所有任务</strong>，逐个减 1</td><td>O(n)，n = 任务总数</td><td>代码最少，但任务多了浪费；且"每 tick 全表扫描"随着任务数线性恶化</td></tr>
+<tr><td><strong>排序链表版</strong> ⭐</td><td>延时任务按剩余节拍升序挂链表，tick 里<strong>只看链表头</strong>，头不到期就收工</td><td>O(1) 判断 + 偶尔 O(k) 唤醒</td><td>µC/OS-III（TickRemain）和 FreeRTOS（按唤醒时刻排序）都是这个思路，只是细节不同</td></tr>
+</table>
+
+<p>两者正确性都成立，但排序链表版的复杂度不随任务数增长，是"职业选手"的选择。本课交付代码用链表版。</p>
+
+<p>顺带一提排序链表里"相对剩余时间"的妙处：插入时只要保证链表升序，tick 时只对头节点减 1，其余节点的相对顺序天然不变——不需要遍历改所有人的剩余时间。µC/OS-III 的 <code>TickRemain</code> 就是这么玩的。</p>
+
+<h2>5. 与 FreeRTOS vTaskDelay 对照</h2>
+
+<p>FreeRTOS 的 <code>vTaskDelay()</code>（第 14 课讲过）和 µC/OS-III 的 <code>OSTimeDly()</code> 是同一件事的两种记账方式：</p>
+
+<table>
+<tr><th>维度</th><th>FreeRTOS vTaskDelay</th><th>µC/OS-III OSTimeDly</th></tr>
+<tr><td>记账方式</td><td><strong>绝对唤醒时刻</strong>：<code>xTimeToWake = xTickCount + xTicksToDelay</code>，阻塞列表按唤醒时刻排序</td><td><strong>相对剩余节拍</strong>：TCB 里存 <code>TickRemain</code>，链表升序，tick 时头节点递减</td></tr>
+<tr><td>tick 溢出处理</td><td>唤醒时刻溢出用<strong>双阻塞列表</strong>切换</td><td>相对时间天然不怕溢出（差值永不变）</td></tr>
+<tr><td>到期加速</td><td><code>xNextTaskUnblockTime</code> 缓存最早唤醒时刻</td><td>链表头就是最早到期者，天然 O(1)</td></tr>
+<tr><td>延时 0</td><td>不阻塞，只让出一次 CPU</td><td>报 <code>OS_ERR_TIME_ZERO_DLY</code> 错误</td></tr>
+</table>
+
+<p>两种记账方式殊途同归，都做到了"tick 里只处理头部"的高效。MiniOS 用 µC/OS-III 的相对节拍流派，代码更少、更好懂。</p>
+
+<h2>6. 本课交付：让任务能"睡觉"</h2>
+
+<p>给 MiniOS 加三样东西，任务从此学会睡眠：</p>
+
+<ol>
+<li><strong>时基初始化</strong>：<code>MiniTickInit()</code> 配置 SysTick（重装载值 + 使能中断）。</li>
+<li><strong>tick 处理</strong>：<code>SysTick_Handler → MiniTickUpdate()</code>，更新计数器 + 处理延时链表。</li>
+<li><strong>延时 API</strong>：<code>MiniTimeDly(ticks)</code>，三步曲搬家 + 触发调度。</li>
+</ol>
+
+<h2>核心代码：延时链表版实现</h2>
+
+<p>下面两段代码就是本课的交付物，直接落进 MiniOS 分支的 <code>MiniOS/</code> 目录。命名延续前几课（<code>rdy_insert/rdy_remove</code> 是第 8 课就绪表、<code>MiniSched</code> 是第 9 课调度器、<code>MiniTCB</code> 是第 7 课任务控制块），跟你自己实现里的名字对不上就替换成你自己的。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS/os_tick.c：tick 中断处理（对应 UCOS 的 OSTimeTick + OS_TickListUpdate） ========== */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;minios.h&quot;</span></span>
+
+<span style="color:#0000FF">volatile</span> <span style="color:#267F99">uint32_t</span> g_tick_ctr;        <span style="color:#008000">/* 系统节拍计数器，对应 UCOS 的 OSTickCtr */</span>
+MiniTCB *g_dly_head;                 <span style="color:#008000">/* 延时链表头，按剩余节拍升序排列 */</span>
+
+<span style="color:#008000">/* SysTick 中断入口：在中断向量里指向这里，或包一层 SysTick_Handler */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">SysTick_Handler</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    HAL_IncTick();                   <span style="color:#008000">/* HAL 库毫秒计数，别删 */</span>
+    MiniTickUpdate();
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniTickUpdate</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    g_tick_ctr++;                    <span style="color:#008000">/* 1. 更新节拍计数器 */</span>
+
+    <span style="color:#008000">/* 2. 处理延时链表：只关心链表头，头没到期后面更不会到期 */</span>
+    <span style="color:#0000FF">while</span> (g_dly_head != <span style="color:#098658">NULL</span>)
+    {
+        MiniTCB *tcb = g_dly_head;
+
+        <span style="color:#0000FF">if</span> (tcb-&gt;dly_remain &gt; <span style="color:#098658">0</span>)     <span style="color:#008000">/* 头任务还有剩余节拍 */</span>
+        {
+            tcb-&gt;dly_remain--;       <span style="color:#008000">/* 只减头，其余节点相对顺序不变 */</span>
+            <span style="color:#0000FF">break</span>;                   <span style="color:#008000">/* 收工，本 tick 到此为止 */</span>
+        }
+
+        <span style="color:#008000">/* 到期：从延时链表摘下，回就绪表 */</span>
+        dly_remove(tcb);
+        rdy_insert(tcb);             <span style="color:#008000">/* 第 8 课的位图就绪表插入 */</span>
+        tcb-&gt;state = TASK_RDY;
+    }
+}</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== MiniOS/os_time.c：任务延时（对应 UCOS 的 OSTimeDly） ========== */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniTimeDly</span><span style="color:#001080">(<span style="color:#267F99">uint32_t</span> ticks)</span>
+{
+    MiniTCB *cur = g_cur_tcb;        <span style="color:#008000">/* 当前任务（第 9 课调度器的全局量） */</span>
+
+    <span style="color:#0000FF">if</span> (ticks == <span style="color:#098658">0</span>)                  <span style="color:#008000">/* 延时 0 无意义，UCOS 报错；这里退化为让出 CPU */</span>
+    {
+        MiniSched();
+        <span style="color:#0000FF">return</span>;
+    }
+
+    cur-&gt;dly_remain = ticks;
+    cur-&gt;state = TASK_DLY;
+
+    rdy_remove(cur);                 <span style="color:#008000">/* 1. 从就绪表（位图）移除 */</span>
+    dly_insert_sorted(cur);          <span style="color:#008000">/* 2. 按剩余节拍升序插入延时链表 */</span>
+    MiniSched();                     <span style="color:#008000">/* 3. 触发调度，交出 CPU，任务开始&quot;睡觉&quot; */</span>
+}
+
+<span style="color:#008000">/* 按剩余节拍升序插入：tick 处理时才能&quot;只看头节点&quot; */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">dly_insert_sorted</span><span style="color:#001080">(MiniTCB *tcb)</span>
+{
+    MiniTCB **pp = &amp;g_dly_head;
+    <span style="color:#0000FF">while</span> (*pp != <span style="color:#098658">NULL</span> &amp;&amp; (*pp)-&gt;dly_remain &lt;= tcb-&gt;dly_remain)
+    {
+        pp = &amp;(*pp)-&gt;dly_next;
+    }
+    tcb-&gt;dly_next = *pp;
+    *pp = tcb;
+}</pre>
+
+<p>对比一下"简单计数版"长什么样——你就明白为什么推荐链表版：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ========== 简单计数版（仅示意，不推荐用于交付） ========== */</span>
+<span style="color:#008000">/* 每个 TCB 多一个 DelayCtr 字段，g_task_list 是所有任务的数组 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">MiniTickUpdate_counting</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    g_tick_ctr++;
+    <span style="color:#0000FF">for</span> (<span style="color:#267F99">int</span> i = <span style="color:#098658">0</span>; i &lt; g_task_cnt; i++)        <span style="color:#008000">/* 每个 tick 都遍历所有任务 */</span>
+    {
+        <span style="color:#0000FF">if</span> (g_task_list[i].state == TASK_DLY &amp;&amp; g_task_list[i].DelayCtr &gt; <span style="color:#098658">0</span>)
+        {
+            <span style="color:#0000FF">if</span> (--g_task_list[i].DelayCtr == <span style="color:#098658">0</span>) <span style="color:#008000">/* 到期回就绪表 */</span>
+            {
+                rdy_insert(&amp;g_task_list[i]);
+                g_task_list[i].state = TASK_RDY;
+            }
+        }
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 调试技巧：把 <code>g_tick_ctr</code> 和任务状态打印到串口，肉眼确认"两个任务 1s 交替一次"的节拍。MiniOS 没有调试器依赖，串口 printf 就是你的逻辑分析仪。</p>
+</div>
+
+<h2>动手练习（约 40~60 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1：给 MiniOS 加延时，验证双任务交替</h3>
+  <p class="step">1️⃣ 在 MiniOS 分支新建 <code>MiniOS/os_tick.c</code> 和 <code>MiniOS/os_time.c</code>，把上面的核心代码落进去（函数名可换成你自己的）。</p>
+  <p class="step">2️⃣ 在 <code>MiniInit()</code> 里调用 <code>MiniTickInit()</code>：配置 SysTick 重装载值为 <code>168000</code>（168MHz / 1000Hz），使能 SysTick 中断（记得把 SysTick 优先级设为内核管理范围内的最低优先级，对应第 5 课临界区知识）。</p>
+  <p class="step">3️⃣ 写两个任务：task1 每 500ms 翻转 LED0，task2 每 1000ms 翻转 LED1。验收标准：LED0 闪速是 LED1 的两倍，串口打印两条独立计数。</p>
+  <p class="step">4️⃣ 思考：把两个任务延时都改成 1000ms 且优先级相同，观察现象；再把 task1 优先级调高，看执行顺序怎么变。写 3 行观察笔记。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2：链路验证——从延时到唤醒</h3>
+  <p class="step">1️⃣ 在 <code>MiniTickUpdate()</code> 里加一个调试钩子：当有任务被唤醒回就绪表时，打印 <code>tcb->name</code> 和当前 <code>g_tick_ctr</code>。</p>
+  <p class="step">2️⃣ 验证时序：task1 延时 500 ticks，观察唤醒时 <code>g_tick_ctr</code> 的差值是否正好 500（允许 ±1 tick 的边界误差）。</p>
+  <p class="step">3️⃣ 进阶挑战：实现 <code>MiniTimeDlyHMSM</code>（把时分秒毫秒换算成 ticks 再调 <code>MiniTimeDly</code>），对应教材 <code>OSTimeDlyHMSM()</code>（PDF 10.2 节 <span class="pg">PDF p.190</span>）。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. µC/OS-III 的 SysTick 重装载值由什么决定？</p>
+  <p class="opt">A. CPU 主频除以节拍频率</p>
+  <p class="opt">B. 固定为 1000</p>
+  <p class="opt">C. 由用户随便指定</p>
+  <details><summary>查看答案</summary><div class="answer">A。cnts = 主频 / OSCfg_TickRate_Hz，F407 是 168MHz/1000 = 168000（PDF p.175~176）。</div></details>
+
+  <p class="q">Q2. 排序链表版延时方案里，每个 tick 需要处理多少个延时任务？</p>
+  <p class="opt">A. 所有延时任务</p>
+  <p class="opt">B. 只有链表头任务</p>
+  <p class="opt">C. 随机一个任务</p>
+  <details><summary>查看答案</summary><div class="answer">B。链表按剩余节拍升序，头任务没到期后面更不会到期，O(1) 判断（PDF p.182 的 OS_TickListUpdate 思路）。</div></details>
+
+  <p class="q">Q3. OSTimeDly 把任务从就绪表移除后，还需要做什么才能让出 CPU？</p>
+  <p class="opt">A. 什么都不用做</p>
+  <p class="opt">B. 主动触发一次调度</p>
+  <p class="opt">C. 关中断等节拍</p>
+  <details><summary>查看答案</summary><div class="answer">B。OS_TickListInsertDly → OS_RdyListRemove → OSSched()，三步曲最后必须触发调度，CPU 才会交给别的任务（PDF p.189）。</div></details>
+
+  <p class="q">Q4. 相对剩余节拍记账法相比"绝对唤醒时刻"记账法的一个天然优势是？</p>
+  <p class="opt">A. 不需要处理 tick 计数溢出</p>
+  <p class="opt">B. 内存占用少一半</p>
+  <p class="opt">C. 精度更高</p>
+  <details><summary>查看答案</summary><div class="answer">A。差值记账不依赖计数器绝对值，天然不怕溢出；FreeRTOS 才需要双阻塞列表处理唤醒时刻溢出。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 10 章（PDF p.175~193）——系统时钟节拍 + 任务延时全部依据</li>
+<li>🔁 对照：FreeRTOS 课程 <a href="../../FreeRTOS/lessons/0014-time-management.html">第 14 课：时间管理</a>——vTaskDelay 相对延时与绝对延时的对照基准</li>
+<li>📕 内核结构参考：µC/OS-III 源码 <code>os_time.c / os_tick.c</code>（你的分支工程里）——对照 <code>OSTimeDly()</code> 与 <code>OS_TickListUpdate()</code> 的真实实现</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 11 课——MiniOS⑤：信号量。任务会睡觉了，但任务之间怎么互相"打招呼"？用同步原语。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0009-minios-3-scheduler.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0011-minios-5-sync-primitives.html">下一课：MiniOS⑤：同步原语 →</a>
+</nav>
+
+</div>
+</body>
+</html>

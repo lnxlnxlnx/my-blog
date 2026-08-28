@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 16 课：空闲任务与低功耗 Tickless — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 16 课</nav>
+
+<h1>第 16 课：空闲任务与低功耗 Tickless</h1>
+<p class="subtitle">谁在 CPU 闲时兜底？空闲钩子怎么写？Tickless 模式怎么让系统"睡个好觉"？</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>看清系统里那个"最闲的人"——空闲任务：它由谁创建、优先级多低、替我们干了什么。掌握空闲任务钩子函数的写法与红线（不能阻塞），再上台阶理解 FreeRTOS 低功耗 Tickless 模式的原理与配置。学完你能给工程加"省电模式"，并用电流档验证效果。</p>
+</div>
+
+<h2>1. 空闲任务详解：系统的"兜底者"</h2>
+
+<p>你从来没有创建过它，但它永远存在。调度器启动函数 <code>vTaskStartScheduler()</code> 在正式跑任务前，会<strong>自动创建一个空闲任务</strong>，名字是 <code>configIDLE_TASK_NAME</code>（默认 "IDLE"），栈大小 <code>configMINIMAL_STACK_SIZE</code>，优先级 <code>portPRIVILEGE_BIT</code>——展开就是 <strong>0，系统中最低的优先级</strong>，而且这个优先级不允许用户修改（PDF 19.1.2 节 <span class="pg">PDF p.403</span>）。</p>
+
+<p>为什么必须有它？因为 <strong>系统要保证任何时刻都至少有一个任务可运行</strong>。所有任务都阻塞/挂起时，CPU 就交给空闲任务，它主要干两件事（PDF 19.1.1 节 <span class="pg">PDF p.403</span>）：</p>
+
+<ul>
+<li><strong>回收被删除任务的内存</strong>：如果一个任务调用 <code>vTaskDelete(NULL)</code> 删除<strong>自己</strong>，删除工作没法在自身栈上完成（栈都要还回去了），这项收尾就交给空闲任务在下个周期处理。所以——删自己之后，务必保证空闲任务能分到运行时间，否则内存永远收不回来。</li>
+<li><strong>进入低功耗</strong>：既然没有正经事干，不如让 CPU 睡觉（见第 4 节 Tickless）。</li>
+</ul>
+
+<h2>2. 空闲任务钩子函数：给"闲时"挂个回调</h2>
+
+<p>FreeRTOS 提供多种钩子函数（hook），系统运行到特定位置会自动调用你写的钩子。空闲钩子的开关是 <code>configUSE_IDLE_HOOK</code>，置 1 后，空闲任务<strong>每个运行周期</strong>都会调用一次 <code>vApplicationIdleHook()</code>，由你实现（PDF 19.2 节 <span class="pg">PDF p.405</span>）。</p>
+
+<p>钩子函数有三条铁律：</p>
+
+<ul>
+<li><strong>绝对不能阻塞</strong>：不能调用 <code>vTaskDelay()</code>、不能在队列/信号量上等待。空闲任务一阻塞，系统就没有可运行任务了，调度器直接慌掉。教材原话：无论在什么时候，系统都应该保证有一个正在被执行的任务。</li>
+<li><strong>尽量短小</strong>：它抢占的是"空闲时间"，干太久等于偷走别的任务的运行机会（虽然优先级最低，但会在调度点被打断）。</li>
+<li>如果想在空闲优先级干更重的活，正路是<strong>创建一个同为优先级 0 的任务</strong>，而不是把钩子写胖（代价是多耗一份 RAM）。</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 空闲钩子骨架：只做极轻量的统计工作 */</span>
+<span style="color:#0000FF">volatile</span> <span style="color:#267F99">uint32_t</span> idle_enter_count = <span style="color:#098658">0</span>;   <span style="color:#008000">/* 空闲进入次数（全局，供其他任务查看） */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">vApplicationIdleHook</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    idle_enter_count++;                   <span style="color:#008000">/* 每进一次空闲任务计数一次 */</span>
+    <span style="color:#008000">/* 注意：这里绝对不能调用 vTaskDelay() 等会阻塞的函数 */</span>
+}</pre>
+
+<h2>3. 空闲钩子实验：通用低功耗模式</h2>
+
+<p>教材实验 19 展示了空闲钩子的经典用途——<strong>通用低功耗模式</strong>：只要进入空闲任务，就让 CPU 睡一觉（<code>__wfi()</code>），醒来继续。睡眠前后还可以用钩子关掉/打开外设时钟进一步省电（PDF 19.3 节 <span class="pg">PDF p.407</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材实验 19：在空闲钩子里进睡眠（通用低功耗，所有 RTOS 通用） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">BeforeEnterSleep</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 关闭部分外设时钟，仅作演示，按你的工程实际裁剪 */</span>
+    __HAL_RCC_GPIOA_CLK_DISABLE();
+    __HAL_RCC_GPIOB_CLK_DISABLE();
+    __HAL_RCC_GPIOC_CLK_DISABLE();
+    __HAL_RCC_GPIOD_CLK_DISABLE();
+    __HAL_RCC_GPIOE_CLK_DISABLE();
+    __HAL_RCC_GPIOF_CLK_DISABLE();
+    __HAL_RCC_GPIOG_CLK_DISABLE();
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">AfterExitSleep</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#008000">/* 退出睡眠后恢复外设时钟 */</span>
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOF_CLK_ENABLE();
+    __HAL_RCC_GPIOG_CLK_ENABLE();
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">vApplicationIdleHook</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    __disable_irq();                      <span style="color:#008000">/* 进睡眠前关中断 */</span>
+    __dsb(portSY_FULL_READ_WRITE);
+    __isb(portSY_FULL_READ_WRITE);
+
+    BeforeEnterSleep();
+    __wfi();                              <span style="color:#008000">/* 睡到下一个中断（如 SysTick） */</span>
+    AfterExitSleep();
+
+    __dsb(portSY_FULL_READ_WRITE);
+    __isb(portSY_FULL_READ_WRITE);
+    __enable_irq();                       <span style="color:#008000">/* 醒来开中断 */</span>
+}</pre>
+
+<div class="warn">
+  <p>⚠️ 通用低功耗模式有一个硬伤：<strong>每次 SysTick 中断都会把 CPU 叫醒</strong>，哪怕接下来根本没事做。睡得浅、醒得勤，省电效果有限。这正是 FreeRTOS 推出 Tickless 模式的原因——下面就来对比。</p>
+</div>
+
+<h2>4. Tickless 低功耗模式：原理</h2>
+
+<p>Tickless 的思路是：既然马上没有任务要跑，那<strong>连 tick 都别跳了</strong>——停掉 SysTick，让 CPU 一次睡到"下一个任务该醒的时刻"，醒了再补偿丢失的 tick（PDF 18.1 节 <span class="pg">PDF p.394</span>）。整个流程在空闲任务内部完成：</p>
+
+<ol>
+<li>空闲任务先调用 <code>prvGetExpectedIdleTime()</code> 估算能睡多久（取"最近一个阻塞任务苏醒时刻 − 当前时刻"）；</li>
+<li>只有估算时长 ≥ <code>configEXPECTED_IDLE_TIME_BEFORE_SLEEP</code>（默认 2，<strong>不能小于 2</strong>）才值得睡；</li>
+<li>挂起调度器后再算一次（这次准），调 <code>configPRE_SLEEP_PROCESSING()</code> 做睡前收尾；</li>
+<li>调用 <code>portSUPPRESS_TICKS_AND_SLEEP(xExpectedIdleTime)</code>——这个宏在 Cortex-M 上展开为 <code>vPortSuppressTicksAndSleep()</code>：关 SysTick、<code>__wfi()</code> 入睡、唤醒后<strong>用硬件定时器补偿漏掉的 tick</strong>（ARM_CM4F 移植层默认用 SysTick 自身的计数器或者低功耗定时器，教材源码里 <code>ulTimerCountsForOneTick</code> 等变量就是为此准备的）；</li>
+<li>醒来后 <code>configPOST_SLEEP_PROCESSING()</code> 恢复现场，调度器恢复。</li>
+</ol>
+
+<p>关键在于"<strong>补偿 tick</strong>"：睡觉期间 SysTick 停了，但 <code>xTickCount</code> 不能停，否则所有延时都错乱。所以唤醒时必须把"睡掉的时间"换算成 tick 数一次性补上——这就是为什么 Tickless 需要硬件定时器配合。</p>
+
+<h2>5. Tickless 配置与实验</h2>
+
+<p>FreeRTOSConfig.h 里开 3 个东西就齐活（教材实验 18 <span class="pg">PDF p.398</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== FreeRTOSConfig.h 中开启 Tickless ===== */</span>
+<span style="color:#008000">/* 1: 使能 tickless 低功耗模式, 默认: 0 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> configUSE_TICKLESS_IDLE 1</span>
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> (configUSE_TICKLESS_IDLE != 0)</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;freertos_demo.h&quot;</span></span>
+<span style="color:#008000">/* 进入低功耗模式前执行的函数（关外设时钟等） */</span>
+<span style="color:#0000FF">extern</span> <span style="color:#267F99">void</span> <span style="color:#795E26">PRE_SLEEP_PROCESSING</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> configPRE_SLEEP_PROCESSING(x)  PRE_SLEEP_PROCESSING()</span>
+<span style="color:#008000">/* 退出低功耗模式后执行的函数（恢复外设时钟等） */</span>
+<span style="color:#0000FF">extern</span> <span style="color:#267F99">void</span> <span style="color:#795E26">POST_SLEEP_PROCESSING</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>;
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> configPOST_SLEEP_PROCESSING(x) POST_SLEEP_PROCESSING()</span>
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+
+<span style="color:#008000">/* configEXPECTED_IDLE_TIME_BEFORE_SLEEP 不定义就用默认值 2
+ * （FreeRTOS.h 里默认定义，且强制 &gt;= 2） */</span></pre>
+
+<p>配套实验任务用 LED 指示状态（教材实验 18 的 task1）：<code>delay_ms(3000)</code> 忙等期间 CPU 满负荷跑（LED 灭），<code>vTaskDelay(3000)</code> 阻塞期间空闲任务接管（LED 亮），此时系统进入睡眠——用功率计/电流档量两个阶段的板卡电流，差值就是省下的电。教材实测：开启 Tickless 后系统整体功耗明显下降（具体数值因测量环境而异，<span class="pg">PDF p.401</span>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材实验 18 的 task1：忙等 vs 阻塞，交替出现，便于对比功耗 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        LED0(<span style="color:#098658">1</span>);            <span style="color:#008000">/* LED 灭：CPU 忙延时，不会进入低功耗 */</span>
+        delay_ms(<span style="color:#098658">3000</span>);     <span style="color:#008000">/* 忙等 3 秒（裸机延时，不触发切换） */</span>
+        LED0(<span style="color:#098658">0</span>);            <span style="color:#008000">/* LED 亮：进入阻塞，空闲任务接管 → 睡觉 */</span>
+        vTaskDelay(<span style="color:#098658">3000</span>);   <span style="color:#008000">/* 阻塞延时 3 秒（期间进入 Tickless 睡眠） */</span>
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 谁的功劳最大？<strong>别只看 Tickless 配置</strong>。省电的三个层次：任务尽量多阻塞（少忙等）→ 睡眠时关外设时钟（PRE/POST_SLEEP_PROCESSING）→ CPU 进深睡眠模式（改 PWR 寄存器或调用 HAL 的 SLEEP/STOP 模式）。Tickless 只解决"tick 补偿"，真正的大头常常在你关了多少外设。</p>
+</div>
+
+<h2>动手练习（约 45 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 16.1：空闲钩子计数实验——"数"出 CPU 的闲忙</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里把 <code>configUSE_IDLE_HOOK</code> 置 1，实现第 2 节的 <code>vApplicationIdleHook()</code>，给全局计数变量 <code>idle_enter_count</code> 自增。</p>
+  <p class="step">2️⃣ 开一个 100ms 周期的任务，每次打印 <code>idle_enter_count</code> 的增量，以及用 <code>uxTaskGetSystemState</code> 或运行时间统计观察各任务占用率（教材 11.3 节的思路）。</p>
+  <p class="step">3️⃣ 先让其他任务都 <code>vTaskDelay</code> 阻塞，记录每秒空闲计数；再改成一个任务忙等（不延时），看计数怎么变。<strong>观察什么：</strong>空闲计数 = CPU 空闲程度的"心电图"——任务越闲，计数涨得越快。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 16.2：开启 Tickless，用电流档验证功耗变化</h3>
+  <p class="step">1️⃣ 按第 5 节配置把 <code>configUSE_TICKLESS_IDLE</code> 置 1，实现 PRE/POST_SLEEP_PROCESSING（先只关几个 GPIO 时钟即可，别把系统用到的外设关了）。</p>
+  <p class="step">2️⃣ 复刻教材 task1 的"忙等 3 秒 ↔ 阻塞 3 秒"交替节奏，LED 指示状态。</p>
+  <p class="step">3️⃣ 万用表电流档（或功率计）串进供电回路：<strong>观察什么：</strong>分别记录 LED 灭（忙等）与 LED 亮（Tickless 睡眠）两阶段的电流；再对比第 3 节通用低功耗钩子方案的数据，验证"Tickless 比通用低功耗更省"（教材 p.401 的对比结论）。</p>
+  <p class="step">4️⃣ 进阶（可选）：把 <code>configPRE_SLEEP_PROCESSING</code> 里关更多外设时钟（USART、SPI 等），看电流还能降多少——注意别把睡眠后要用的外设关了。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 空闲任务是由谁创建的？</p>
+  <p class="opt">A. 用户在 main 里手动创建</p>
+  <p class="opt">B. vTaskStartScheduler() 自动创建</p>
+  <p class="opt">C. 第一个任务创建时顺带创建</p>
+  <details><summary>查看答案</summary><div class="answer">B。调度器启动函数 vTaskStartScheduler() 在运行前自动创建空闲任务（PDF p.403）。</div></details>
+
+  <p class="q">Q2. 空闲任务的优先级是？</p>
+  <p class="opt">A. 与用户任务相同，可自行修改</p>
+  <p class="opt">B. 最高优先级，保证系统不卡</p>
+  <p class="opt">C. 0，最低优先级，且不可修改</p>
+  <details><summary>查看答案</summary><div class="answer">C。空闲任务优先级为 portPRIVILEGE_BIT 即 0，最低且用户不能改（PDF p.404）。</div></details>
+
+  <p class="q">Q3. 空闲任务钩子函数里绝对不能做的事是？</p>
+  <p class="opt">A. 读取全局变量计数</p>
+  <p class="opt">B. 调用 vTaskDelay() 阻塞自己</p>
+  <p class="opt">C. 翻转一个 LED</p>
+  <details><summary>查看答案</summary><div class="answer">B。钩子里不能调用会阻塞/挂起空闲任务的函数，否则系统将没有可运行任务（PDF p.405）。</div></details>
+
+  <p class="q">Q4. configEXPECTED_IDLE_TIME_BEFORE_SLEEP 允许的最小值是？</p>
+  <p class="opt">A. 0，可以无限小</p>
+  <p class="opt">B. 1，一个 tick 也值得睡</p>
+  <p class="opt">C. 2，定义小于 2 会编译报错</p>
+  <details><summary>查看答案</summary><div class="answer">C。FreeRTOS.h 里默认定义为 2，且强制 #error 拦截小于 2 的配置（PDF p.398）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 18 章 Tickless（PDF p.394~402）+ 第 19 章空闲任务（PDF p.403~410）——本课全部依据</li>
+<li>🌐 <a href="https://www.freertos.org/low-power-tickless-rtos.html">FreeRTOS 官方文档：Low Power Support</a>——Tickless 模式原理与移植要点</li>
+<li>🌐 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS Real Time Kernel</a>——官方书 Chapter 7 Low Power Support，讲 Tickless 的补偿机制最清楚</li>
+</ul>
+
+<div class="footer-note">
+  <p>下一课预告：第 17 课——综合项目（收官课）。把 LVGL 第 12 课的"智能设备控制台"搬上 FreeRTOS：GUI 任务化、采集任务、队列通信、验收清单一次配齐。有任何不清楚的地方，直接问我（Agent 就是你的老师）。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0015-memory-management.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0017-final-project.html">下一课：综合项目 →</a>
+</nav>
+
+</div>
+</body>
+</html>

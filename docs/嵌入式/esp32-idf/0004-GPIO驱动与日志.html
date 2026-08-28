@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0004 · GPIO 驱动与日志</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>GPIO 驱动与日志</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0004 · 预计 15 分钟</p>
+
+<p>STM32 的 <code>HAL_GPIO_Init/WritePin/ReadPin</code> 你在行。IDF 的 GPIO 风格完全不同——<strong>先配置后使用,配置靠结构体,函数是 <code>gpio_</code> 前缀的平铺 API</strong>。这一课翻译到位,顺便学会 ESP32 的看家日志 <code>ESP_LOGx</code>。</p>
+
+<h2>知识点 1:配置即结构体</h2>
+<pre lang="c" class="highlight"><span style="color: #008000">// STM32:GPIO_InitTypeDef + HAL_GPIO_Init(GPIOB, &amp;cfg);</span>
+<span style="color: #008000">// ESP32:同样"填结构体",但函数是 gpio_config()</span>
+<span style="color: #795E26">gpio_config_t</span> io = {
+    .pin_bit_mask = <span style="color: #098658">1ULL</span> << GPIO_NUM_2,  <span style="color: #008000">// 注意是位掩码</span>
+    .mode = GPIO_MODE_OUTPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE,
+};
+<span style="color: #795E26">gpio_config</span>(&amp;io);
+<span style="color: #795E26">gpio_set_level</span>(GPIO_NUM_2, 1);      <span style="color: #008000">// 输出高</span>
+<span style="color: #795E26">gpio_set_level</span>(GPIO_NUM_2, 0);      <span style="color: #008000">// 输出低</span>
+</pre>
+<p>对照记忆:HAL 的 <code>Init/WritePin/ReadPin</code> ↔ IDF 的 <code>gpio_config / gpio_set_level / gpio_get_level</code>。每个外设(driver 组件)都是这个套路:xxx_config / xxx_init / xxx_读写。</p>
+
+<h2>知识点 2:日志系统(看代码第一工具)</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">#include</span> <span style="color: #A31515">&quot;esp_log.h&quot;</span>
+<span style="color: #00F">static</span> <span style="color: #00F">const</span> <span style="color: #00F">char</span> *TAG = <span style="color: #A31515">&quot;my_app&quot;</span>;
+<span style="color: #795E26">ESP_LOGE</span>(TAG, <span style="color: #A31515">&quot;错误: %d&quot;</span>, err);   <span style="color: #008000">// 错误(红)</span>
+<span style="color: #795E26">ESP_LOGW</span>(TAG, <span style="color: #A31515">&quot;警告&quot;</span>);            <span style="color: #008000">// 警告</span>
+<span style="color: #795E26">ESP_LOGI</span>(TAG, <span style="color: #A31515">&quot;信息&quot;</span>);             <span style="color: #008000">// 普通</span>
+<span style="color: #795E26">ESP_LOGD</span>(TAG, <span style="color: #A31515">&quot;调试(需开日志级别)&quot;</span>);
+</pre>
+<p><code>idf.py monitor</code> 打开的就是这个日志流。<strong>读开源代码第一件事:找 TAG,跟着 ESP_LOG 看执行流</strong>——xiaozhi 里到处是 <code>ESP_LOGI(TAG,...)</code>。</p>
+
+<h2>知识点 3:改日志级别</h2>
+<pre lang="bash" class="highlight"><span style="color: #795E26">idf.py</span> menuconfig
+<span style="color: #008000"># Component config → Log output → 默认级别调到 DEBUG,能看到 ESP_LOGD</span>
+</pre>
+
+<h2>动手</h2>
+<p>回 <code>basic_routines/00_basic/main/main.c</code>,把上一课留的作业对答案:GPIO 初始化、延时、日志三个 API 分别是 <code>gpio_config</code>、<code>vTaskDelay</code>、<code>ESP_LOGx</code>。然后在代码里加一行 <code>ESP_LOGI</code>,<code>idf.py -p /dev/ttyUSB0 flash monitor</code> 看输出。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">gpio_config 里 .pin_bit_mask 填什么?</p>
+  <button class="opt" data-ok="true">位掩码</button>
+  <button class="opt" data-ok="false">引脚号</button>
+  <button class="opt" data-ok="false">寄存器值</button>
+  <p class="reveal">1ULL &lt;&lt; 引脚号,一次可配置多脚。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">读陌生工程代码,最先跟着什么走?</p>
+  <button class="opt" data-ok="true">日志</button>
+  <button class="opt" data-ok="false">Makefile</button>
+  <button class="opt" data-ok="false">启动地址</button>
+  <p class="reveal">ESP_LOGx,日志是执行流的索引。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《GPIO 与管脚矩阵》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/gpio.html">GPIO API</a>)与《日志库》文档。对照你手上 00_basic 代码读一遍。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:定时器与延时——<code>esp_timer</code>、<code>esp_timer_create</code> 这些"软件定时器",以及它们和 FreeRTOS ticks 的关系。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0003-FreeRTOS任务与事件循环.html">← 上一篇:FreeRTOS</a>
+  <a href="index.html">课程地图</a>
+  <a href="0005-定时器与延时.html">下一篇:定时器 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

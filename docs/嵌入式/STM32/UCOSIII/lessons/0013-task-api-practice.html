@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 13 课：任务管理 API 实战 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 13 课</nav>
+
+<h1>第 13 课：任务管理 API 实战</h1>
+<p class="subtitle">亲手造过内核之后，回头用 UCOS 的商用 API——每个参数背后都是你见过的"零件"</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>MiniOS 六课之后，回到 µC/OS-III 应用层系统过一遍任务管理 API：创建/删除、挂起/恢复、修改优先级、时间片调度、空闲钩子与统计。学完你能不带迟疑地写出 13 个参数的 <code>OSTaskCreate()</code>，并解释每个 API 内部对应的内核机制（你在 MiniOS 里亲手实现过的那些）。</p>
+</div>
+
+<h2>1. OSTaskCreate 与 OSTaskDel：任务的一生</h2>
+
+<p>先看教材的原型（PDF 6.1 节 <span class="pg">PDF p.91</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">void</span> <span style="color:#795E26">OSTaskCreate</span><span style="color:#001080">( OS_TCB*         p_tcb,      <span style="color:#008000">/* 任务控制块指针（用户提供内存） */</span>
+                   CPU_CHAR*       p_name,     <span style="color:#008000">/* 任务名，字符串，调试用 */</span>
+                   OS_TASK_PTR     p_task,     <span style="color:#008000">/* 任务函数指针 */</span>
+                   <span style="color:#267F99">void</span>*           p_arg,      <span style="color:#008000">/* 传给任务函数的参数 */</span>
+                   OS_PRIO         prio,       <span style="color:#008000">/* 任务优先级（数值越小越高！） */</span>
+                   CPU_STK*        p_stk_base, <span style="color:#008000">/* 任务栈起始地址 */</span>
+                   CPU_STK_SIZE    stk_limit,  <span style="color:#008000">/* 栈&quot;水位&quot;限制（从栈顶往下的警戒线） */</span>
+                   CPU_STK_SIZE    stk_size,   <span style="color:#008000">/* 任务栈大小（单位：字） */</span>
+                   OS_MSG_QTY      q_size,     <span style="color:#008000">/* 任务内嵌消息队列大小 */</span>
+                   OS_TICK         time_quanta,<span style="color:#008000">/* 任务时间片（0 用默认值） */</span>
+                   <span style="color:#267F99">void</span>*           p_ext,      <span style="color:#008000">/* 扩展指针，一般传 0 */</span>
+                   OS_OPT          opt,        <span style="color:#008000">/* 选项：栈检查/栈清零等 */</span>
+                   OS_ERR*         p_err)</span>;     <span style="color:#008000">/* 错误码指针，必查！ */</span></pre>
+
+<p>13 个参数看着吓人，其实就三类：<strong>你是谁</strong>（TCB、名字、函数、参数、优先级）、<strong>你站在哪</strong>（栈基址、栈大小、水位）、<strong>你要什么附加服务</strong>（内嵌队列、时间片、选项、错误码）。要点：</p>
+
+<ul>
+<li><strong>TCB 和栈都要用户自己分配</strong>：<code>OS_TCB MyTaskTCB; CPU_STK MyTaskStk[200];</code>——UCOS 不做内存管理，这也是它 TCB 结构透明的教学哲学。</li>
+<li><strong>优先级有保留位</strong>：0、1、<code>OS_CFG_PRIO_MAX-2</code>、<code>OS_CFG_PRIO_MAX-1</code> 不能给应用任务用（PDF p.92）。</li>
+<li><strong>任务函数里必须有让出 CPU 的调用</strong>：延时、挂起、等待内核对象，否则低优先级任务永远轮不到（PDF p.92 注意事项）。</li>
+<li><strong>不能在中断里创建任务</strong>：会返回 <code>OS_ERR_TASK_CREATE_ISR</code>。</li>
+</ul>
+
+<p><code>OSTaskDel(p_tcb, p_err)</code> 删除任务（PDF p.93）：注意它<strong>不释放任务栈和代码内存</strong>，只是让内核不再管理它们，所以"删除"后资源可复用。传 <code>(OS_TCB*)0</code> 表示删除自己——start_task 干完活就这么退场。不能删空闲任务和中断服务任务。</p>
+
+<div class="tip">
+  <p>💡 MiniOS 对照：你在 MiniOS 里写 <code>MiniTaskCreate</code> 时也做了同样的事——填 TCB、初始化栈、插就绪表。UCOS 只是把这些步骤封装成 13 个参数，内部流程一模一样（任务创建实验流程见 PDF 6.2 节 <span class="pg">PDF p.95</span>）。</p>
+</div>
+
+<h2>2. OSTaskSuspend / OSTaskResume：支持嵌套的挂起</h2>
+
+<p><code>OSTaskSuspend(p_tcb, p_err)</code> 无条件挂起任务（PDF 6.3 节 <span class="pg">PDF p.100</span>），关键语义：</p>
+
+<ul>
+<li>挂起的任务<strong>不参与调度</strong>；挂起自己（传 0）会触发调度让出 CPU。</li>
+<li>被挂起的任务<strong>只能由 OSTaskResume 恢复</strong>——即使延时到期也不会恢复（还记得第 10 课 Tick 链表里 <code>OS_TASK_STATE_DLY_SUSPENDED</code> 这个状态吗？就是它）。</li>
+<li><strong>支持嵌套</strong>：UCOS 内部有挂起嵌套计数（错误码 <code>OS_ERR_TASK_SUSPEND_CTR_OVF</code> 证明它数着次数），挂起 N 次就要恢复 N 次才能真正就绪。</li>
+<li>任务在等待信号量时被挂起，恢复后<strong>继续等</strong>，不会丢等待状态。</li>
+</ul>
+
+<p>MiniOS 里如果你想加，就是给 MiniTCB 加个 <code>suspend_ctr</code> 字段 + 就绪表移除/恢复的逻辑——挂起 = 从就绪表摘走，恢复 = 插回去（如果还满足就绪条件）。</p>
+
+<h2>3. OSTaskChangePrio：动态改优先级</h2>
+
+<p><code>OSTaskChangePrio(p_tcb, prio_new, p_err)</code> 运行中改任务的优先级（PDF 9.1 节 <span class="pg">PDF p.147</span>），教材实验（9.2 节 <span class="pg">PDF p.153</span>）设计了三个任务：task1/task2 是"被改"对象，task3 负责按键改它们的优先级。核心代码长这样：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材 9.2 实验核心：task3 按按键改 task1/task2 的优先级 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task3</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint8_t</span> key;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);                      <span style="color:#008000">/* 扫描按键 */</span>
+        <span style="color:#0000FF">if</span> (key == KEY0_PRES)
+        {
+            OSTaskChangePrio(&amp;Task1Task_TCB, TASK2_PRIO, &amp;err);  <span style="color:#008000">/* 把 task1 降到 task2 的优先级 */</span>
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 优先级已改为 %d\r\n&quot;</span>, TASK2_PRIO);
+        }
+        <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (key == KEY1_PRES)
+        {
+            OSTaskChangePrio(&amp;Task1Task_TCB, TASK1_PRIO, &amp;err);  <span style="color:#008000">/* 改回去 */</span>
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 优先级已恢复 %d\r\n&quot;</span>, TASK1_PRIO);
+        }
+        OSTimeDly(<span style="color:#098658">10</span>, OS_OPT_TIME_DLY, &amp;err);   <span style="color:#008000">/* 10 个节拍扫一次键 */</span>
+    }
+}</pre>
+
+<p>内部机制你其实见过：改优先级 = 从旧优先级就绪链表摘下 → 改 TCB 里的 Prio → 插入新优先级就绪链表（若任务处于就绪态）；若任务正在等信号量，则要重新排等待链表位置。这就是第 4 课位图就绪表 + 第 11 课等待链表的组合拳。</p>
+
+<h2>4. 时间片调度：同优先级任务轮流跑</h2>
+
+<p>µC/OS-III 内建时间片调度：同优先级的多个任务按时间片轮转（第 10 课讲过 <code>OS_SchedRoundRobin()</code> 在 tick 里数剩余时间片）。使用时两步（PDF 9.3 节 <span class="pg">PDF p.160</span>）：</p>
+
+<ol>
+<li>配置项 <code>OS_CFG_SCHED_ROUND_ROBIN_EN</code> 置 1（os_cfg.h）。</li>
+<li>启动任务里 <code>OSSchedRoundRobinCfg(OS_TRUE, dflt_time_quanta, &err)</code> 使能，第二个参数是默认时间片长度（教材实验设为 1，肉眼可见的交替）。</li>
+</ol>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材 9.3 实验：start_task 里开时间片 + 创建两个同优先级任务 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">start_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    CPU_INT32U cnts;
+
+    CPU_Init();
+    cnts = (CPU_INT32U)(HAL_RCC_GetSysClockFreq() / OSCfg_TickRate_Hz);
+    OS_CPU_SysTickInit(cnts);                       <span style="color:#008000">/* 配置 SysTick 时基 */</span>
+
+    OSSchedRoundRobinCfg(OS_TRUE, <span style="color:#098658">1</span>, &amp;err);         <span style="color:#008000">/* 开启时间片，默认 1 个节拍 */</span>
+
+    OSTaskCreate(&amp;Task1Task_TCB, <span style="color:#A31515">&quot;task1&quot;</span>, task1, <span style="color:#098658">0</span>,
+                 TASK1_PRIO, Task1Task_STK, TASK1_STK_SIZE/<span style="color:#098658">10</span>, TASK1_STK_SIZE,
+                 <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, &amp;err);
+    OSTaskCreate(&amp;Task2Task_TCB, <span style="color:#A31515">&quot;task2&quot;</span>, task2, <span style="color:#098658">0</span>,
+                 TASK2_PRIO, Task2Task_STK, TASK2_STK_SIZE/<span style="color:#098658">10</span>, TASK2_STK_SIZE,
+                 <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, &amp;err);
+
+    OSTaskDel((OS_TCB*)<span style="color:#098658">0</span>, &amp;err);                    <span style="color:#008000">/* start_task 功成身退 */</span>
+}</pre>
+
+<p>关键前提：<strong>task1 和 task2 的优先级必须相同</strong>（教材里 TASK1_PRIO == TASK2_PRIO），时间片轮转只在同优先级间进行。两个任务死循环打印计数，串口输出会交替增长——这就是"肉眼可见"的时间片。如果任务里还调了延时，时间片到期与延时谁先触发？tick 处理顺序是：先 <code>OS_SchedRoundRobin</code> 后 <code>OS_TickUpdate</code>（PDF p.177~178），记住这个顺序能解释很多实验现象。</p>
+
+<h2>5. 空闲任务钩子与统计任务</h2>
+
+<p>最后两个"软技能"API：</p>
+
+<ul>
+<li><strong>空闲任务钩子</strong>：空闲任务（最低优先级）每跑一轮会调用 <code>OSIdleTaskHook()</code>。教材通过 <code>App_OS_SetAllHooks()</code> 把钩子函数指针指到你的 <code>App_OS_IdleTaskHook()</code>（PDF 9.4 节 <span class="pg">PDF p.165</span>）。典型用途：空闲时让 MCU 进入低功耗、喂看门狗、统计空闲率。注意钩子里<strong>不能调用任何让任务挂起的 API</strong>（比如不能延时），否则空闲任务就"不空闲"了。</li>
+<li><strong>统计任务</strong>：<code>OSStatTaskCPUUsageInit(&err)</code> 初始化 CPU 使用率统计（需 <code>OS_CFG_STAT_TASK_EN</code> 为 1 + 时间戳支持，PDF 9.5 节 <span class="pg">PDF p.168~173</span>）。之后全局变量 <code>OSStatTaskCPUUsage</code>（当前使用率）和 <code>OSStatTaskCPUUsageMax</code>（历史峰值）随时可读——正点原子例程直接把它们画到 LCD 上（PDF p.171）。配合第 9 课的 <code>OSTaskStkChk()</code> 还能看每个任务的栈余量。</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 统计实验依赖时间戳功能（µC/CPU 的 DWT 计数器），移植工程里必须按教材 2.1.6 节把时间戳配好，否则 <code>OSStatTaskCPUUsageInit()</code> 的数据是假的或直接报错。先跑通移植实验再开统计，顺序别反。</p>
+</div>
+
+<h2>核心代码：创建/删除与优先级修改实验</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 练习实验：任务创建与删除（对应教材 6.2 实验，PDF p.95~99） ===== */</span>
+OS_TCB   StartTask_TCB;
+CPU_STK  StartTask_STK[<span style="color:#098658">128</span>];
+OS_TCB   Task1_TCB;
+CPU_STK  Task1_STK[<span style="color:#098658">128</span>];
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> TASK1_PRIO  3</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint32_t</span> num = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 运行: %lu\r\n&quot;</span>, ++num);
+        OSTimeDly(<span style="color:#098658">500</span>, OS_OPT_TIME_DLY, &amp;err);   <span style="color:#008000">/* 500 个节拍 = 500ms */</span>
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">start_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    CPU_INT32U cnts;
+
+    CPU_Init();
+    cnts = (CPU_INT32U)(HAL_RCC_GetSysClockFreq() / OSCfg_TickRate_Hz);
+    OS_CPU_SysTickInit(cnts);
+
+    <span style="color:#008000">/* 创建任务：TCB 与栈都是静态数组，用户自备 */</span>
+    OSTaskCreate(&amp;Task1_TCB, <span style="color:#A31515">&quot;task1&quot;</span>, task1, (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>, TASK1_PRIO,
+                 &amp;Task1_STK[<span style="color:#098658">0</span>], <span style="color:#098658">128</span>/<span style="color:#098658">10</span>, <span style="color:#098658">128</span>,     <span style="color:#008000">/* 栈水位 = 栈大小/10 */</span>
+                 <span style="color:#098658">0</span>, <span style="color:#098658">0</span>, (<span style="color:#267F99">void</span>*)<span style="color:#098658">0</span>,                 <span style="color:#008000">/* 内嵌队列 0、时间片 0、扩展 0 */</span>
+                 OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &amp;err);
+    <span style="color:#0000FF">if</span> (err != OS_ERR_NONE)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;创建失败: %d\r\n&quot;</span>, err);        <span style="color:#008000">/* 错误码必须检查！ */</span>
+    }
+
+    OSTaskDel((OS_TCB*)<span style="color:#098658">0</span>, &amp;err);                 <span style="color:#008000">/* 删除自己，start_task 退场 */</span>
+}</pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* ===== 练习实验：优先级修改（对应教材 9.2 实验，PDF p.153~159） ===== */</span>
+<span style="color:#008000">/* 观察要点：task1 打印变快/变慢、串口节奏改变的那一刻就是优先级生效的时刻 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>                          <span style="color:#008000">/* 被改优先级的任务 */</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint32_t</span> num = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1: %lu\r\n&quot;</span>, ++num);
+        OSTimeDly(<span style="color:#098658">50</span>, OS_OPT_TIME_DLY, &amp;err);    <span style="color:#008000">/* 50ms 打印一次 */</span>
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>                          <span style="color:#008000">/* 同款结构，不同优先级 */</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint32_t</span> num = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task2: %lu\r\n&quot;</span>, ++num);
+        OSTimeDly(<span style="color:#098658">50</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task3</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>                          <span style="color:#008000">/* 键盘侠：负责改优先级 */</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint8_t</span> key;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">if</span> (key == KEY0_PRES)
+        {
+            OSTaskChangePrio(&amp;Task1_TCB, TASK2_PRIO, &amp;err);  <span style="color:#008000">/* task1 降到和 task2 同优先级 */</span>
+        }
+        <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (key == KEY1_PRES)
+        {
+            OSTaskChangePrio(&amp;Task1_TCB, TASK1_PRIO, &amp;err);  <span style="color:#008000">/* 恢复 */</span>
+        }
+        OSTimeDly(<span style="color:#098658">10</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 实验设计思路：让 task1 和 task2 打印内容不同（比如前缀不同），task3 只管按键改优先级。现象：task1 从"几乎独占串口"变成"和 task2 交替打印"，再变回来——优先级就是话语权，改优先级就是改话语权。</p>
+</div>
+
+<h2>动手练习（约 60~80 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1：任务创建与删除实验</h3>
+  <p class="step">1️⃣ 在你的 UCOS 分支工程（保持当前 git 分支不动，在练习分支操作）新建 <code>app_task.c</code>，按上面代码创建 start_task + task1。</p>
+  <p class="step">2️⃣ 加一个 task2：每 300ms 打印一次。验收标准：串口出现两条独立节奏的打印流，task1 500ms 一条、task2 300ms 一条。</p>
+  <p class="step">3️⃣ 扩展：task3 每 5 秒调用 <code>OSTaskDel(&Task2_TCB, &err)</code> 删掉 task2。验收标准：task2 的打印消失、task1 不受影响；再让 task1 用 <code>OSTaskCreate</code> 复用 Task2 的 TCB 和栈重新创建它（教材说删除后资源可复用，验证这一点）。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 2：优先级修改实验</h3>
+  <p class="step">1️⃣ 按教材 9.2 实验搭好 task1/task2/task3，按 KEY0 把 task1 降到 task2 的优先级，按 KEY1 恢复。验收标准：串口节奏随按键改变，且改回后节奏与初始完全一致。</p>
+  <p class="step">2️⃣ 挑战：把 task1 改成比 task2 更高（数值更小）的优先级后，用 <code>OSTaskSuspend(&Task1_TCB, &err)</code> 挂起它再恢复，观察"挂起期间即使优先级最高也不运行"。</p>
+  <p class="step">3️⃣ 写 5 行总结：OSTaskChangePrio 内部大概动了哪些数据结构（就绪链表/等待链表/TCB 字段），对照第 12 课架构表。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. OSTaskCreate 里任务栈内存由谁提供？</p>
+  <p class="opt">A. 内核自动分配</p>
+  <p class="opt">B. 用户提供栈数组和栈大小</p>
+  <p class="opt">C. 由 p_ext 参数指定</p>
+  <details><summary>查看答案</summary><div class="answer">B。TCB 与任务栈都由用户分配（静态数组或内存池），UCOS 只负责初始化与管理（PDF p.91~92）。</div></details>
+
+  <p class="q">Q2. OSTaskDel 传入 (OS_TCB*)0 表示？</p>
+  <p class="opt">A. 删除所有任务</p>
+  <p class="opt">B. 删除当前任务自己</p>
+  <p class="opt">C. 报错返回</p>
+  <details><summary>查看答案</summary><div class="answer">B。传 0 表示删除当前任务，start_task 干完活就这样退场（教材多处实验如此，PDF p.95）。</div></details>
+
+  <p class="q">Q3. 被 OSTaskSuspend 挂起的任务，延时到期后会怎样？</p>
+  <p class="opt">A. 直接恢复运行</p>
+  <p class="opt">B. 保持挂起，只能由 OSTaskResume 恢复</p>
+  <p class="opt">C. 变成就绪但排在队尾</p>
+  <details><summary>查看答案</summary><div class="answer">B。延时超时只把状态从 DLY_SUSPENDED 改成 SUSPENDED，仍需 OSTaskResume 恢复（PDF p.183 Tick 链表处理）。</div></details>
+
+  <p class="q">Q4. 时间片调度生效的前提是？</p>
+  <p class="opt">A. 任务优先级必须各不相同</p>
+  <p class="opt">B. 任务优先级相同且已使能轮转</p>
+  <p class="opt">C. 任务必须调用延时函数</p>
+  <details><summary>查看答案</summary><div class="answer">B。OSSchedRoundRobinCfg 使能 + 同优先级多任务，tick 里 OS_SchedRoundRobin 才生效（PDF p.160~163）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 6 章（PDF p.91~108）——OSTaskCreate/OSTaskDel/OSTaskSuspend/OSTaskResume 全部依据</li>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 9 章（PDF p.145~173）——优先级修改、时间片、空闲钩子、统计实验</li>
+<li>🔁 对照：FreeRTOS 课程 <a href="../../FreeRTOS/lessons/0004-task-api.html">第 4 课：任务 API 实战</a>——xTaskCreate/vTaskDelete/vTaskSuspend 与 UCOS 同名 API 的形参风格对照</li>
+<li>🔁 对照：MiniOS 第 7~9 课（TCB/就绪表/调度器）——UCOS 每个任务 API 背后的内核机制都在 MiniOS 里实现过</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 14 课——信号量与互斥量。任务 API 只是"调度舞台"，同步对象才是"任务协作剧本"：二值/计数信号量、互斥量与优先级翻转，UCOS 最经典的同步篇章。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0012-minios-6-kernel-review.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0014-semaphores-and-mutexes.html">下一课：信号量与互斥量 →</a>
+</nav>
+
+</div>
+</body>
+</html>

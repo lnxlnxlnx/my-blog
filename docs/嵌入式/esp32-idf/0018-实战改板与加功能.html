@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0018 · 实战收尾：改自己的板子</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>实战收尾：改自己的板子</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0018 · 预计 30 分钟</p>
+
+<p>收尾课。<strong>目标:把你的面包板组合板"再定义"一遍</strong>——完成一次真实的改动、编译、烧录,证明 17 课的知识能闭环。</p>
+
+<h2>任务 1:加一个"板载呼吸灯"功能</h2>
+<p>在 <code>basic_routine_3/07_ledc</code>(LEDC 硬件 PWM)基础上,把呼吸灯例程看懂:<strong>LEDC 定时器/通道/占空比是配置结构体的哪几个字段</strong>。看懂了,这个技能就能移植到任何板。</p>
+
+<h2>任务 2:给 xiaozhi 换一个屏(或加一个提示音)</h2>
+<p>选一:</p>
+<ul>
+<li><strong>换屏</strong>:按 0015 课,改 <code>boards/bread-compact-wifi/config.h</code> 的 I2C 引脚(或 config.json 换 128x64 变体),重新 <code>python scripts/release.py bread-compact-wifi</code> 出固件</li>
+<li><strong>加提示音</strong>:在 <code>main/assets</code> 里放一个 wav,找到资产打包脚本(<code>scripts/build_default_assets.py</code>)注册它,在状态机某事件里触发播放——顺路复习 0012/0016 的音频链路</li>
+</ul>
+
+<h2>任务 3:自问自答(考官模式)</h2>
+<p>不看资料,回答这 6 题(每题一句话):</p>
+<ol>
+<li>app_main 为什么不写 while(1)?</li>
+<li>改引脚去哪个文件?sdkconfig 能进 git 吗?</li>
+<li>vTaskDelay 和 HAL_Delay 的区别?</li>
+<li>唤醒词在哪检测?音频帧在 WebSocket 里怎么传?</li>
+<li>OTA 双分区+回滚保护解决了什么问题?</li>
+<li>你的板子 PSRAM 多大?去哪查?</li>
+</ol>
+
+<h2>交作业</h2>
+<p>把<strong>改动的文件清单 + 串口日志(关键几行)+ 6 题答案</strong>发我,我给你打分并指出下一阶段的"补课点"。之后可以选:<strong>① 深入音频/AFE 源码;② 把 xiaozhi 协议文档逐条精读;③ 换非 IDF 路线(裸机/其他框架)</strong>。</p>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>xiaozhi 官方《custom-board.md》</strong>:照着"自己加一块板"走一遍,就是最好的结业考。</p>
+</blockquote>
+
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0017-xiaozhi网络与协议.html">← 上一篇:网络与协议</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">完成!回课程地图</a>
+</nav>
+
+</main>
+</body>
+</html>

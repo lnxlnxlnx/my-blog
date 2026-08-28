@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 5 课：列表与列表项 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 5 课</nav>
+
+<h1>第 5 课：列表与列表项</h1>
+<p class="subtitle">FreeRTOS 的"血管系统"——双向链表逐字段、逐函数解剖</p>
+
+<div class="goal">
+  <p><strong>本课目标（原理深入课）：</strong>这是理解 FreeRTOS 内核的第一块硬骨头。学完你能徒手写出 List_t / ListItem_t / MiniListItem_t 三个结构体，说清 vListInitialise / vListInitialiseItem / vListInsertEnd / vListInsert / uxListRemove 五个函数的每一步在改哪些指针，并真正理解"为什么内核到处用列表"。这是第 6 课读懂系统启动流程（就绪列表、延时列表）的必备前提。</p>
+</div>
+
+<h2>1. 为什么内核到处用列表</h2>
+
+<p>FreeRTOS 源码里大量使用列表和列表项——它们就是数据结构里的<strong>双向链表和节点</strong>（PDF 第 7 章引言 <span class="pg">PDF p.110</span>）。想一想调度器要管理什么：几十个任务按优先级分档、按状态分组（就绪、阻塞、挂起）、按唤醒时间排序……这些"一堆东西的集合"，链表是增删都 O(1) 且内存碎片小的组织方式。</p>
+
+<p>先看内核里的使用场景（预告，第 6 课会见到真身）：</p>
+
+<ul>
+<li>📋 <strong>就绪任务列表</strong>：<code>pxReadyTasksLists[configMAX_PRIORITIES]</code>——每个优先级一条链表，调度器从高到低找"非空链表"取任务。</li>
+<li>⏳ <strong>阻塞/延时列表</strong>：任务按唤醒时间（xItemValue）升序排队，时间到了就绪。</li>
+<li>🗑️ <strong>待删除任务列表</strong>：<code>xTasksWaitingTermination</code>——被删任务先挂这里，等空闲任务收尸。</li>
+<li>🔗 还有挂起列表、事件等待列表……</li>
+</ul>
+
+<p>把任务挂进哪个列表，靠的就是 TCB 里那两个列表项 <code>xStateListItem</code> / <code>xEventListItem</code>。所以列表项有个 <code>pvOwner</code> 字段指向"拥有它的对象"（通常是任务控制块）——链表节点与任务之间互相指，形成双向链接（PDF p.111）。</p>
+
+<h2>2. List_t：列表（双向链表）逐字段</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.h —— 列表结构体 */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST</span>
+{</span>
+    listFIRST_LIST_INTEGRITY_CHECK_VALUE   <span style="color:#008000">/* 校验值（默认不开启，用于检测数据破坏） */</span>
+    <span style="color:#0000FF">volatile</span> UBaseType_t uxNumberOfItems;  <span style="color:#008000">/* 列表中列表项的个数（不包含 xListEnd） */</span>
+    ListItem_t *configLIST_VOLATILE pxIndex; <span style="color:#008000">/* 遍历指针：指向当前列表项，用于遍历 */</span>
+    MiniListItem_t xListEnd;               <span style="color:#008000">/* 列表末尾标记：一个迷你列表项 */</span>
+    listSECOND_LIST_INTEGRITY_CHECK_VALUE  <span style="color:#008000">/* 校验值 */</span>
+} List_t;
+</pre>
+
+<p>四个成员逐个说（PDF 第 7.1.1 节 <span class="pg">PDF p.110</span>）：</p>
+
+<ul>
+<li>🔒 <strong>两个校验宏</strong>：存确定已知常量，运行中检测列表数据是否被踩坏，默认关闭（<code>configUSE_LIST_DATA_INTEGRITY_CHECK_BYTES</code>）。</li>
+<li>🔢 <strong>uxNumberOfItems</strong>：列表项计数（不含哨兵 xListEnd）。插入 +1，移除 -1，<code>listCURRENT_LIST_LENGTH()</code> 读它。</li>
+<li>👆 <strong>pxIndex</strong>：遍历指针。vListInsertEnd 插到它前面；uxListRemove 移除它指向的项时会回退。内核"轮询"列表时靠它走圈。</li>
+<li>🏁 <strong>xListEnd</strong>：一个<strong>迷你列表项</strong>，值初始化为 <code>portMAX_DELAY</code>（最大），保证升序插入时它永远排最后；同时也作为"哨兵"节点挂载其他列表项。</li>
+</ul>
+
+<p>⚠️ 注意 <code>xListEnd</code> 是<strong>内嵌成员</strong>不是指针——列表本身的"尾节点"就长在列表里，这也是空列表也能正常工作的原因。</p>
+
+<h2>3. ListItem_t 与 MiniListItem_t：列表项逐字段</h2>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.h —— 列表项结构体 */</span>
+<span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span>
+{</span>
+    listFIRST_LIST_ITEM_INTEGRITY_CHECK_VALUE  <span style="color:#008000">/* 校验值 */</span>
+    configLIST_VOLATILE TickType_t xItemValue; <span style="color:#008000">/* 列表项的值：用于升序排序 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span> *<span style="color:#795E26">configLIST_VOLATILE</span> <span style="color:#795E26">pxNext</span>;</span>     <span style="color:#008000">/* 下一个列表项 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span> *<span style="color:#795E26">configLIST_VOLATILE</span> <span style="color:#795E26">pxPrevious</span>;</span> <span style="color:#008000">/* 上一个列表项 */</span>
+    <span style="color:#267F99">void</span> *pvOwner;      <span style="color:#008000">/* 列表项的拥有者：通常是任务控制块 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST</span> *<span style="color:#795E26">configLIST_VOLATILE</span> <span style="color:#795E26">pxContainer</span>;</span>     <span style="color:#008000">/* 列表项所在列表 */</span>
+    listSECOND_LIST_ITEM_INTEGRITY_CHECK_VALUE <span style="color:#008000">/* 校验值 */</span>
+};
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span> <span style="color:#795E26">ListItem_t</span>;</span>
+
+<span style="color:#008000">/* list.h —— 迷你列表项结构体 */</span>
+<span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xMINI_LIST_ITEM</span>
+{</span>
+    listFIRST_LIST_ITEM_INTEGRITY_CHECK_VALUE
+    configLIST_VOLATILE TickType_t xItemValue;  <span style="color:#008000">/* 值 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span> *<span style="color:#795E26">configLIST_VOLATILE</span> <span style="color:#795E26">pxNext</span>;</span>     <span style="color:#008000">/* 下一个 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xLIST_ITEM</span> *<span style="color:#795E26">configLIST_VOLATILE</span> <span style="color:#795E26">pxPrevious</span>;</span> <span style="color:#008000">/* 上一个 */</span>
+};
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">xMINI_LIST_ITEM</span> <span style="color:#795E26">MiniListItem_t</span>;</span>
+</pre>
+
+<p>五个字段逐个说（PDF 第 7.1.2 节 <span class="pg">PDF p.111</span>）：</p>
+
+<ul>
+<li>🔢 <strong>xItemValue</strong>：列表项的值。vListInsert 按它<strong>升序</strong>定位插入点；延时列表里它就是"唤醒时刻"。<code>listSET_LIST_ITEM_VALUE()</code> 设置。</li>
+<li>🔗 <strong>pxNext / pxPrevious</strong>：前后邻居指针，双向链表的核心。摘链/插链全靠这两个指针的四步接线。</li>
+<li>👤 <strong>pvOwner</strong>：指向拥有这个列表项的"对象"。对任务状态列表项来说就是 TCB——<code>listGET_LIST_ITEM_OWNER()</code> 取出后强转成 TCB 指针，就能拿到"这个链表节点代表哪个任务"。</li>
+<li>📦 <strong>pxContainer</strong>：指向列表项所在的列表。一个列表项同一时刻只能属于一个列表，插入时登记、移除时清空；uxListRemove 靠它找到"老家"。</li>
+</ul>
+
+<p><strong>迷你列表项 vs 完整列表项</strong>（PDF 第 7.1.3 节 <span class="pg">PDF p.112</span>）：迷你版砍掉了 pvOwner 和 pxContainer，只保留值 + 前后指针。为什么能砍？因为 xListEnd 只当"哨兵"用——它不代表任何任务，也不需要知道自己属于哪个列表。少两个指针字段，每个列表省 8 字节，几十个列表下来也是真金白银。</p>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>列表项是"节点的骨架"，pvOwner 是"节点承载的内容"</strong>。内核的套路永远是：列表只管把节点串起来，取任务时用 pvOwner 反查 TCB。第 6 课你会看到 <code>listGET_OWNER_OF_HEAD_ENTRY()</code> 频繁出现，就是这套路。</p>
+</div>
+
+<h2>4. 函数一、二：vListInitialise 与 vListInitialiseItem</h2>
+
+<p>列表和列表项定义后必须初始化才能用（PDF 第 7.2.1~7.2.2 节 <span class="pg">PDF p.113~114</span>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.c —— 初始化列表 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">vListInitialise</span><span style="color:#001080">(List_t *<span style="color:#267F99">const</span> pxList)</span>
+{
+    <span style="color:#008000">/* ① 初始化时列表中只有 xListEnd，遍历指针指向它 */</span>
+    pxList-&gt;pxIndex = (ListItem_t *)&amp;(pxList-&gt;xListEnd);
+
+    <span style="color:#008000">/* ② xListEnd 的值初始化为最大值，升序排序时永远排最后 */</span>
+    pxList-&gt;xListEnd.xItemValue = portMAX_DELAY;
+
+    <span style="color:#008000">/* ③ 空列表：哨兵的前后指针都指向自己（循环链表） */</span>
+    pxList-&gt;xListEnd.pxNext = (ListItem_t *)&amp;(pxList-&gt;xListEnd);
+    pxList-&gt;xListEnd.pxPrevious = (ListItem_t *)&amp;(pxList-&gt;xListEnd);
+
+    <span style="color:#008000">/* ④ 列表项计数清零 */</span>
+    pxList-&gt;uxNumberOfItems = (UBaseType_t)<span style="color:#098658">0U</span>;
+
+    <span style="color:#008000">/* ⑤ 写入完整性校验值 */</span>
+    listSET_LIST_INTEGRITY_CHECK_1_VALUE(pxList);
+    listSET_LIST_INTEGRITY_CHECK_2_VALUE(pxList);
+}
+
+<span style="color:#008000">/* list.c —— 初始化列表项 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">vListInitialiseItem</span><span style="color:#001080">(ListItem_t *<span style="color:#267F99">const</span> pxItem)</span>
+{
+    <span style="color:#008000">/* 列表项不属于任何列表 */</span>
+    pxItem-&gt;pxContainer = <span style="color:#098658">NULL</span>;
+    <span style="color:#008000">/* 写入校验值 */</span>
+    listSET_FIRST_LIST_ITEM_INTEGRITY_CHECK_VALUE(pxItem);
+    listSET_SECOND_LIST_ITEM_INTEGRITY_CHECK_VALUE(pxItem);
+}
+</pre>
+
+<p>逐行要点：vListInitialise 就干四件事——pxIndex 归位到哨兵、哨兵值拉满、哨兵自指成环、计数清零。<strong>自指成环</strong>是精髓：空列表时从 xListEnd 出发走一圈还是回到 xListEnd，遍历逻辑无需特判"空"；vListInitialiseItem 更简单，只清 pxContainer，保证它"不在任何列表里"。</p>
+
+<h2>5. 函数三：vListInsertEnd——插到 pxIndex 前面（无序插入）</h2>
+
+<p>把新列表项插到 <strong>pxIndex 当前指向的列表项之前</strong>，不做排序（PDF 第 7.2.3 节 <span class="pg">PDF p.115</span>）。注意：pxIndex 不一定指向 xListEnd，可能指向任意列表项。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.c —— 列表末尾插入列表项（&quot;末尾&quot;指 pxIndex 之前） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">vListInsertEnd</span><span style="color:#001080">(List_t *<span style="color:#267F99">const</span> pxList, ListItem_t *<span style="color:#267F99">const</span> pxNewListItem)</span>
+{
+    <span style="color:#008000">/* 记录插入点：pxIndex 指向的列表项 */</span>
+    ListItem_t *<span style="color:#267F99">const</span> pxIndex = pxList-&gt;pxIndex;
+
+    <span style="color:#008000">/* 校验列表和列表项完整性（调试用） */</span>
+    listTEST_LIST_INTEGRITY(pxList);
+    listTEST_LIST_ITEM_INTEGRITY(pxNewListItem);
+
+    <span style="color:#008000">/* ① 新节点的两个指针先接线 */</span>
+    pxNewListItem-&gt;pxNext = pxIndex;              <span style="color:#008000">/* 新节点 → 插入点 */</span>
+    pxNewListItem-&gt;pxPrevious = pxIndex-&gt;pxPrevious; <span style="color:#008000">/* 新节点 → 插入点的前一个 */</span>
+
+    <span style="color:#008000">/* ② 插入点前一个节点回头指向新节点 */</span>
+    pxIndex-&gt;pxPrevious-&gt;pxNext = pxNewListItem;
+    pxIndex-&gt;pxPrevious = pxNewListItem;          <span style="color:#008000">/* 插入点前驱换成新节点 */</span>
+
+    <span style="color:#008000">/* ③ 登记所属列表，计数加一 */</span>
+    pxNewListItem-&gt;pxContainer = pxList;
+    (pxList-&gt;uxNumberOfItems)++;
+}
+</pre>
+
+<p>逐行逻辑：先改新节点的两条出边，再改旧邻居的两条入边——四步接线，顺序不能乱（先接新节点再断旧链，保证中间态链表不断裂）。<code>pxContainer = pxList</code> 意味着"这个列表项现在属于 pxList 了"。为什么内核用这个"无序尾插"？典型场景：同优先级就绪任务的轮转——新就绪任务排到队尾，pxIndex 步进即可实现时间片轮换。</p>
+
+<h2>6. 函数四：vListInsert——按值升序插入（有序插入）</h2>
+
+<p>先找到插入位置，再接线（PDF 第 7.2.4 节 <span class="pg">PDF p.116~117</span>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.c —— 按 xItemValue 升序插入列表项 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">vListInsert</span><span style="color:#001080">(List_t *<span style="color:#267F99">const</span> pxList, ListItem_t *<span style="color:#267F99">const</span> pxNewListItem)</span>
+{
+    ListItem_t *pxIterator;
+    <span style="color:#267F99">const</span> TickType_t xValueOfInsertion = pxNewListItem-&gt;xItemValue;
+
+    listTEST_LIST_INTEGRITY(pxList);
+    listTEST_LIST_ITEM_INTEGRITY(pxNewListItem);
+
+    <span style="color:#008000">/* ① 特判：待插入值是最大值，直接放哨兵前面（即列表末尾） */</span>
+    <span style="color:#0000FF">if</span> (xValueOfInsertion == portMAX_DELAY)
+    {
+        pxIterator = pxList-&gt;xListEnd.pxPrevious;
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        <span style="color:#008000">/* ② 从哨兵出发遍历，停在&quot;下一个节点的值大于待插值&quot;的位置 */</span>
+        <span style="color:#0000FF">for</span> (pxIterator = (ListItem_t *)&amp;(pxList-&gt;xListEnd);
+             pxIterator-&gt;pxNext-&gt;xItemValue &lt;= xValueOfInsertion;
+             pxIterator = pxIterator-&gt;pxNext)
+        {
+        }
+    }
+
+    <span style="color:#008000">/* ③ 四步接线：插到 pxIterator 之后 */</span>
+    pxNewListItem-&gt;pxNext = pxIterator-&gt;pxNext;
+    pxNewListItem-&gt;pxNext-&gt;pxPrevious = pxNewListItem;
+    pxNewListItem-&gt;pxPrevious = pxIterator;
+    pxIterator-&gt;pxNext = pxNewListItem;
+
+    <span style="color:#008000">/* ④ 登记所属列表，计数加一 */</span>
+    pxNewListItem-&gt;pxContainer = pxList;
+    (pxList-&gt;uxNumberOfItems)++;
+}
+</pre>
+
+<p>逐行逻辑：特判 <code>portMAX_DELAY</code> 是性能优化——延时列表里"永不唤醒"的任务（值最大）不用遍历直接插末尾；遍历条件 <code>pxNext->xItemValue &lt;= 待插值</code> 保证升序且稳定（相等值时新节点排在老节点后面）；最后的四步接线和 vListInsertEnd 同一套路。典型场景：延时列表按唤醒时刻排序、事件等待列表按优先级排序。</p>
+
+<h2>7. 函数五：uxListRemove——摘链</h2>
+
+<p>把列表项从它所在的列表里移除，返回剩余列表项数量（PDF 第 7.2.5 节 <span class="pg">PDF p.118</span>）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* list.c —— 从列表中移除列表项 */</span>
+UBaseType_t <span style="color:#795E26">uxListRemove</span><span style="color:#001080">(ListItem_t *<span style="color:#267F99">const</span> pxItemToRemove)</span>
+{
+    <span style="color:#008000">/* ① 从列表项自己的 pxContainer 找回&quot;老家&quot;列表 */</span>
+    List_t *<span style="color:#267F99">const</span> pxList = pxItemToRemove-&gt;pxContainer;
+
+    <span style="color:#008000">/* ② 摘链：让前后邻居互相指，绕过自己 */</span>
+    pxItemToRemove-&gt;pxNext-&gt;pxPrevious = pxItemToRemove-&gt;pxPrevious;
+    pxItemToRemove-&gt;pxPrevious-&gt;pxNext = pxItemToRemove-&gt;pxNext;
+
+    <span style="color:#008000">/* ③ 如果遍历指针正指向被移除项，回退到上一个列表项 */</span>
+    <span style="color:#0000FF">if</span> (pxList-&gt;pxIndex == pxItemToRemove)
+    {
+        pxList-&gt;pxIndex = pxItemToRemove-&gt;pxPrevious;
+    }
+
+    <span style="color:#008000">/* ④ 清空所在列表标记，计数减一 */</span>
+    pxItemToRemove-&gt;pxContainer = <span style="color:#098658">NULL</span>;
+    (pxList-&gt;uxNumberOfItems)--;
+
+    <span style="color:#008000">/* ⑤ 返回移除后列表中剩余列表项的数量 */</span>
+    <span style="color:#0000FF">return</span> pxList-&gt;uxNumberOfItems;
+}
+</pre>
+
+<p>逐行逻辑：移除动作本身只是两步——"后邻居的前驱改成我的前驱"、"前邻居的后继改成我的后继"，自己被彻底跳过；pxIndex 修正防止遍历指针悬空；最后 pxContainer 清空，表示"我不属于任何列表了"。返回值被内核用来判断列表是否空了（如判断该优先级是否还有就绪任务）。</p>
+
+<div class="warn">
+  <p>⚠️ 两个易错点：① 移除后的列表项，其 pxNext/pxPrevious <strong>仍残留指向链表</strong>（单向的"幽灵链接"），内核靠 pxContainer 判断归属，所以移除后不能再用它遍历；② 列表操作函数<strong>不是线程安全的</strong>——内核只在临界区内调用它们。你自己的应用代码若要操作共享列表，也要用 taskENTER_CRITICAL 保护，否则任务切换会撕碎链表。</p>
+</div>
+
+<h2>8. 宏速查 + 插入删除实验</h2>
+
+<p>list.h 里还有一批操作宏，本质是"给字段赋值/取值"的语法糖（PDF 第 7.3 节 <span class="pg">PDF p.119</span>）：</p>
+
+<table>
+<tr><th>宏</th><th>作用</th><th>内核典型用法</th></tr>
+<tr><td><code>listSET_LIST_ITEM_VALUE</code></td><td>设置列表项的值</td><td>延时列表写入唤醒时刻</td></tr>
+<tr><td><code>listGET_LIST_ITEM_VALUE</code></td><td>读取列表项的值</td><td>判断延时是否到期</td></tr>
+<tr><td><code>listSET_LIST_ITEM_OWNER</code></td><td>设置拥有者</td><td>任务入列时登记自己的 TCB</td></tr>
+<tr><td><code>listGET_OWNER_OF_HEAD_ENTRY</code></td><td>取队首的拥有者</td><td>调度器取"下一个要跑的任务"</td></tr>
+<tr><td><code>listGET_NEXT</code></td><td>取下一个列表项</td><td>轮转遍历</td></tr>
+<tr><td><code>listLIST_IS_EMPTY</code></td><td>判断列表是否为空</td><td>查某个优先级是否有人排队</td></tr>
+<tr><td><code>listREMOVE_ITEM</code></td><td>封装 uxListRemove</td><td>任务出列</td></tr>
+</table>
+
+<p>教材实验 7.4（PDF 第 7.4 节 <span class="pg">PDF p.120~127</span>）把上面的函数串起来：初始化 1 个列表 + 3 个列表项 → 逐个 vListInsert → uxListRemove 摘掉列表项 2 → vListInsertEnd 把它插回末尾，每步用串口打印所有节点的 <code>pxNext/pxPrevious</code> 地址验证顺序。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 仿教材实验骨架：验证插入顺序 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#008000">/* 第一步：初始化列表和三个列表项 */</span>
+    vListInitialise(&amp;TestList);
+    vListInitialiseItem(&amp;ListItem1);
+    vListInitialiseItem(&amp;ListItem2);
+    vListInitialiseItem(&amp;ListItem3);
+
+    <span style="color:#008000">/* 第二步：给列表项赋值后按升序插入 */</span>
+    listSET_LIST_ITEM_VALUE(&amp;ListItem1, <span style="color:#098658">3</span>);
+    listSET_LIST_ITEM_VALUE(&amp;ListItem2, <span style="color:#098658">1</span>);
+    listSET_LIST_ITEM_VALUE(&amp;ListItem3, <span style="color:#098658">2</span>);
+    vListInsert(&amp;TestList, &amp;ListItem1);
+    vListInsert(&amp;TestList, &amp;ListItem2);
+    vListInsert(&amp;TestList, &amp;ListItem3);
+    <span style="color:#008000">/* 打印顺序应为：List2(1) → List3(2) → List1(3) */</span>
+
+    <span style="color:#008000">/* 第三步：移除列表项 2，链表变成 List3 → List1 */</span>
+    uxListRemove(&amp;ListItem2);
+
+    <span style="color:#008000">/* 第四步：把列表项 2 插到末尾（pxIndex 之前） */</span>
+    vListInsertEnd(&amp;TestList, &amp;ListItem2);
+    <span style="color:#008000">/* 打印顺序应为：List3 → List1 → List2 */</span>
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        vTaskDelay(<span style="color:#098658">10</span>);
+    }
+}
+</pre>
+
+<p>教材下载验证里能看到一串地址（如 0x200000CC 的列表、0x200000D4 的 xListEnd、0x200000E0 起的三个列表项，<span class="pg">PDF p.124~127</span>）——xListEnd 恰好在列表结构体内偏移 8 字节处，pxIndex 初始化时指向它，插入后指针链与预期完全一致。地址会变，但<strong>链接关系不变</strong>。</p>
+
+<h2>动手练习（约 40 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 5.1：仿照教材写列表插入/删除验证代码</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里新建一个任务（优先级最低），内部定义 <code>List_t TestList</code> 和三个 <code>ListItem_t</code>，包含 <code>list.h</code> 后完成：初始化 → 赋不同值（3/1/2）→ 依次 vListInsert → 打印链表顺序。</p>
+  <p class="step">2️⃣ 手动实现一个打印函数：从 <code>TestList.pxIndex</code> 出发，循环 <code>listGET_NEXT()</code> 走到 xListEnd，打印每个节点的 xItemValue 和地址（用 printf "%p"）。</p>
+  <p class="step">3️⃣ 再执行 uxListRemove(&amp;ListItem2) 和 vListInsertEnd(&amp;TestList, &amp;ListItem2)，每步打印对比。</p>
+  <p class="step"><strong>观察什么：</strong>升序插入后打印 1→2→3（按值）；移除 2 后 1→3；末尾插入后 1→3→2。对照教材 PDF p.124~127 的地址打印结果，确认你的链表链接关系与教材一致。改一改插入顺序（先插大值再插小值），验证升序逻辑与插入顺序无关。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 5.2：思考——为什么内核到处用列表</h3>
+  <p class="step">1️⃣ 在 FreeRTOS 内核源码里用搜索工具搜 <code>pxReadyTasksLists</code> 和 <code>xTasksWaitingTermination</code>、<code>xDelayedTaskList1</code>，数一数它们被哪些函数引用（建议直接读 tasks.c）。</p>
+  <p class="step">2️⃣ 在 tasks.c 里看 <code>prvInitialiseTaskLists()</code>：它对每个优先级调用 vListInitialise——想想为什么就绪列表是"优先级数"条，而不是一条。</p>
+  <p class="step"><strong>观察什么：</strong>就绪/阻塞/挂起任务全部由列表组织：同优先级任务在一条就绪链上轮转（vListInsertEnd + pxIndex 步进），延时任务按唤醒时刻升序排队（vListInsert），删除的任务在等待终止列表里排队等空闲任务回收（uxListRemove + 空闲任务循环）。你还能顺便预习第 6 课启动流程的骨架——列表就是调度器的"收纳盒"。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 列表结构体中 xListEnd 成员是什么类型？</p>
+  <p class="opt">A. 完整的 ListItem_t 列表项</p>
+  <p class="opt">B. MiniListItem_t 迷你列表项</p>
+  <p class="opt">C. 指向 ListItem_t 的指针</p>
+  <details><summary>查看答案</summary><div class="answer">B。xListEnd 是迷你列表项（哨兵），值初始化为 portMAX_DELAY，标记列表末尾（PDF p.110）。</div></details>
+
+  <p class="q">Q2. vListInsert 按什么规则决定插入位置？</p>
+  <p class="opt">A. 按 xItemValue 升序排列插入</p>
+  <p class="opt">B. 按 pvOwner 地址大小插入</p>
+  <p class="opt">C. 总是插到列表的最前面</p>
+  <details><summary>查看答案</summary><div class="answer">A。vListInsert 遍历列表，把新列表项按 xItemValue 升序插到合适位置（PDF p.116）。</div></details>
+
+  <p class="q">Q3. uxListRemove 的返回值是什么？</p>
+  <p class="opt">A. 被移除列表项的值</p>
+  <p class="opt">B. 移除后列表中剩余列表项的数量</p>
+  <p class="opt">C. 被移除列表项的地址</p>
+  <details><summary>查看答案</summary><div class="answer">B。函数返回移除后列表中列表项的数量（uxNumberOfItems），内核据此判断列表是否为空（PDF p.118）。</div></details>
+
+  <p class="q">Q4. 列表项 pvOwner 字段指向的对象通常是？</p>
+  <p class="opt">A. 列表项所在的列表</p>
+  <p class="opt">B. 拥有该列表项的任务控制块</p>
+  <p class="opt">C. 下一个列表项</p>
+  <details><summary>查看答案</summary><div class="answer">B。pvOwner 指向包含该列表项的对象（通常是 TCB），使列表项与对象双向链接（PDF p.111）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 7 章（PDF p.110~128）——本课全部依据，含实验完整源码与地址打印结果</li>
+<li>🌐 <a href="https://github.com/FreeRTOS/FreeRTOS-Kernel">FreeRTOS 内核官方仓库（GitHub）</a>——list.h / list.c 完整源码，对照本课逐行读</li>
+<li>🌐 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a>——第 3 章就绪列表的组织方式可对照理解</li>
+<li>📖 同书第 8 章（PDF p.129 起）——下一课预告：启动流程里 pxReadyTasksLists 的真身</li>
+</ul>
+
+<div class="footer-note">
+  <p>列表是内核的"血管"，现在你摸清了每一条血管的走线。下一课顺着血流看心脏：系统启动流程——调度器怎么初始化这些列表、第一个任务怎么跑起来的。啃完这块，FreeRTOS 对你就不再是黑盒了。有问题随时丢给我！</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0004-task-api.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0006-scheduler-startup.html">下一课：系统启动流程 →</a>
+</nav>
+
+</div>
+</body>
+</html>

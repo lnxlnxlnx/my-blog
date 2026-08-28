@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0011 · 文件与目录 os/shutil/json/csv</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>文件与目录 os / shutil / json / csv</h1>
+<p class="meta">Pythonic 代码 · 课程 0011 · 预计 25 分钟</p>
+
+<p>C 里读写文件是 fopen/fread/fwrite,操作目录得调系统 API,还没有方便的 JSON/CSV。Python 里:<code>pathlib/os</code> 操作路径与目录,<code>shutil</code> 处理复制/移动/删除,<code>json</code> 序列化,<code>csv</code> 读写表格。本课把日常文件生活补齐。</p>
+
+<h2>知识点 1:读写文本文件——with + pathlib</h2>
+<p>最省心的读写用 <code>pathlib</code> 的一行方法(内部就是 with):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">pathlib</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">Path</span>
+<span style="color: #001080">p</span> <span style="color: #000">=</span> <span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;hello.txt&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">write_text</span><span style="color: #000">(</span><span style="color: #A31515">&quot;你好,Python\n&quot;</span><span style="color: #000">)</span>      <span style="color: #008000"># 写文本</span>
+<span style="color: #001080">text</span> <span style="color: #000">=</span> <span style="color: #001080">p</span><span style="color: #000">.</span><span style="color: #001080">read_text</span><span style="color: #000">()</span>               <span style="color: #008000"># 读文本(默认 utf-8)</span>
+
+<span style="color: #008000"># 也可以 open 指定编码/模式</span>
+<span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;hello.txt&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;a&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>   <span style="color: #008000"># a=追加</span>
+    <span style="color: #001080">f</span><span style="color: #000">.</span><span style="color: #001080">write</span><span style="color: #000">(</span><span style="color: #A31515">&quot;追加一行\n&quot;</span><span style="color: #000">)</span>
+</pre>
+<p>要指定编码用 <code>open(..., encoding="utf-8")</code>(强烈建议永远写 utf-8),读大文件逐行:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;big.txt&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">line</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">f</span><span style="color: #000">:</span>        <span style="color: #008000"># 逐行读,不一次全载入内存</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">line</span><span style="color: #000">.</span><span style="color: #001080">strip</span><span style="color: #000">())</span>
+</pre>
+<p>逐行用 <code>for line in f</code> 就够,别用 <code>readlines()</code> 读大文件(那会整列进内存)。</p>
+
+<h2>知识点 2:目录操作——os / pathlib</h2>
+<p>建目录、列目录、判断存在、拼接,Path 都有现成方法:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">pathlib</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">Path</span>
+<span style="color: #001080">d</span> <span style="color: #000">=</span> <span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">mkdir</span><span style="color: #000">(</span><span style="color: #001080">exist_ok</span><span style="color: #000">=</span><span style="color: #00F">True</span><span style="color: #000">)</span>           <span style="color: #008000"># 建目录(已有也不报错,像递归著名)</span>
+<span style="color: #00F">for</span> <span style="color: #001080">child</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">d</span><span style="color: #000">.</span><span style="color: #001080">iterdir</span><span style="color: #000">():</span>        <span style="color: #008000"># 列出目录里的东西</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">child</span><span style="color: #000">)</span>
+<span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">).</span><span style="color: #001080">exists</span><span style="color: #000">()</span>           <span style="color: #008000"># 判断存在</span>
+<span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">).</span><span style="color: #001080">is_file</span><span style="color: #000">()</span>          <span style="color: #008000"># 是文件吗</span>
+<span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">).</span><span style="color: #001080">is_dir</span><span style="color: #000">()</span>           <span style="color: #008000"># 是目录吗</span>
+<span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">).</span><span style="color: #001080">unlink</span><span style="color: #000">()</span>           <span style="color: #008000"># 删文件</span>
+<span style="color: #001080">Path</span><span style="color: #000">(</span><span style="color: #A31515">&quot;x.csv&quot;</span><span style="color: #000">).</span><span style="color: #001080">rename</span><span style="color: #000">(</span><span style="color: #A31515">&quot;y.csv&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># 重命名/移动</span>
+</pre>
+<p>要 <code>os</code> 的也有:<code>os.makedirs()</code>、<code>os.listdir()</code>;但 pathlib 一般更顺手。<code>mkdir(parents=True)</code> 会连父目录一起建。</p>
+
+<h2>知识点 3:复制/移动/删除——shutil</h2>
+<p>shutil 是「高级文件工具」,复制、移动、整目录删除/复制:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">shutil</span>
+<span style="color: #001080">shutil</span><span style="color: #000">.</span><span style="color: #001080">copy</span><span style="color: #000">(</span><span style="color: #A31515">&quot;a.csv&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;b.csv&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 复制文件</span>
+<span style="color: #001080">shutil</span><span style="color: #000">.</span><span style="color: #001080">move</span><span style="color: #000">(</span><span style="color: #A31515">&quot;b.csv&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;backup/b.csv&quot;</span><span style="color: #000">)</span>  <span style="color: #008000"># 移动</span>
+<span style="color: #001080">shutil</span><span style="color: #000">.</span><span style="color: #001080">rmtree</span><span style="color: #000">(</span><span style="color: #A31515">&quot;tempdir&quot;</span><span style="color: #000">)</span>          <span style="color: #008000"># 递归删整个目录</span>
+<span style="color: #001080">shutil</span><span style="color: #000">.</span><span style="color: #001080">copytree</span><span style="color: #000">(</span><span style="color: #A31515">&quot;src&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;dst&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># 复制整个目录树</span>
+</pre>
+<p>记忆:<code>shutil</code> 管「跨文件/目录」的动作(复制移动删除整棵),<code>os/pathlib</code> 管「单个路径/单文件」的动作。</p>
+
+<h2>知识点 4:JSON——存/读结构化数据</h2>
+<p>把 dict/列表存成 JSON 文件、再读回来,是配置和数据交换的标配:<code>json.dumps</code> 转字符串,<code>json.loads</code> 读回,<code>dump/load</code> 直接对文件:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">json</span>
+<span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #000">{</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;scores&quot;</span><span style="color: #000">:</span> <span style="color: #000">[</span><span style="color: #098658">92</span><span style="color: #000">,</span> <span style="color: #098658">85</span><span style="color: #000">,</span> <span style="color: #098658">78</span><span style="color: #000">]}</span>
+
+<span style="color: #008000"># 转成 JSON 字符串</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">json</span><span style="color: #000">.</span><span style="color: #001080">dumps</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">,</span> <span style="color: #001080">ensure_ascii</span><span style="color: #000">=</span><span style="color: #00F">False</span><span style="color: #000">,</span> <span style="color: #001080">indent</span><span style="color: #000">=</span><span style="color: #098658">2</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">)</span>
+
+<span style="color: #008000"># 写文件 / 读回</span>
+<span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.json&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;w&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #001080">json</span><span style="color: #000">.</span><span style="color: #001080">dump</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">,</span> <span style="color: #001080">f</span><span style="color: #000">,</span> <span style="color: #001080">ensure_ascii</span><span style="color: #000">=</span><span style="color: #00F">False</span><span style="color: #000">,</span> <span style="color: #001080">indent</span><span style="color: #000">=</span><span style="color: #098658">2</span><span style="color: #000">)</span>
+<span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.json&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #001080">loaded</span> <span style="color: #000">=</span> <span style="color: #001080">json</span><span style="color: #000">.</span><span style="color: #001080">load</span><span style="color: #000">(</span><span style="color: #001080">f</span><span style="color: #000">)</span>             <span style="color: #008000"># 又是 dict/列表</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">loaded</span><span style="color: #000">[</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">])</span>
+</pre>
+<p>要点:<code>dict → JSON</code>=dumps/dump,<code>JSON → dict</code>=loads/load。中文记得 <code>ensure_ascii=False</code> 才不乱码,<code>indent=2</code> 排版好看。</p>
+
+<h2>知识点 5:CSV——表格数据</h2>
+<p>处理表格用 <code>csv</code> 模块,自动处理逗号/引号/换行,别手写 split(","):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">csv</span>
+<span style="color: #008000"># 写</span>
+<span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;people.csv&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;w&quot;</span><span style="color: #000">,</span> <span style="color: #001080">newline</span><span style="color: #000">=</span><span style="color: #A31515">&quot;&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #001080">w</span> <span style="color: #000">=</span> <span style="color: #001080">csv</span><span style="color: #000">.</span><span style="color: #001080">writer</span><span style="color: #000">(</span><span style="color: #001080">f</span><span style="color: #000">)</span>
+    <span style="color: #001080">w</span><span style="color: #000">.</span><span style="color: #001080">writerow</span><span style="color: #000">([</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;age&quot;</span><span style="color: #000">])</span>         <span style="color: #008000"># 表头</span>
+    <span style="color: #001080">w</span><span style="color: #000">.</span><span style="color: #001080">writerow</span><span style="color: #000">([</span><span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">,</span> <span style="color: #098658">25</span><span style="color: #000">])</span>
+<span style="color: #008000"># newline=&quot;&quot; 很重要,避免 Windows 出现空行</span>
+
+<span style="color: #008000"># 读:一行一个 dict(以第一行为列名)</span>
+<span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;people.csv&quot;</span><span style="color: #000">,</span> <span style="color: #001080">encoding</span><span style="color: #000">=</span><span style="color: #A31515">&quot;utf-8&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">row</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">csv</span><span style="color: #000">.</span><span style="color: #001080">DictReader</span><span style="color: #000">(</span><span style="color: #001080">f</span><span style="color: #000">):</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">],</span> <span style="color: #001080">row</span><span style="color: #000">[</span><span style="color: #A31515">&quot;age&quot;</span><span style="color: #000">])</span>
+</pre>
+<p><code>csv.DictReader</code> 把第一行当列名、后面每行变成字典,最省事。写用 <code>csv.writer</code> + <code>writerow</code>。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">写一个文本文件最省心?</p>
+  <button class="opt" data-ok="false">f.write 手动开</button>
+  <button class="opt" data-ok="true">Path.write_text()</button>
+  <button class="opt" data-ok="false">os.write()</button>
+  <button class="opt" data-ok="false">print 重定向</button>
+  <p class="reveal">pathlib 的 Path.write_text/read_text 内部就是 with,一行搞定。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">递归复制整个目录用?</p>
+  <button class="opt" data-ok="false">os.copy()</button>
+  <button class="opt" data-ok="true">shutil.copytree()</button>
+  <button class="opt" data-ok="false">Path.copytree</button>
+  <button class="opt" data-ok="false">shutil.copy()</button>
+  <p class="reveal">跨目录的复制/移动/删除用 shutil;copytree 复制整棵目录树。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">把 dict 写进 JSON 文件?</p>
+  <button class="opt" data-ok="false">json.loads</button>
+  <button class="opt" data-ok="true">json.dump(d, f)</button>
+  <button class="opt" data-ok="false">json.write</button>
+  <button class="opt" data-ok="false">str(d) 存盘</button>
+  <p class="reveal">dump/dumps 是 序列化(dict→JSON);load/loads 是反序列化。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">读 CSV 且第一行当列名,用?</p>
+  <button class="opt" data-ok="false">csv.writer</button>
+  <button class="opt" data-ok="true">csv.DictReader</button>
+  <button class="opt" data-ok="false">手动 split</button>
+  <button class="opt" data-ok="false">json.load</button>
+  <p class="reveal">DictReader 把第一行当列名、每行变字典,处理逗号/引号都自动。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0011_文件与目录.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:用 Path 建目录、写/读文本、列目录;写一个「统计文本行数」函数</li>
+  <li><strong>练习 B</strong>:dict ↔ JSON 读写;用 csv.DictReader 读一个 csv 并算平均数</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段手写文件读写/解析,改成 pathlib/json/csv + with</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/pathlib.html">pathlib</a>」「<a href="https://docs.python.org/zh-cn/3/library/json.html">json</a>」「<a href="https://docs.python.org/zh-cn/3/library/csv.html">csv</a>」</strong>:pathlib 的 Path API 最值得全刷一遍。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:json.dump vs dumps 分清楚了吗?下一课讲<strong>系统与命令行 sys / os.environ / argparse</strong>——拿到命令行参数、环境变量、退出码。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0010-数学与随机.html">← 上一篇:数学与随机 math / random</a>
+  <a href="index.html">课程地图</a>
+  <a href="0012-系统与命令行.html">下一篇:系统与命令行 sys / os.environ / argparse →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

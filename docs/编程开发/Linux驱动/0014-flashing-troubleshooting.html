@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>L14 · 整机烧录与排障 · linux-learning</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<link rel="stylesheet" href="../assets/highlight-vscode-light.css">
+<script defer src="../assets/highlight.min.js"></script>
+<script defer src="../assets/highlight-init.js"></script>
+</head>
+<body>
+<h1>L14 · 整机烧录与排障：动手前，先备好后悔药</h1>
+<p class="meta"><span class="tag">阶段 3</span><span class="tag">全课最高风险区</span> · 动手约 60 分钟</p>
+<p class="lead">这是你唯一一块板，前面都做了铺垫。现在是<b>烧录</b>课——持久写入 eMMC/SD，弄坏可能救不回来。所以这一课先教你怎么"不弄坏"，再教怎么烧怎么写，最后教<b>如果坏了怎么诊断</b>。</p>
+
+<h2>三条铁律（先立规矩再动手）</h2>
+<ol>
+<li><b>先做整盘备份</b>：万一烧坏能回退。用 <code>dd</code> 把整块 eMMC/SD 镜像拷到 PC（<code>sudo dd if=/dev/mmcblk1 of=backup.img bs=4M</code>）。备份是"后悔药"，先备再做。</li>
+<li><b>优先用 SD 卡当"试验场"</b>：开发期所有新 u-boot/zImage/dt/rootfs，先写进一张 SD 卡，让板子<b>从 SD 启动</b>（不影响 eMMC 出厂系统）。玩坏了拔卡就回到出厂。</li>
+<li><b>调整 bootargs 用 setenv 不 save</b>：跑歪了重启即还原。</li>
+</ol>
+
+<h2>要烧哪些东西：一张总表</h2>
+<table>
+<tr><th>镜像</th><th>来源（你已会编/会找）</th><th>写到介质哪一段</th></tr>
+<tr><td>u-boot.imx</td><td>L13 编译产物</td><td>eMMC/SD 起始偏移 1KB 处</td></tr>
+<tr><td>zImage</td><td>L11 编译产物</td><td>boot 分区（分区1，FAT）</td></tr>
+<tr><td>imx6ull-alientek-emmc.dtb</td><td>L11 编译产物</td><td>同一 boot 分区（分区1）</td></tr>
+<tr><td>rootfs</td><td>L12 构建产物</td><td>根分区（分区2，ext4）</td></tr>
+</table>
+<p>三种典型烧录法（分别对应开发期/批量/裸机救砖）：</p>
+<ul>
+<li><b>TFTP/NFS 起网启动</b>（开发期最安全）：u-boot 下 <code>tftp 80800000 zImage;...</code>，rootfs 用 NFS。不改任何存储，跑的是"内存里的系统"。</li>
+<li><b>SD 卡 dd 写入</b>（易控制）：把镜像按分区表 dd 到 SD。</li>
+<li><b>MFG 烧录工具</b>（正点原子出厂版）：USB 连 PC，软件自动烧全镜像，最"官方"但覆盖面大，出问题要重刷。</li>
+</ul>
+
+<div class="exercise">
+<div class="t">练习 L14：一次有退路的完整系统烧录演练</div>
+<ol>
+<li><b>备份</b>(必须先做)：<code>sudo dd if=/dev/mmcblk1 of=~/backup-emmc.img bs=4M</code>，确认文件大小>0 且校验 OK（<code>ls -l</code>）。备份放 PC。</li>
+<li><b>准备 SD 试玩卡</b>：拿一张 SD，把出厂你的 u-boot.imx/zImage/dtb/rootfs 用分区分文件的方式布置（做法参考指南 39.2，或用正点原子的打包工具）。</li>
+<li><b>从 SD 启动</b>：拨码切 SD 启动，<code>printenv</code> 确认在用新镜像。玩坏就拔卡回出厂。</li>
+<li><b>最后（可选、且保证备份后）</b>用 MFG 或 dd 把整套镜像写进 eMMC，重启验证是"你自己的内核+你自己的驱动"。</li>
+</ol>
+</div>
+
+<h2>排障套路：看图找病</h2>
+<pre><code>现象             可能原因                      取证
+u-boot 都没出来     启动介质/u-boot 没烧对/坏     串口有无任何输出
+u-boot出来内核没起   内核/dtb 加载地址错、镜像损坏  u-boot 打印+fatls 确认文件
+内核起一半挂了       bootargs 的 root= 错、dtb不匹配  内核日志最后几行+dmesg提前
+Freeze在挂载rootfs   rootfs 分区不存在/格式不对     /proc/cmdline 对比实际
+起来但没驱动         设备树不匹配/CONFIG没编        /proc/modules + dmesg | grep</code></pre>
+<p>核心心法：<b>每次只改一个变量</b>，用 <code>dmesg</code> 和串口日志当"证据链"逐段定位，别乱试。</p>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>为什么单板开发要先做整盘 dd 备份？</summary><p class="a">烧录是持久操作，一次失误可能救不回。dd 备份把 eMMC/SD 原样存入 PC，等于买保险：烧坏就能整盘回写恢复。没备份别碰烧录。</p></details>
+<details><summary>开发期临时改 bootargs 为什么不 saveenv？</summary><p class="a">saveenv 会把改动持久写入 eMMC/SD。不 save 时 setenv 只改 DRAM 里的环境变量，重启即恢复出厂，风险降到最低。</p></details>
+<details><summary>内核只跑到一半，最后该看什么？</summary><p class="a">先看 u-boot 打印（文件加载/启动地址），再看内核最后几行日志(死在哪一步)，结合 /proc/cmdline（实际上 bootargs 改没改到）。按"加载→传参→挂载→起驱动"逐段。一次只改一个变量。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① 三条安全铁律(备份/SD试玩/不save)；② 四种镜像→三段介质；③ 排障按"证据链"逐段定位。<b>到这里，你完成了从"会用板"到"能拆装系统、会写驱动、能排障"的全链闭环。恭喜——你已经是合格的嵌入式 Linux 开发工了。</b>接下来按 Phase 4 综合质检，回头把 L04-L10 的驱动在你自制的系统里全部跑通。</p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 39 章「系统烧写」—— 三种方法的详细操作</li>
+<li>第 37 章末尾（内核启动失败常见排查）与附录（<code>bootargs</code> 常见例子）</li>
+<li>本工作区 <a href="../reference/roadmap.html">路线图</a>(Phase 4) & <a href="../reference/imx6ull-cheatsheet.html">速查表</a></li>
+</ul>
+
+<p><strong>烧录成功了/失败了，都回来找我汇报</strong>——这课的全流程我陪你过，特别是需要判断"是不是该动 MFG"的时候，别自己硬来。</p>
+</body>
+</html>

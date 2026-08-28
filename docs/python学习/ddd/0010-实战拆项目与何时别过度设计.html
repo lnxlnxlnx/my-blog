@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD 0010 · 实战拆项目与何时别过度设计</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>实战拆项目与何时别过度设计</h1>
+<p class="meta">DDD 与六边形架构 · 课程 0010 · 预计 30 分钟</p>
+
+<p>前 9 课把 DDD/六边形的骨架和积木都讲了。这最后一课,我们<strong>把整套东西用到真实 target 上</strong>:① 用一张"拆解清单"去读 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的源码轮廓;② 用同样清单读你自己 repo;③ 明确<strong>什么时候别用这套</strong>。想想你架构课学的"四步读法"——这里是人家的 DDD 版。</p>
+
+<h2>知识点 1:拆解一张 DDD 项目的清单</h2>
+<p>拿到一个号称 DDD/六边形的项目,按下面顺序问自己(这就是"读出它的山形"):</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 1 模块划分:src/modules 下有哪些业务模块?各代表哪个 bounded context?</span>
+<span style="color: #008000"># 2 垂直切片:每个模块的 commands/ 里有哪些用例?queries/ 有哪些查询?</span>
+<span style="color: #008000"># 3 领域层:domain/ 下有哪些实体/聚合根/值对象/领域事件?</span>
+<span style="color: #008000"># 4 应用层:application/ 下有哪些应用服务(命令/查询处理器)?ports/ 有哪些接口?</span>
+<span style="color: #008000"># 5 接口适配:interface/ 下有哪些控制器、DTO?</span>
+<span style="color: #008000"># 6 基础设施:infrastructure/ 下有哪些仓储实现、适配器、持久化模型?</span>
+<span style="color: #008000"># 7 依赖方向:端口定义在哪、实现在哪、怎么注入?有没有违背&quot;依赖向内&quot;?</span>
+</pre>
+<p>读一个 DDD 项目,不是逐行读,而是<strong>先摸目录形状、再沿一个用例(垂直切片)走到底</strong>。一个用例从 controller → command → service → domain → repository 走通,你就看懂 90%。</p>
+
+<h2>知识点 2:沿着一个用例走通(以"创建用户"为例)</h2>
+<p>项目里 create-user 这个垂直切片,翻译成 Python 形状是这样的调用链:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># create-user.controller.py   ← 收 HTTP 请求</span>
+<span style="color: #008000">#   ↓ 转 CreateUserCommand,发给 command bus</span>
+<span style="color: #008000"># create-user.service.py      ← 应用服务:命令处理器</span>
+<span style="color: #008000">#   ├ 造 User 实体(领域)</span>
+<span style="color: #008000">#   ├ user repo(端口)存库 → SqlUserRepository(设施)</span>
+<span style="color: #008000">#   └ 发 UserCreated 领域事件</span>
+<span style="color: #008000">#      ↓ 事件 handler:创建 Wallet(另一个聚合)</span>
+<span style="color: #008000"># 结果数据 → controller → 响应 DTO 返回</span>
+</pre>
+<p>你要能"顺着这条火车道从头走到尾",并说出每一站(controller/service/domain/port/adapter)各干了什么、依赖朝哪。这就是读懂 DDD 项目的核心技能。</p>
+
+<h2>知识点 3:用同一套"拆解脑"看你自己的代码</h2>
+<p>把你 repo 里最复杂的一个脚本当靶子,问:它该不该按这套拆?比如——</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 现状:一个 main.py 里 又收输入 又算业务 又连库 又拼输出</span>
+<span style="color: #008000"># 拆解成 DDD 的提问:</span>
+<span style="color: #008000">#   - 有没有&quot;领域实体/不变量&quot;值得单独成类?(值对象/实体)</span>
+<span style="color: #008000">#   - 读写是否该分离?(命令/查询)</span>
+<span style="color: #008000">#   - 数据库访问是否该用接口包一层,方便测试/换库?(端口/适配器)</span>
+<span style="color: #008000">#   - 外部 I/O(发邮件/HTTP)是否隔离?(适配器)</span>
+</pre>
+<p>不必全部上,先挑"确实受益"的部分拆。小项目往往只用到:实体/值对象 + 应用服务 + 一个简单仓储端口,分层没那么高。<a href="https://martinfowler.com/bliki/AnemicDomainModel.html">别把自己写成年年贫血模型</a>。</p>
+
+<h2>知识点 4:何时不用的明确清单</h2>
+<p>项目反复强调,这是<strong>推荐非铁律</strong>。别硬套的场景:</p>
+<ul>
+  <li>纯 CRUD、业务规则极少的小应用 → 完整 DDD 是过度设计</li>
+  <li>一次性脚本、原型 → 单层直接写</li>
+  <li>只有一个团队、不会拆微服务 → 模块化/端口不必那么彻底</li>
+  <li>技术完全锁定不会换 → 抽象数据库那层收益低</li>
+</ul>
+<p>判断口诀:<strong>抽象只在"会变/会被换/需要 mock"的地方值钱</strong>;不确定时,先写简单,等出现"换库/加端口/多团队"的真实需求再补抽象,而不是从第一天堆满(<a href="https://mortoray.com/2014/08/01/the-false-abstraction-antipattern/">假抽象</a>)。</p>
+
+<h2>知识点 5:把"读懂"变成可验证的一步</h2>
+<p>读一个真实 DDD 项目最后给自己交差:能画一张"模块→分层"示意图,并能回答"如果我加一个新用例(给用户加积分),改动会落在哪些文件、依赖朝哪"。答得出这个,你就真读懂了,而不再是"每个词都认识但串不起来"。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">读懂 DDD 项目先做什么?</p>
+  <button class="opt" data-ok="false">逐行读</button>
+  <button class="opt" data-ok="true">摸目录形状</button>
+  <button class="opt" data-ok="false">先读测试</button>
+  <button class="opt" data-ok="false">先跑起来</button>
+  <p class="reveal">先摸 modules/domain/application/interface/infrastructure 目录形状,再沿一个用例走通。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">最简单 CRUD 小应用该用它吗?</p>
+  <button class="opt" data-ok="false">必须用</button>
+  <button class="opt" data-ok="true">不必用</button>
+  <button class="opt" data-ok="false">只能用</button>
+  <button class="opt" data-ok="false">看目录</button>
+  <p class="reveal">纯 CRUD/小项目硬套完整 DDD 是过度设计;可挑部分受益的用。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">抽象数据库接口什么情况下值钱?</p>
+  <button class="opt" data-ok="false">永远值钱</button>
+  <button class="opt" data-ok="true">会换库/需 mock</button>
+  <button class="opt" data-ok="false">从不值钱</button>
+  <button class="opt" data-ok="false">看代码长度</button>
+  <p class="reveal">抽象在"会变、会被换、需要 mock"时才值钱;技术锁死时收益低。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">读懂一个项目最终要能?</p>
+  <button class="opt" data-ok="false">背目录</button>
+  <button class="opt" data-ok="true">讲清改动影响</button>
+  <button class="opt" data-ok="false">跑通即可</button>
+  <button class="opt" data-ok="false">抄一遍</button>
+  <p class="reveal">能画出分层并回答"加新用例改动落在哪些文件、依赖朝哪",才算真读懂。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/ddd/0010_实战拆项目.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:用 7 问清单拆 [domain-driven-hexagon](https://github.com/Sairyss/domain-driven-hexagon) 的目录(对着 GitHub 网页或本地 clone)</li>
+  <li><strong>练习 B</strong>:挑你 repo 里一个复杂脚本,用同清单评估"该拆哪几层",写出建议</li>
+  <li><strong>练习 C</strong>:选一个用例画"controller→service→domain→port→adapter"依赖链;写"加个新用例会动哪些文件"</li>
+</ul>
+
+<h2>完工了</h2>
+<p>10 课到此。你已经能:看懂六边形架构的骨架、说出各层积木(实体/聚合根/值对象/领域服务/领域事件/端口适配器)、读懂命令查询分离与依赖注入,并判断何时别硬套。**回看整体:骨架在 0001,积木在 0003~0006,层联结在 0007~0009,实战在 0010。** 有不懂的随时回来,我们把任何一节拆得更细。</p>
+<p><strong>有任何不懂的,随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0009-接口适配与基础设施.html">← 上一篇:接口适配层与基础设施层</a>
+  <a href="index.html">课程地图</a>
+  <a href="index.html">下一篇:课程地图(收尾) →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

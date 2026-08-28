@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 16 课：软件定时器、内存管理与三内核总结 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 16 课</nav>
+
+<h1>第 16 课：软件定时器、内存管理与三内核总结</h1>
+<p class="subtitle">收官一课——补完定时/内存/计时三块拼图，然后让 MiniOS、µC/OS-III、FreeRTOS 三个内核同台接受检阅</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>这是 16 课长跑的终点（教材第 17~19 章，<span class="pg">PDF p.394~460</span>）。学完你能：① 用 <code>OSTmrCreate/OSTmrStart/OSTmrStop</code> 玩转单次/周期软件定时器，并说清"定时器任务 + 回调"的机制；② 用 <code>OSMemCreate/OSMemGet/OSMemPut</code> 管理固定大小内存分区，明白它和 FreeRTOS heap_4 是两种哲学；③ 用 <code>OS_TS_GET()</code> 给任意代码段测时；④ 补齐 <code>OSTimeDly/OSTimeDlyHMSM/OSTimeDlyResume</code> 时间管理 API；⑤ ⭐ 最终交出三内核对比总表与选型建议——这是你学完两个课程、手写过内核之后的毕业答辩。</p>
+</div>
+
+<h2>1. 软件定时器：给周期动作找个专职保姆（第 17 章，<span class="pg">PDF p.394</span>）</h2>
+
+<p>硬件定时器是外设资源，数量有限、还要配置中断；软件定时器则是<strong>纯软件实现的向下计数器</strong>——每过一个系统时钟节拍计数值减一，减到 0 就自动调用你注册的<strong>超时回调函数</strong>（教材 17.1.1 节）。它不占任何硬件定时器，想建多少建多少，代价是精度受系统节拍限制。</p>
+
+<p>软件定时器的控制块 <code>OS_TMR</code> 定义在 os.h，核心成员就这几个（教材 17.1.1 节）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">os_tmr</span>
+{</span>
+    OS_OBJ_TYPE            Type;          <span style="color:#008000">/* 对象类型：OS_OBJ_TYPE_TMR */</span>
+    CPU_CHAR              *NamePtr;       <span style="color:#008000">/* 定时器名字（调试用） */</span>
+    OS_TMR_CALLBACK_PTR    CallbackPtr;   <span style="color:#008000">/* 超时回调函数指针 */</span>
+    <span style="color:#267F99">void</span>                  *CallbackPtrArg;<span style="color:#008000">/* 回调函数参数 */</span>
+    OS_TMR                *NextPtr;       <span style="color:#008000">/* 定时器链表：下一个 */</span>
+    OS_TMR                *PrevPtr;       <span style="color:#008000">/* 定时器链表：上一个 */</span>
+    OS_TICK                Remain;        <span style="color:#008000">/* 剩余超时时间（每 tick 减一） */</span>
+    OS_TICK                Dly;           <span style="color:#008000">/* 开启延时时间 */</span>
+    OS_TICK                Period;        <span style="color:#008000">/* 周期（仅周期定时器用） */</span>
+    OS_OPT                 Opt;           <span style="color:#008000">/* 单次 or 周期 */</span>
+    OS_STATE               State;         <span style="color:#008000">/* 四种状态之一 */</span>
+};</pre>
+
+<h3>1.1 单次与周期，四种状态</h3>
+
+<p><code>OS_OPT_TMR_ONE_SHOT</code> 是<strong>单次定时器</strong>：超时一次就停，想再来一次必须重新 <code>OSTmrStart</code>；<code>OS_OPT_TMR_PERIODIC</code> 是<strong>周期定时器</strong>：超时后自动按 Period 重启，直到你喊停（教材 17.1.3 节）。定时器共有<strong>未使用 / 停止 / 运行 / 完成</strong>四种状态：创建前是未使用态，创建后停在停止态，Start 后进运行态，单次定时器超时后进完成态（教材 17.1.4 节）。</p>
+
+<h3>1.2 定时器任务：谁在背后干活</h3>
+
+<p>软件定时器的"保姆"是一个<strong>专职内核任务 <code>OS_TmrTask</code></strong>（教材 17.1.5 节）：它在 <code>OSInit()</code> 时由 <code>OS_TmrInit()</code> 创建，优先级与栈大小在 os_cfg_app.h 里配置（<code>OSCfg_TmrTaskPrio</code>、<code>OSCfg_TmrTaskStkSize</code>）。它按 <code>OSCfg_TmrTaskRate_Hz</code> 的频率醒来，遍历定时器链表给每个 <code>Remain</code> 减计数，减到 0 就执行回调。由于系统节拍和定时器任务频率不一定相同，内核用系数 <code>OSTmrToTicksMult = OSCfg_TickRate_Hz / OSCfg_TmrTaskRate_Hz</code> 把 dly/period 换算成节拍数。</p>
+
+<div class="warn">
+  <p>⚠️ 回调函数铁律：超时回调运行在<strong>软件定时器任务</strong>的上下文中，所以绝对不能在回调里调用任何会让任务阻塞、挂起或删除的函数——<code>OSTimeDly()</code>、<code>OSTimeDlyHMSM()</code>、<code>OSxxxPend()</code> 全都不行（教材 17.1.2 节）。回调应该"短平快"：翻个 LED、置个标志、Post 个信号量，把重活交给普通任务。多任务共用一个回调时，用 <code>p_tmr</code> 参数区分是谁超时了。</p>
+</div>
+
+<h3>1.3 API 全家桶</h3>
+
+<table>
+<tr><th>函数</th><th>作用</th></tr>
+<tr><td><code>OSTmrCreate()</code></td><td>创建软件定时器（需 <code>OS_CFG_TMR_EN</code> 置 1）</td></tr>
+<tr><td><code>OSTmrStart()</code></td><td>开启/重新开启定时</td></tr>
+<tr><td><code>OSTmrStop()</code></td><td>停止定时（opt 可带"停止时顺便执行一次回调"）</td></tr>
+<tr><td><code>OSTmrDel()</code></td><td>删除定时器（需 <code>OS_CFG_TMR_DEL_EN</code>）</td></tr>
+<tr><td><code>OSTmrRemainGet()</code></td><td>查询剩余超时时间</td></tr>
+<tr><td><code>OSTmrStateGet()</code></td><td>查询当前状态</td></tr>
+<tr><td><code>OSTmrSet()</code></td><td>修改延时/周期/回调函数及参数</td></tr>
+</table>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 三个核心 API 原型（os_tmr.c，教材 17.2 节） */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSTmrCreate</span><span style="color:#001080">(OS_TMR *p_tmr, CPU_CHAR *p_name,
+                 OS_TICK dly, OS_TICK period, OS_OPT opt,
+                 OS_TMR_CALLBACK_PTR p_callback, <span style="color:#267F99">void</span> *p_callback_arg,
+                 OS_ERR *p_err)</span>;
+<span style="color:#008000">/*  opt: OS_OPT_TMR_ONE_SHOT（单次）或 OS_OPT_TMR_PERIODIC（周期） */</span>
+
+CPU_BOOLEAN <span style="color:#795E26">OSTmrStart</span><span style="color:#001080">(OS_TMR *p_tmr, OS_ERR *p_err)</span>;
+
+CPU_BOOLEAN <span style="color:#795E26">OSTmrStop</span><span style="color:#001080">(OS_TMR *p_tmr, OS_OPT opt,
+                      <span style="color:#267F99">void</span> *p_callback_arg, OS_ERR *p_err)</span>;
+<span style="color:#008000">/*  opt: OS_OPT_TMR_NONE（仅停止）/
+ *       OS_OPT_TMR_CALLBACK（停止时执行回调）/
+ *       OS_OPT_TMR_CALLBACK_ARG（停止时执行回调并换参数） */</span></pre>
+
+<h3>1.4 实验 17.3：按键启停两个定时器</h3>
+
+<p>教材 17.3 节实验设计了两个定时器共用一个回调：<strong>Timer1 单次（dly=10）</strong>、<strong>Timer2 周期（period=10）</strong>，task1 扫按键——KEY0 同时启动两个定时器，KEY1 同时停止。按下 KEY0 后：Timer2 周期性地刷新 LCD 区域并计数，而 Timer1 只刷一次就停；再按 KEY0 才重新触发 Timer1。现象对比一目了然：<strong>一个"响一次"，一个"一直响"</strong>。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">OS_TMR Timer1;   <span style="color:#008000">/* 单次定时器 */</span>
+OS_TMR Timer2;   <span style="color:#008000">/* 周期定时器 */</span>
+
+<span style="color:#008000">/* 超时回调：两个定时器共用，用 p_tmr 区分是谁超时 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">timer_cb</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_tmr, <span style="color:#267F99">void</span> *p_arg)</span>
+{
+    <span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> timer1_num = <span style="color:#098658">0</span>;
+    <span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> timer2_num = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">if</span> (p_tmr == &amp;Timer1)
+    {
+        lcd_fill(<span style="color:#098658">6</span>, <span style="color:#098658">131</span>, <span style="color:#098658">114</span>, <span style="color:#098658">313</span>, lcd_discolor[++timer1_num % <span style="color:#098658">11</span>]);
+    }
+    <span style="color:#0000FF">else</span> <span style="color:#0000FF">if</span> (p_tmr == &amp;Timer2)
+    {
+        lcd_fill(<span style="color:#098658">126</span>, <span style="color:#098658">131</span>, <span style="color:#098658">233</span>, <span style="color:#098658">313</span>, lcd_discolor[++timer2_num % <span style="color:#098658">11</span>]);
+    }
+}
+
+<span style="color:#008000">/* start_task 中创建两个定时器 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">start_task</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+
+    <span style="color:#008000">/* 单次定时器：dly=10，period=0 */</span>
+    OSTmrCreate((OS_TMR *)&amp;Timer1, (CPU_CHAR *)<span style="color:#A31515">&quot;Timer1&quot;</span>,
+                (OS_TICK)<span style="color:#098658">10</span>, (OS_TICK)<span style="color:#098658">0</span>,
+                (OS_OPT)OS_OPT_TMR_ONE_SHOT,
+                (OS_TMR_CALLBACK_PTR)timer_cb, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, (OS_ERR *)&amp;err);
+
+    <span style="color:#008000">/* 周期定时器：dly=0，period=10，超时后自动重启 */</span>
+    OSTmrCreate((OS_TMR *)&amp;Timer2, (CPU_CHAR *)<span style="color:#A31515">&quot;Timer2&quot;</span>,
+                (OS_TICK)<span style="color:#098658">0</span>, (OS_TICK)<span style="color:#098658">10</span>,
+                (OS_OPT)OS_OPT_TMR_PERIODIC,
+                (OS_TMR_CALLBACK_PTR)timer_cb, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, (OS_ERR *)&amp;err);
+
+    <span style="color:#008000">/* ……创建 task1、删除 start_task 等，见第 13 课模板 */</span>
+}
+
+<span style="color:#008000">/* task1：KEY0 启动，KEY1 停止 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint8_t</span> key;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">switch</span> (key)
+        {
+            <span style="color:#0000FF">case</span> KEY0_PRES:
+                OSTmrStart(&amp;Timer1, &amp;err);
+                OSTmrStart(&amp;Timer2, &amp;err);
+                <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">case</span> KEY1_PRES:
+                OSTmrStop(&amp;Timer1, OS_OPT_TMR_NONE, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, &amp;err);
+                OSTmrStop(&amp;Timer2, OS_OPT_TMR_NONE, (<span style="color:#267F99">void</span> *)<span style="color:#098658">0</span>, &amp;err);
+                <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">default</span>:
+                <span style="color:#0000FF">break</span>;
+        }
+        OSTimeDly(<span style="color:#098658">10</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}</pre>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS 第 10 课：FreeRTOS 的软件定时器由"定时器服务守护任务"（Timer Service Daemon）统一处理，回调同样不能阻塞；差别在于 FreeRTOS 的守护任务优先级默认为空闲任务+1，且定时器命令经队列投递，而 UCOS 的 <code>OS_TmrTask</code> 是独立配置优先级/频率的内核任务、定时器直接挂在链表上。另一句大实话：<strong>软件定时器回调 ≈ 超级轻量的"伪任务"</strong>——适合周期翻灯、按键消抖后的超时判定、心跳喂狗这类小动作，不适合大运算。</p>
+</div>
+
+<h2>2. 内存管理：固定分区，向碎片说不（第 19 章，<span class="pg">PDF p.445</span>）</h2>
+
+<p>C 标准库的 <code>malloc()/free()</code> 随手就用，但教材 19.1 节直言：<strong>嵌入式 RTOS 里一般不推荐用它</strong>。原因就俩字——碎片：频繁申请/释放不同大小的内存，堆里会留下大量"单个很小、地址不连续"的空洞，最终明明空闲内存还很多，却再也申请不出一个大块。而且 malloc 内部可能持锁，实时性不可控。</p>
+
+<p>µC/OS-III 的答案是<strong>内存分区（Partition）</strong>：把一块大内存切成<strong>大小完全相同</strong>的若干个内存块，申请就是"取一块"，释放就是"还一块"——<strong>块大小固定，永远不会产生碎片</strong>。可以创建多个分区，每个分区的块数量和块大小都自己定：小消息用小块分区，大帧用大块分区，各取所需。</p>
+
+<h3>2.1 空闲块链表：不点名的"内存账本"</h3>
+
+<p>分区控制块 <code>OS_MEM</code>（os.h，教材 19.1 节）的核心是 <code>FreeListPtr</code>——一条<strong>空闲块链表</strong>。创建分区时，内核把每个块的<strong>起始 4 字节当指针</strong>指向下一个空闲块，串成单向链表；<code>OSMemGet</code> 摘表头、<code>OSMemPut</code> 插表头，全程只动指针不动数据，快得离谱：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">os_mem</span>
+{</span>
+    OS_OBJ_TYPE   Type;          <span style="color:#008000">/* 对象类型：OS_OBJ_TYPE_MEM */</span>
+    CPU_CHAR     *NamePtr;       <span style="color:#008000">/* 分区名字 */</span>
+    <span style="color:#267F99">void</span>         *AddrPtr;       <span style="color:#008000">/* 内存区起始地址 */</span>
+    <span style="color:#267F99">void</span>         *FreeListPtr;   <span style="color:#008000">/* 空闲块链表头 */</span>
+    OS_MEM_SIZE   BlkSize;       <span style="color:#008000">/* 单个内存块大小（字节） */</span>
+    OS_MEM_QTY    NbrMax;        <span style="color:#008000">/* 内存块总数 */</span>
+    OS_MEM_QTY    NbrFree;       <span style="color:#008000">/* 当前空闲块数量 */</span>
+};</pre>
+
+<h3>2.2 三个 API，两行账</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 创建分区：p_addr 指向内存区，n_blks 块 × blk_size 字节 */</span>
+<span style="color:#008000">/* 注意：n_blks &gt;= 2，blk_size &gt;= sizeof(void*)，且按 4 字节对齐 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSMemCreate</span><span style="color:#001080">(OS_MEM *p_mem, CPU_CHAR *p_name,
+                 <span style="color:#267F99">void</span> *p_addr, OS_MEM_QTY n_blks,
+                 OS_MEM_SIZE blk_size, OS_ERR *p_err)</span>;
+
+<span style="color:#008000">/* 申请一块：返回块地址；无空闲块返回 NULL + OS_ERR_MEM_NO_FREE_BLKS */</span>
+<span style="color:#267F99">void</span> *<span style="color:#795E26">OSMemGet</span><span style="color:#001080">(OS_MEM *p_mem, OS_ERR *p_err)</span>;
+
+<span style="color:#008000">/* 释放一块：插回空闲链表；全部归还时报 OS_ERR_MEM_FULL */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSMemPut</span><span style="color:#001080">(OS_MEM *p_mem, <span style="color:#267F99">void</span> *p_blk, OS_ERR *p_err)</span>;</pre>
+
+<div class="tip">
+  <p>💡 哲学对照：<strong>内存分区 vs FreeRTOS heap_4</strong>——这是两套完全相反的设计。UCOS 分区是"<strong>预留式</strong>"：提前把内存切成固定大小块，无碎片、O(1) 申请、确定性强，但块大小按"最大需求"定，小请求也占一整块，可能浪费；FreeRTOS heap_4 是"<strong>按需式</strong>"：首次适配 + 合并空闲块，内存利用率高，但会产生碎片、执行时间不确定。哪个更好？看场景——数据报文固定长度、对实时性苛刻就选分区；请求大小差异大、RAM 紧张就选 heap_4。你的 MiniOS 第三方案是"静态数组直分"，最简单也最省心（本课练习 2 会让你真机对比）。</p>
+</div>
+
+<h3>2.3 实验 19.3：申请、写、释放，一气呵成</h3>
+
+<p>教材 19.3 节实验：start_task 里把一块静态二维数组建成 5×32 字节的分区，task1 按 KEY0 申请一块内存、把块地址写进去再读出来显示（验证读写正常），按 KEY1 释放回分区。LCD 上的空闲块数会跟着 5 → 4 → 5 跳动，这就是分区管理的完整生命周期：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">OS_MEM mem;                                  <span style="color:#008000">/* 内存分区控制块 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> MEM_BLOCK_CNT   5                     <span style="color:#008000">/* 5 个内存块 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> MEM_BLOCK_SIZE  32                    <span style="color:#008000">/* 每块 32 字节 */</span></span>
+<span style="color:#267F99">uint8_t</span> memory[MEM_BLOCK_CNT][MEM_BLOCK_SIZE];<span style="color:#008000">/* 内存区实体：静态二维数组 */</span>
+
+<span style="color:#008000">/* start_task 中创建分区 */</span>
+OSMemCreate((OS_MEM *)&amp;mem, (CPU_CHAR *)<span style="color:#A31515">&quot;mem&quot;</span>,
+            (<span style="color:#267F99">void</span> *)memory,
+            (OS_MEM_QTY)MEM_BLOCK_CNT,
+            (OS_MEM_SIZE)MEM_BLOCK_SIZE,
+            (OS_ERR *)&amp;err);
+
+<span style="color:#008000">/* task1：KEY0 申请并测试读写，KEY1 释放 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint8_t</span> key;
+    <span style="color:#267F99">uint8_t</span> *buf = <span style="color:#098658">NULL</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">switch</span> (key)
+        {
+            <span style="color:#0000FF">case</span> KEY0_PRES:                            <span style="color:#008000">/* 申请一块 */</span>
+                buf = OSMemGet((OS_MEM *)&amp;mem, (OS_ERR *)&amp;err);
+                <span style="color:#0000FF">if</span> (buf != <span style="color:#098658">NULL</span>)
+                {
+                    <span style="color:#795E26">sprintf</span>((<span style="color:#267F99">char</span> *)buf, <span style="color:#A31515">&quot;0x%p&quot;</span>, buf); <span style="color:#008000">/* 写入 */</span>
+                    lcd_show_string(<span style="color:#098658">158</span>, <span style="color:#098658">160</span>, <span style="color:#098658">200</span>, <span style="color:#098658">16</span>, <span style="color:#098658">16</span>, (<span style="color:#267F99">char</span> *)buf, BLUE);
+                }
+                <span style="color:#0000FF">else</span>
+                {
+                    lcd_show_string(<span style="color:#098658">158</span>, <span style="color:#098658">160</span>, <span style="color:#098658">200</span>, <span style="color:#098658">16</span>, <span style="color:#098658">16</span>, <span style="color:#A31515">&quot;Failed!&quot;</span>, RED);
+                }
+                <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">case</span> KEY1_PRES:                            <span style="color:#008000">/* 释放回分区 */</span>
+                <span style="color:#0000FF">if</span> (buf != <span style="color:#098658">NULL</span>)
+                {
+                    OSMemPut((OS_MEM *)&amp;mem, (<span style="color:#267F99">void</span> *)buf, (OS_ERR *)&amp;err);
+                    buf = <span style="color:#098658">NULL</span>;
+                }
+                <span style="color:#0000FF">break</span>;
+            <span style="color:#0000FF">default</span>:
+                <span style="color:#0000FF">break</span>;
+        }
+        OSTimeDly(<span style="color:#098658">10</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}</pre>
+
+<div class="warn">
+  <p>⚠️ 分区不是万能药：① 块大小按"该类数据最大情况"定，写超 <code>blk_size</code> 就是内存踩踏，编译器不会帮你查；② <code>OSMemPut</code> 必须还回<strong>同一个分区</strong>，别把 A 分区的块塞回 B 分区；③ 块被申请期间内容归你管，还回去后内核只清链表头指针、不清数据——敏感数据记得自己擦。分区的正确用法是"一类固定长度的数据配一个分区"。</p>
+</div>
+
+<h2>3. 时间戳：用 CPU 周期给代码计时（第 18 章，<span class="pg">PDF p.437</span>）</h2>
+
+<p>想知道一段代码跑了多久？时间戳就是干这个的（教材 18.1 节）：<strong>时间戳本质就是一个单调递增的"时钟读数"</strong>，代码前取一个、代码后取一个，两个读数之差就是耗时——无需关心读数本身的绝对含义。</p>
+
+<p>µC/OS-III 的时基来自 Cortex-M 内核自带的 <strong>DWT 外设的 CYCCNT 寄存器</strong>：一个 32 位向上计数器，<strong>内核每走一个时钟就加一</strong>，在探索者的 168MHz 主频下精度轻松到纳秒级（教材 18.1.1 节）。所以 <code>OS_TS_GET()</code> 读到的不是"时间"，而是"CPU 周期数"。</p>
+
+<h3>3.1 配置与初始化</h3>
+
+<ul>
+<li>cpu_cfg.h 配置时基：<code>CPU_CFG_TS_32_EN</code> 置 <code>DEF_ENABLED</code>、<code>CPU_CFG_TS_TMR_SIZE</code> 置 <code>CPU_WORD_SIZE_32</code>（教材 18.1.2 节）。</li>
+<li>os_cfg.h 配置内核：<code>OS_CFG_TS_EN</code> 置 1（很多 API 的时间戳参数依赖它）。</li>
+<li>初始化：start_task 里先调 <code>CPU_Init()</code>，它内部会走 <code>CPU_TS_TmrInit()</code> 使能 DWT 跟踪系统、清零并启动 CYCCNT（教材 18.1.3 节，bsp_cpu.c）。</li>
+</ul>
+
+<h3>3.2 两个 API，一个宏</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 获取时间戳：本质上读 DWT-&gt;CYCCNT */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> OS_TS_GET()  (CPU_TS)CPU_TS_TmrRd()</span>
+
+<span style="color:#008000">/* 把时间戳差值换算成微秒（用主频除一下） */</span>
+CPU_INT64U <span style="color:#795E26">CPU_TS32_to_uSec</span><span style="color:#001080">(CPU_TS32 ts_cnts)</span>;</pre>
+
+<h3>3.3 实验 18.3：给 LCD 刷屏计时</h3>
+
+<p>教材 18.3 节实验：按 KEY0 时，在 <code>lcd_fill</code> 前后各取一次时间戳，差值换算成微秒显示在 LCD 上。同样的套路可以套在任何代码段上——这是 RTOS 世界里最朴素的性能分析工具：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 用时间戳测量 LCD 刷屏耗时（教材 18.3 节） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *p_arg)</span>
+{
+    OS_ERR err;
+    <span style="color:#267F99">uint8_t</span> key;
+    CPU_TS_TMR start_ts, end_ts, delta_ts;
+    CPU_INT64U delta_us;
+    <span style="color:#267F99">uint32_t</span> task1_num = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        key = key_scan(<span style="color:#098658">0</span>);
+        <span style="color:#0000FF">if</span> (key == KEY0_PRES)
+        {
+            start_ts = OS_TS_GET();                 <span style="color:#008000">/* 起点时间戳 */</span>
+            lcd_fill(<span style="color:#098658">6</span>, <span style="color:#098658">131</span>, <span style="color:#098658">233</span>, <span style="color:#098658">313</span>, lcd_discolor[++task1_num % <span style="color:#098658">11</span>]);
+            end_ts = OS_TS_GET();                   <span style="color:#008000">/* 终点时间戳 */</span>
+            delta_ts = end_ts - start_ts;           <span style="color:#008000">/* 差值 = 耗时（周期数） */</span>
+            delta_us = CPU_TS32_to_uSec(delta_ts);  <span style="color:#008000">/* 周期数 -&gt; 微秒 */</span>
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;LCD fill: %u us\r\n&quot;</span>, (<span style="color:#267F99">unsigned</span>)delta_us);
+        }
+        OSTimeDly(<span style="color:#098658">10</span>, OS_OPT_TIME_DLY, &amp;err);
+    }
+}</pre>
+
+<p>顺带一提：UCOS 内核自己也大量用时间戳——消息发送时刻 <code>MsgTS</code>、进入临界区的耗时、任务启动时刻 <code>CyclesStart</code>……这些字段在 os.h 里随处可见，全都是同一个 <code>OS_TS_GET()</code> 供出来的。它同时也是<a href="0015-queues-and-event-flags.html">第 15 课</a>那些 <code>p_ts</code> 参数背后的硬件依赖——这也是教材移植章节反复叮嘱"先配好时间戳"的原因。</p>
+
+<h2>4. 时间管理 API 补课：延时三兄弟（第 10 章，<span class="pg">PDF p.186</span>）</h2>
+
+<p>前面所有实验都用了 <code>OSTimeDly</code>，这节把时间管理 API 一次补齐（教材 10.2 节）。它们的本质在第 10 课讲过：<strong>把当前任务挂到 Tick 延时链表上并指定超时时间，时间到了由 SysTick 唤醒</strong>——你在 MiniOS 第 4 步亲手实现过一模一样的机制。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 1. 按系统节拍延时：dly 个 tick */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSTimeDly</span><span style="color:#001080">(OS_TICK dly, OS_OPT opt, OS_ERR *p_err)</span>;
+<span style="color:#008000">/*  opt 常用值：
+ *   OS_OPT_TIME_DLY      延时到&quot;当前节拍数 + dly&quot;（相对延时）
+ *   OS_OPT_TIME_PERIODIC 按固定周期运行（相对上次唤醒时刻，防漂移） */</span>
+
+<span style="color:#008000">/* 2. 按 时:分:秒:毫秒 延时（内部换算成 tick 后同 OSTimeDly） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSTimeDlyHMSM</span><span style="color:#001080">(CPU_INT16U hours, CPU_INT16U minutes,
+                   CPU_INT16U seconds, CPU_INT32U milli,
+                   OS_OPT opt, OS_ERR *p_err)</span>;
+
+<span style="color:#008000">/* 3. 强行唤醒正在延时的任务（需 OS_CFG_TIME_DLY_RESUME_EN 置 1） */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSTimeDlyResume</span><span style="color:#001080">(OS_TCB *p_tcb, OS_ERR *p_err)</span>;</pre>
+
+<table>
+<tr><th>维度</th><th>µC/OS-III</th><th>FreeRTOS（已学）</th></tr>
+<tr><td>相对延时（tick）</td><td><code>OSTimeDly(dly, OS_OPT_TIME_DLY, &amp;err)</code></td><td><code>vTaskDelay(ticks)</code></td></tr>
+<tr><td>绝对/周期延时（防漂移）</td><td><code>OSTimeDly(dly, OS_OPT_TIME_PERIODIC, &amp;err)</code></td><td><code>vTaskDelayUntil(&amp;xLastWakeTime, xFrequency)</code></td></tr>
+<tr><td>时分秒毫秒延时</td><td><code>OSTimeDlyHMSM(时,分,秒,毫秒, opt, &amp;err)</code></td><td>无，需自行换算成 tick</td></tr>
+<tr><td>提前唤醒</td><td><code>OSTimeDlyResume(&amp;TaskTCB, &amp;err)</code></td><td><code>vTaskAbortDelay()</code></td></tr>
+<tr><td>与软件定时器的分工</td><td>延时=当前任务"睡觉"；定时器=别的任务"到点干活"，互不阻塞</td><td>同左</td></tr>
+</table>
+
+<div class="tip">
+  <p>💡 选型提醒：需要"固定周期刷屏/采样"时优先 <code>OS_OPT_TIME_PERIODIC</code>——它基于上次唤醒时刻累加，不会因为中途被高优先级任务打断而逐渐漂移，等价于 FreeRTOS 的 <code>vTaskDelayUntil</code>（FreeRTOS 课第 14 课有专章）。</p>
+</div>
+
+<h2>5. ⭐ 三内核总结：16 课的毕业答辩</h2>
+
+<p>从第 1 课的"为什么学第二个内核"，到第 12 课的架构验收，再到本课的收官——现在你有资格回答最初的问题了。<strong>三个内核，三份对同一问题的答卷</strong>：</p>
+
+<table>
+<tr><th>维度</th><th>MiniOS（手写）</th><th>µC/OS-III</th><th>FreeRTOS</th></tr>
+<tr><td>就绪表算法</td><td>位图 OSRdyGrp/OSRdyTbl，查表 O(1)</td><td>位图 + 同优先级链表，O(1)</td><td>纯链表，遍历 O(1)~O(n)</td></tr>
+<tr><td>调度点</td><td>任务主动让出 + tick（PendSV）</td><td>OSSched 内联 + 中断退出 OSIntExit</td><td>任务让出 + tick + 中断退出（PendSV）</td></tr>
+<tr><td>临界区策略</td><td>关中断（PRIMASK/BASEPRI）</td><td>锁调度器为主 + BASEPRI，关中断极短</td><td>关中断为主 + 挂起调度器</td></tr>
+<tr><td>同步原语</td><td>信号量（1 个）</td><td>信号量/互斥量/队列/事件标志/任务内嵌信号量+队列（全家桶）</td><td>队列/信号量/互斥量/事件组/任务通知</td></tr>
+<tr><td>内存管理</td><td>静态分配，无动态内存</td><td>内存分区：固定大小块，零碎片</td><td>heap_4 动态堆：首次适配+合并，有碎片风险</td></tr>
+<tr><td>代码量（同功能内核）</td><td>几百行 / 约 2~4 KB ROM</td><td>约 15~25 KB ROM（全功能三件套数万行）</td><td>约 10~15 KB ROM（约一万行）</td></tr>
+<tr><td>适用场景</td><td>教学、极简可控的裸机升级</td><td>教学经典、工业认证、要求确定性内存</td><td>量产主流、生态大、上手快</td></tr>
+</table>
+
+<p><strong>选型建议（一条直线）</strong>：学内核原理、想彻底搞懂调度与切换 → 看 MiniOS（它就是你自己的）；做产品、追求实时确定性与丰富同步原语 → µC/OS-III（位图 O(1) 调度 + 零碎片内存分区 + 全套内核对象）；要社区生态、快速迭代、人好招 → FreeRTOS（普及率就是最大的生产力）。没有最好的内核，只有最合适的问题——而你现在三个都摸过、其中一个还亲手写过，这个选择题对你已经是送分题。</p>
+
+<h2>动手练习（约 60~90 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 16.1：软件定时器 + 时间戳联合作战</h3>
+  <p class="step">1️⃣ 按教材 17.3 节搭最小实验：Timer1 单次（dly=20）、Timer2 周期（period=10），共用回调在 LCD 上计数；KEY0 启动、KEY1 停止。验收：Timer2 每 10 个定时器 tick 刷一次且计数递增，Timer1 只刷一次。</p>
+  <p class="step">2️⃣ 把 Timer1 的 <code>OS_OPT_TMR_ONE_SHOT</code> 改成 <code>OS_OPT_TMR_PERIODIC</code>，观察行为差异；再把 <code>OSCfg_TmrTaskRate_Hz</code> 调成系统节拍的一半，观察周期实际变化（提示：回顾 <code>OSTmrToTicksMult</code> 换算系数）。</p>
+  <p class="step">3️⃣ 在回调里故意调用一次 <code>OSTimeDly(1, ...)</code>，编译运行观察后果（教材 17.1.2 节明令禁止的行为），写 2 行现象笔记——这个坑踩一次就记住了。</p>
+  <p class="step">4️⃣ 按教材 18.3 节给 <code>lcd_fill</code> 计时：记录刷全屏耗时（微秒），再分别测 <code>OSMemGet</code> 和 <code>OSMemPut</code> 的单次耗时——用时间戳验证"分区申请是 O(1) 的"。验收标准：能解释时间戳为什么是"周期数"而不是"秒"。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 16.2：内存分区实验 + 三内核选型论证</h3>
+  <p class="step">1️⃣ 按教材 19.3 节搭内存分区实验：KEY0 申请并读写验证、KEY1 释放，LCD 显示空闲块数 5 → 4 → 5。把 <code>MEM_BLOCK_CNT</code> 改成 2 再连续按 KEY0，验证申请失败返回 NULL 的路径（<code>OS_ERR_MEM_NO_FREE_BLKS</code>）。</p>
+  <p class="step">2️⃣ 对照实验（FreeRTOS 分支）：用 heap_4 的 <code>pvPortMalloc/pvPortFree</code> 复刻"申请-释放-申请"循环，交替申请 8/32/128 字节，观察 xPortGetFreeHeapSize 的变化；再用 UCOS 分区做同样模式，比较碎片情况。写 3 行结论：两种策略各自的浪费点在哪。</p>
+  <p class="step">3️⃣ 毕业题：基于本课总结表，给一个"智能家居网关"（需要 8 个任务、固定长度报文通信、7×24 运行、功耗敏感）写一段选型论证（100 字内），从就绪表、内存管理、生态三方面给出结论。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 软件定时器超时后，其超时回调函数由谁执行？</p>
+  <p class="opt">A. SysTick 中断服务函数中执行</p>
+  <p class="opt">B. 软件定时器任务 OS_TmrTask 中执行</p>
+  <p class="opt">C. 创建该定时器的普通任务中执行</p>
+  <p class="opt">D. 空闲任务空闲时再执行</p>
+  <details><summary>查看答案</summary><div class="answer">B。软件定时器任务（OS_TmrTask）维护定时器链表、递减计数并在超时时调用回调，所以回调里绝不能调用 OSTimeDly/OSxxxPend 等阻塞函数（PDF p.396~404）。</div></details>
+
+  <p class="q">Q2. 单次定时器超时一次之后，处于什么状态？</p>
+  <p class="opt">A. 停止态，并自动 OSTmrStart 重启</p>
+  <p class="opt">B. 完成态，需手动 OSTmrStart 重启</p>
+  <p class="opt">C. 未使用态，需重新 OSTmrCreate</p>
+  <p class="opt">D. 运行态，按 Period 继续计时</p>
+  <details><summary>查看答案</summary><div class="answer">B。单次定时器超时后进入完成态并停止，不会自动重启；再次定时需调用 OSTmrStart()。周期定时器才会超时后自动重启（PDF p.396）。</div></details>
+
+  <p class="q">Q3. µC/OS-III 内存分区相对 malloc/free 的核心优势是？</p>
+  <p class="opt">A. 可以申请任意大小的内存块</p>
+  <p class="opt">B. 释放内存时自动整理合并</p>
+  <p class="opt">C. 固定大小块，完全无内存碎片</p>
+  <p class="opt">D. 申请速度慢但内存利用率高</p>
+  <details><summary>查看答案</summary><div class="answer">C。分区内所有块大小固定，申请/释放只是摘/插空闲链表头，无碎片且 O(1)；代价是块大小按最大需求预留，可能浪费。这与 FreeRTOS heap_4 动态堆是相反哲学（PDF p.445）。</div></details>
+
+  <p class="q">Q4. 在探索者（STM32F407）上，OS_TS_GET() 实际读取的是什么？</p>
+  <p class="opt">A. SysTick 的当前计数值</p>
+  <p class="opt">B. DWT 外设的 CYCCNT 寄存器</p>
+  <p class="opt">C. RTC 实时时钟的时间值</p>
+  <p class="opt">D. 定时器 TIM2 的计数值</p>
+  <details><summary>查看答案</summary><div class="answer">B。OS_TS_GET() 展开为 CPU_TS_TmrRd()，读取 DWT->CYCCNT——每内核时钟加一的 32 位计数器，差值即 CPU 周期数，可用 CPU_TS32_to_uSec() 转微秒（PDF p.437~440）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 17 章软件定时器（<span class="pg">PDF p.394~435</span>）、第 18 章时间戳（<span class="pg">PDF p.437~443</span>）、第 19 章内存管理（<span class="pg">PDF p.445~460</span>）——本课全部依据</li>
+<li>📖 教材第 10.2 节任务延时相关函数（<span class="pg">PDF p.186~193</span>）——OSTimeDly 三兄弟源码</li>
+<li>🔁 对照：FreeRTOS 课程<a href="../../FreeRTOS/lessons/0010-software-timers.html">第 10 课（软件定时器）</a>、<a href="../../FreeRTOS/lessons/0014-time-management.html">第 14 课（时间管理）</a>、<a href="../../FreeRTOS/lessons/0015-memory-management.html">第 15 课（内存管理）</a>——本课对比基准</li>
+<li>⭐ 回顾：本课程<a href="0012-minios-6-kernel-review.html">第 12 课：MiniOS⑥三内核验收对比</a>——MAP 文件实测数据可与本课总结表互相印证</li>
+<li>🌐 <a href="https://weston-embedded.com/uc-os-iii">Weston Embedded µC/OS-III 官方资料</a>——OS_TMR/OS_MEM/CPU_TS 官方结构与移植源码</li>
+</ul>
+
+<div class="footer-note">
+  <p>恭喜，16 课全部完成！你手里现在有三样东西：一张看懂 RTOS 内核的完整地图、一个亲手写的 MiniOS、以及 µC/OS-III 全家桶的实战经验。别让笔记吃灰——把第 12 课的 MAP 实测表和本课的选型论证整理进你的课程记录，那会是你将来面试/答辩时最硬的谈资。有任何不清楚的地方，随时问我（Agent 就是你的老师）。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0015-queues-and-event-flags.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a class="disabled" href="#">下一课</a>
+</nav>
+
+</div>
+</body>
+</html>

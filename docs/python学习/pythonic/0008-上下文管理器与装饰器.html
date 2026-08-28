@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0008 · 上下文管理器与装饰器</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>上下文管理器(with)与装饰器</h1>
+<p class="meta">Pythonic 代码 · 课程 0008 · 预计 25 分钟</p>
+
+<p>这是收尾课,讲两个「C 里完全没有、Python 特有」的语法糖。<code>with</code> 替你管「用完要收拾」的资源(文件、连接、锁);<strong>装饰器</strong>让你不改函数本体给它加能力(计时、重试、日志)。两个都是 Python 生态里无处不在的关键词。</p>
+
+<h2>知识点 1:with——「用完自动关」,不用手动 close</h2>
+<p>C 思维(手动 open / 用完 close,还容易漏):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">f</span> <span style="color: #000">=</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.txt&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># C:open-用-close</span>
+<span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">f</span><span style="color: #000">.</span><span style="color: #001080">read</span><span style="color: #000">()</span>
+<span style="color: #001080">f</span><span style="color: #000">.</span><span style="color: #001080">close</span><span style="color: #000">()</span>                <span style="color: #008000"># 忘了怎么办?异常时更麻烦</span>
+</pre>
+<p>Pythonic——<code>with</code> 进入时打开,离开时<strong>自动调用 close</strong>(即使中间报错也保证关闭):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;data.txt&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">f</span><span style="color: #000">:</span>
+    <span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">f</span><span style="color: #000">.</span><span style="color: #001080">read</span><span style="color: #000">()</span>      <span style="color: #008000"># 只要缩进块内,用完自动关</span>
+</pre>
+<p>要点:凡是「有资源要释放」的对象(文件、锁、数据库连接、重定向),都用 <code>with ... as x:</code>。文件读写经常配合上一课的 pathlib:<code>Path.read_text()</code> 内部其实也是 with。</p>
+
+<h2>知识点 2:with 也能同时管多个 / 配合 generators</h2>
+<p>要同时读写两个文件、或开多个资源,<code>with A() as a, B() as b:</code> 一行搞定。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">with</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;in.txt&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">fin</span><span style="color: #000">,</span> <span style="color: #0070C1">open</span><span style="color: #000">(</span><span style="color: #A31515">&quot;out.txt&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;w&quot;</span><span style="color: #000">)</span> <span style="color: #00F">as</span> <span style="color: #001080">fout</span><span style="color: #000">:</span>
+    <span style="color: #001080">fout</span><span style="color: #000">.</span><span style="color: #001080">write</span><span style="color: #000">(</span><span style="color: #001080">fin</span><span style="color: #000">.</span><span style="color: #001080">read</span><span style="color: #000">())</span>
+</pre>
+<p>还有用 <code>@contextmanager</code> 把「先做A、finally做B」的逻辑变成 with 块——后面装饰器一同学到。</p>
+
+<h2>知识点 3:装饰器——不改原函数,给它包一层能力</h2>
+<p>C 程序员想给函数加计时,常改函数内部或复制代码。装饰器让你<strong>外挂</strong>一个「包装层」:<code>@timed</code> 只是把函数替换成包了一层的版本。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">functools</span><span style="color: #000">, </span><span style="color: #001080">time</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">timed</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">):</span>
+    <span style="color: #AF00DB">@functools</span><span style="color: #000">.</span><span style="color: #001080">wraps</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">)</span>   <span style="color: #008000"># 保留原名/文档,别让调试认不出原函数</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">wrapper</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">):</span>
+        <span style="color: #001080">t0</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()</span>
+        <span style="color: #001080">result</span> <span style="color: #000">=</span> <span style="color: #001080">func</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">)</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">func</span><span style="color: #000">.</span><span style="color: #001080">__name__</span><span style="color: #A31515">}: {</span><span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()-</span><span style="color: #001080">t0</span><span style="color: #A31515">:.4f}s&quot;</span><span style="color: #000">)</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">result</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">wrapper</span>
+
+<span style="color: #AF00DB">@timed</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">slow</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span>
+
+<span style="color: #001080">slow</span><span style="color: #000">(</span><span style="color: #098658">5</span><span style="color: #000">)</span>      <span style="color: #008000"># 原函数一行没改,就多了计时</span>
+</pre>
+<p>关键:<code>@timed</code> 等价于 <code>slow = timed(slow)</code>。装饰器就是一个「接收函数、返回新函数」的函数。</p>
+
+<h2>知识点 4:装饰器的常见用法</h2>
+<p>除了计时,AI/框架代码里到处都是:</p>
+<pre lang="python" class="highlight"><span style="color: #008000"># 缓存(自动 memoize,免写手写缓存字典)</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">functools</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">lru_cache</span>
+<span style="color: #AF00DB">@lru_cache</span><span style="color: #000">(</span><span style="color: #001080">maxsize</span><span style="color: #000">=</span><span style="color: #00F">None</span><span style="color: #000">)</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fib</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">n</span> <span style="color: #00F">if</span> <span style="color: #001080">n</span> <span style="color: #000">&lt;</span> <span style="color: #098658">2</span> <span style="color: #00F">else</span> <span style="color: #001080">fib</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">-</span><span style="color: #098658">1</span><span style="color: #000">)</span> <span style="color: #000">+</span> <span style="color: #001080">fib</span><span style="color: #000">(</span><span style="color: #001080">n</span><span style="color: #000">-</span><span style="color: #098658">2</span><span style="color: #000">)</span>
+
+<span style="color: #008000"># 官方自带:注册去重 / 折叠</span>
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">functools</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">reduce</span><span style="color: #000">,</span> <span style="color: #001080">wraps</span>
+<span style="color: #008000"># 常用模式:日志、权限校验、重试、记时</span>
+</pre>
+<p><code>@lru_cache</code> 给纯函数加记忆化,是「免手写缓存」的头号例子;框架里 Flask 路由 <code>@app.route</code>、pytest 的 <code>@fixture</code> 也都是装饰器——现在你读 AI 代码能认出「这是在包一层」了。</p>
+
+<h2>知识点 5:什么时候别用</h2>
+<ul>
+  <li>with:对象不需要释放资源 → 别硬套;别用它把两件无关的事塞一块</li>
+  <li>装饰器:包装超过两三层 → 调试会过不了原函数;装饰器做了「悄悄的事」(缓存/重试)→ 记得写文档说明,否则同事懵</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">读文件,最省心写法?</p>
+  <button class="opt" data-ok="false">open 后手动 close</button>
+  <button class="opt" data-ok="true">with open(...) as f</button>
+  <button class="opt" data-ok="false">try/finally 手写</button>
+  <button class="opt" data-ok="false">Path 不管关</button>
+  <p class="reveal">with ... as f: 自动在离开块时关闭文件,异常也安全。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">@timed 实际等价于?</p>
+  <button class="opt" data-ok="false">timed(foo) 丢弃</button>
+  <button class="opt" data-ok="true">foo = timed(foo)</button>
+  <button class="opt" data-ok="false">foo 被复制</button>
+  <button class="opt" data-ok="false">timed 被替换</button>
+  <p class="reveal">@timed 是把 foo 替换成 timed 返回的包装函数,即 foo = timed(foo)。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">写装饰器最好保留原函数的?</p>
+  <button class="opt" data-ok="false">内存地址</button>
+  <button class="opt" data-ok="true">元信息(__name__ 等)</button>
+  <button class="opt" data-ok="false">参数个数</button>
+  <button class="opt" data-ok="false">源码文本</button>
+  <p class="reveal">用 @functools.wraps 保留原名和文档字符串,否则调试/文档认不出。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">免手写缓存/记忆化的现成装饰器?</p>
+  <button class="opt" data-ok="false">@timed</button>
+  <button class="opt" data-ok="true">@lru_cache</button>
+  <button class="opt" data-ok="false">@property</button>
+  <button class="opt" data-ok="false">@contextmanager</button>
+  <p class="reveal">functools.lru_cache 给纯函数加记忆化,自动缓存计算结果。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0008_上下文管理器与装饰器.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把「open 后忘 close」的代码改成 with;写「读一个文件数行数,走 with」</li>
+  <li><strong>练习 B</strong>:写 @timed 装饰器;用 @lru_cache 加速斐波那契;写一个带参数的 @retry</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段文件读写 =&gt; with 改写;一段重复计时/清理逻辑 =&gt; 装饰器/上下文管理</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方教程「<a href="https://docs.python.org/zh-cn/3/reference/compound_stmts.html#with">with 语句</a>」</strong>与「<a href="https://docs.python.org/zh-cn/3/glossary.html#term-decorator">装饰器</a>」词条;再看 <strong>Fluent Python</strong> 的装饰器与上下文管理器两章(进阶,有空再读)。</p>
+</blockquote>
+
+<h2>完工了</h2>
+<p>这 8 课覆盖了 C 转 Python 的惯用法主线。<strong>到这里,你已经从「把 C 翻译成 Python」走向「用 Python 的语序重说」。</strong>回看课程地图,挑最不熟的一课回炉。</p>
+<p><strong>有任何不懂的,随时问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0007-常用标准库.html">← 上一篇:常用标准库</a>
+  <a href="index.html">课程地图</a>
+  <a href="0009-时间与日期.html">下一篇:时间与日期 datetime / time →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

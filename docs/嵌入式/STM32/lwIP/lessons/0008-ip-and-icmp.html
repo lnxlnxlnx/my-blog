@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 8 课：IP 与 ICMP 协议 — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 8 课</nav>
+
+<h1>第 8 课：IP 与 ICMP 协议</h1>
+<p class="subtitle">IP 数据报结构与分片重装、IP 收发源码、ICMP 差错与回显（ping 的原理）（预计 70~90 分钟）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>🎯 前面把"路"修好了（netif/pbuf/内核/ARP），这节课讲"车"和"交警"：IP 是路上跑的车（网络层数据报），ICMP 是车的"故障灯"（差错报告 + ping 的回显机制）。学完你能说清：20 字节 IP 首部每个字段的含义、大数据报怎么分片（含 4000 字节拆三片的算例）、lwIP 的 <code>ip4_frag</code> / <code>ip4_output_if_src</code> / <code>ip4_input</code> 主要流程、ICMP 报文两大类与报文结构、以及 ping 请求应答在 <code>icmp_input</code> 里是怎么实现的。最后用 Wireshark 亲手拆开一个 IP 头和一个 ICMP 包。</p>
+</div>
+
+<h2>1. IP 协议：网络层的"快递单"</h2>
+
+<p>IP（Internet Protocol，网际互连协议）是 TCP/IP 体系中的网络层协议（第 9.1 节 <span class="pg">PDF p.228</span>）。它的定位按教材原话就是：<strong>无连接、不可靠、尽力而为</strong>的数据报传输服务——只管把包从源地址送到目的地址，不保证顺序、不保证不丢。可靠性交给上层（TCP）去补。对下它把包塞进以太网帧，对上它向 TCP/UDP/ICMP 提供服务（靠首部里的"协议"字段区分）。</p>
+
+<p>这一章的核心其实是<strong>分片与重组</strong>——因为 IP 包理论上最大 65535 字节，而以太网帧只能装 1500（MTU），"大包拆小包、到了再拼回"就是 IP 层最见功夫的活儿。</p>
+
+<h2>2. IP 数据报结构：20 字节的固定首部</h2>
+
+<p>IP 数据报 = IP 首部（固定 20 字节，可加选项到 60）+ 数据区（第 9.2 节 <span class="pg">PDF p.228</span>）。首部布局（RFC 791 的经典画法）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">  <span style="color:#098658">0</span>        <span style="color:#098658">4</span>       <span style="color:#098658">8</span>           <span style="color:#098658">16</span>      <span style="color:#098658">19</span>                <span style="color:#098658">31</span>
+  +--------+-------+-----------+-------+-----------------+
+  | 版本号 |首部长度| 服务类型   |        总长度（<span style="color:#098658">16</span>位）     |
+  | (<span style="color:#098658">4</span>位)  | (<span style="color:#098658">4</span>位)  | (<span style="color:#098658">8</span>位)     |                         |
+  +--------+-------+-----------+------------------------+
+  |          标识（<span style="color:#098658">16</span>位）        | 标志(<span style="color:#098658">3</span>位)|  片偏移（<span style="color:#098658">13</span>位） |
+  +-----------------------------+---------+--------------+
+  |  生存时间TTL（<span style="color:#098658">8</span>位）| 协议(<span style="color:#098658">8</span>位)|      首部校验和（<span style="color:#098658">16</span>位）    |
+  +-------------------+----------+------------------------+
+  |                      源IP地址（<span style="color:#098658">32</span>位）                  |
+  +------------------------------------------------------+
+  |                      目的IP地址（<span style="color:#098658">32</span>位）                |
+  +------------------------------------------------------+
+  |                    选项字段（如果存在）                 |
+  +------------------------------------------------------+
+  |                        数据区                          |
+  +------------------------------------------------------+
+</pre>
+
+<p>字段速查表：</p>
+
+<table>
+<tr><th>字段</th><th>长度</th><th>要点</th></tr>
+<tr><td>版本</td><td>4 位</td><td>IPv4 时为 4，收发双方必须一致</td></tr>
+<tr><td>首部长度</td><td>4 位</td><td>单位是 4 字节（32 位字长），最小 5 → 20 字节；选项最多把首部撑到 60 字节</td></tr>
+<tr><td>服务类型 TOS</td><td>8 位</td><td>区分服务，实际基本没被用过</td></tr>
+<tr><td>总长度</td><td>16 位</td><td>首部 + 数据的总字节数，最大 65535</td></tr>
+<tr><td>标识 Identification</td><td>16 位</td><td>每发一个数据报计数器加 1；分片时所有片共用同一标识，接收方靠它"认亲"重装</td></tr>
+<tr><td>标志 Flags</td><td>3 位</td><td>DF=1 禁止分片；MF=1 表示"后面还有分片"，MF=0 是本组最后一片</td></tr>
+<tr><td>片偏移</td><td>13 位</td><td>本片在原数据报中的位置，<strong>以 8 字节为单位</strong>，所以除最后一片外每片长度都是 8 的倍数</td></tr>
+<tr><td>TTL</td><td>8 位</td><td>跳数上限，每过一个路由器减 1，减到 0 丢弃——防止数据报在网络里无限转圈</td></tr>
+<tr><td>协议</td><td>8 位</td><td>上层协议：1=ICMP、6=TCP、17=UDP</td></tr>
+<tr><td>首部校验和</td><td>16 位</td><td>只校验首部不校验数据（每过一个路由器 TTL 变，校验和要重算）</td></tr>
+<tr><td>源/目的 IP</td><td>各 32 位</td><td>不用多解释</td></tr>
+</table>
+
+<p>lwIP 里对应的结构体 <code>ip_hdr</code>（<code>ip4.h</code>，<span class="pg">PDF p.229</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip_hdr</span> {</span>
+    <span style="color:#267F99">u8_t</span>  _v_hl;        <span style="color:#008000">/* 高4位版本号 + 低4位首部长度 */</span>
+    <span style="color:#267F99">u8_t</span>  _tos;         <span style="color:#008000">/* 服务类型 */</span>
+    <span style="color:#267F99">u16_t</span> _len;         <span style="color:#008000">/* 总长度（IP 首部 + 数据区） */</span>
+    <span style="color:#267F99">u16_t</span> _id;          <span style="color:#008000">/* 数据包标识（编号） */</span>
+    <span style="color:#267F99">u16_t</span> _offset;      <span style="color:#008000">/* 标志 + 片偏移 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> IP_RF 0x8000U    <span style="color:#008000">/* 保留位 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> IP_DF 0x4000U    <span style="color:#008000">/* 禁止分片 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> IP_MF 0x2000U    <span style="color:#008000">/* 还有更多分片 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> IP_OFFMASK 0x1fffU <span style="color:#008000">/* 片偏移域掩码 */</span></span>
+    <span style="color:#267F99">u8_t</span>  _ttl;         <span style="color:#008000">/* 生存时间（最大转发次数） */</span>
+    <span style="color:#267F99">u8_t</span>  _proto;       <span style="color:#008000">/* 协议类型：1=ICMP、6=TCP、17=UDP */</span>
+    <span style="color:#267F99">u16_t</span> _chksum;      <span style="color:#008000">/* 首部校验和 */</span>
+    <span style="color:#267F99">ip4_addr_p_t</span> src;   <span style="color:#008000">/* 源 IP 地址 */</span>
+    <span style="color:#267F99">ip4_addr_p_t</span> dest;  <span style="color:#008000">/* 目的 IP 地址 */</span>
+};
+</pre>
+
+<h2>3. IP 分片与重装：大件货物拆箱发货</h2>
+
+<h3>3.1 分片原理：4000 字节拆三片</h3>
+
+<p>教材的经典算例（第 9.2.2 节 <span class="pg">PDF p.230~231</span>）：一个 4000 字节的 IP 数据报（20 字节首部 + 3980 字节数据），要穿过 MTU=1500 的以太网，拆成 3 片：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">原数据报：<span style="color:#098658">4000</span> 字节 = IP首部(<span style="color:#098658">20</span>) + 数据(<span style="color:#098658">3980</span>)，标识 = <span style="color:#098658">888</span>
+
+分片<span style="color:#098658">1</span>：IP首部(<span style="color:#098658">20</span>) + 数据(<span style="color:#098658">1480</span>)   标识=<span style="color:#098658">888</span>   MF=<span style="color:#098658">1</span>   片偏移=<span style="color:#098658">0</span>    （<span style="color:#098658">1480</span> &lt; <span style="color:#098658">1500</span> ✓）
+分片<span style="color:#098658">2</span>：IP首部(<span style="color:#098658">20</span>) + 数据(<span style="color:#098658">1480</span>)   标识=<span style="color:#098658">888</span>   MF=<span style="color:#098658">1</span>   片偏移=<span style="color:#098658">185</span>  （<span style="color:#098658">1480</span>/<span style="color:#098658">8</span>=<span style="color:#098658">185</span>，即偏移 <span style="color:#098658">1480</span> 字节处）
+分片<span style="color:#098658">3</span>：IP首部(<span style="color:#098658">20</span>) + 数据(<span style="color:#098658">1020</span>)   标识=<span style="color:#098658">888</span>   MF=<span style="color:#098658">0</span>   片偏移=<span style="color:#098658">370</span>  （<span style="color:#098658">185</span>+<span style="color:#098658">185</span>，即偏移 <span style="color:#098658">2960</span> 字节处）
+</pre>
+
+<p>三个要点：<strong>① 标识相同</strong>（888），接收方靠它把三片归为一组；<strong>② MF 只有最后一片是 0</strong>；<strong>③ 片偏移的单位是 8 字节</strong>，所以偏移 185 = 数据起始位置在 1480 字节处。每片大小 = 1480 数据 + 20 首部 = 1500，正好卡着 MTU。</p>
+
+<h3>3.2 lwIP 的分片实现：ip4_frag</h3>
+
+<p><code>ip4_frag</code>（<span class="pg">PDF p.232~234</span>）的核心思路是<strong>零拷贝切分</strong>——新片的首部复制一份，数据区用 PBUF_REF 引用原 pbuf 的对应段，不搬数据：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">err_t</span>
+<span style="color:#795E26">ip4_frag</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> pbuf *p, <span style="color:#0000FF">struct</span> netif *netif, <span style="color:#267F99">const</span> <span style="color:#267F99">ip4_addr_t</span> *dest)</span>
+{
+    <span style="color:#267F99">const</span> <span style="color:#267F99">u16_t</span> nfb = (<span style="color:#267F99">u16_t</span>)((netif-&gt;mtu - IP_HLEN) / <span style="color:#098658">8</span>);  <span style="color:#008000">/* 每片数据区块数：(1500-20)/8 = 185 */</span>
+    <span style="color:#267F99">u16_t</span> left = (<span style="color:#267F99">u16_t</span>)(p-&gt;tot_len - IP_HLEN);             <span style="color:#008000">/* 待切的数据量：3980 */</span>
+    <span style="color:#267F99">u16_t</span> ofo = <span style="color:#098658">0</span>;                                          <span style="color:#008000">/* 片偏移（单位8字节） */</span>
+    <span style="color:#0000FF">while</span> (left) {                                          <span style="color:#008000">/* 还有数据没切完 */</span>
+        <span style="color:#008000">/* 本片数据长度：不足 1480 就取剩余量 */</span>
+        fragsize = LWIP_MIN(left, (<span style="color:#267F99">u16_t</span>)(nfb * <span style="color:#098658">8</span>));        <span style="color:#008000">/* = 1480 */</span>
+        <span style="color:#008000">/* 申请一块只装 20 字节 IP 首部的 pbuf，拷贝原始首部 */</span>
+        rambuf = pbuf_alloc(PBUF_LINK, IP_HLEN, PBUF_RAM);
+        SMEMCPY(rambuf-&gt;payload, original_iphdr, IP_HLEN);
+        <span style="color:#008000">/* 数据区：用 PBUF_REF 引用原 pbuf 的对应段（零拷贝！） */</span>
+        newpbuf = pbuf_alloced_custom(PBUF_RAW, newpbuflen,
+                                      PBUF_REF, &amp;pcr-&gt;pc,
+                                      (<span style="color:#267F99">u8_t</span> *)p-&gt;payload + poff, newpbuflen);
+        pbuf_cat(rambuf, newpbuf);                          <span style="color:#008000">/* 首部 + 数据 串成链 */</span>
+        <span style="color:#008000">/* 改本片首部：总长度、片偏移、MF 标志、校验和清零 */</span>
+        IPH_OFFSET_SET(iphdr, lwip_htons(tmp | IP_MF));     <span style="color:#008000">/* 非末片置 MF */</span>
+        IPH_LEN_SET(iphdr, lwip_htons(fragsize + IP_HLEN)); <span style="color:#008000">/* 1500 */</span>
+        IPH_CHKSUM_SET(iphdr, <span style="color:#098658">0</span>);                           <span style="color:#008000">/* 让底层重算 */</span>
+        <span style="color:#008000">/* 发出去 */</span>
+        netif-&gt;output(netif, rambuf, dest);                 <span style="color:#008000">/* 经 ARP 层走 linkoutput */</span>
+        pbuf_free(rambuf);
+        left = (<span style="color:#267F99">u16_t</span>)(left - fragsize);                    <span style="color:#008000">/* 剩余量递减 */</span>
+        ofo = (<span style="color:#267F99">u16_t</span>)(ofo + nfb);                           <span style="color:#008000">/* 片偏移递增 185 */</span>
+    }
+    <span style="color:#0000FF">return</span> ERR_OK;
+}
+</pre>
+
+<p>流程一句话：<strong>循环"拷贝首部 + 引用数据段 → 改偏移/长度/MF → 发一片"</strong>，直到切完。数据区全程没搬动过，只是换了不同的"视角"。</p>
+
+<h3>3.3 重装：ip_reassdata 链表</h3>
+
+<p>分片到达目的地时间不定（可能后发先至），接收方要暂存等待（第 9.2.3 节 <span class="pg">PDF p.235</span>）。lwIP 用 <code>ip_reassdata</code> 结构体管理一组分片：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip_reassdata</span> {</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip_reassdata</span> *<span style="color:#795E26">next</span>;</span>   <span style="color:#008000">/* 下一个重装节点 */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">p</span>;</span>              <span style="color:#008000">/* 指向分片的 pbuf */</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip_hdr</span> <span style="color:#795E26">iphdr</span>;</span>         <span style="color:#008000">/* 本组数据报的首部（含标识） */</span>
+    <span style="color:#267F99">u16_t</span> datagram_len;          <span style="color:#008000">/* 已收到的数据长度 */</span>
+    <span style="color:#267F99">u8_t</span> flags;                  <span style="color:#008000">/* 是否收到最后一个分片 */</span>
+    <span style="color:#267F99">u8_t</span> timer;                  <span style="color:#008000">/* 超时间隔（超时丢弃，防止占着内存不放） */</span>
+};
+</pre>
+
+<p>实现细节（教材提到但没深讲）：分片到达后，把 <strong>IP 首部前 8 字节强转成 next_pbuf / start / end 三个字段</strong>——next_pbuf 用来把同一组的分片串成链表，start/end 记录分片的数据范围，便于按偏移排序。全部到齐后重组成完整数据报递给上层；超时未齐（由第 6 课的 <code>ip_reass_tmr</code> 周期检查）就整体丢弃。注意：重装功能要开 <code>LWIP_IPV4_REASSEMBLY</code> 宏才生效。</p>
+
+<h2>4. IP 的输出与输入</h2>
+
+<h3>4.1 输出：ip4_output_if_src</h3>
+
+<p>TCP/UDP 段最终统一走 <code>ip4_output_if_src</code>（第 9.3 节 <span class="pg">PDF p.236~238</span>），它的流程：</p>
+
+<ol>
+<li><code>pbuf_header(p, IP_HLEN)</code> 往前腾出 20 字节放 IP 首部（pbuf 的零拷贝老手艺）</li>
+<li>填首部：TTL、协议、目的 IP、版本(4)+首部长度(5)、TOS、总长度、标志/片偏移清零、标识 = <code>ip_id</code>（全局计数器，发一个 +1）</li>
+<li>源 IP：没指定就用路由选中的网卡 IP</li>
+<li>判 MTU：<code>p->tot_len &gt; netif->mtu</code> 就调 <code>ip4_frag</code> 分片发送；否则直接 <code>netif->output(netif, p, dest)</code>（= etharp_output，第 7 课）</li>
+</ol>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 关键尾段：MTU 检查 + 交给 ARP 层 */</span>
+<span style="color:#0000FF">if</span> (netif-&gt;mtu &amp;&amp; (p-&gt;tot_len &gt; netif-&gt;mtu)) {
+    <span style="color:#0000FF">return</span> ip4_frag(p, netif, dest);       <span style="color:#008000">/* 超 MTU：分片发送 */</span>
+}
+<span style="color:#0000FF">return</span> netif-&gt;output(netif, p, dest);      <span style="color:#008000">/* 正常：交给 ARP 解析 MAC 后发送 */</span>
+</pre>
+
+<h3>4.2 输入：ip4_input 的"十步安检"</h3>
+
+<p>收到 IP 包后走 <code>ip4_input</code>（第 9.4 节 <span class="pg">PDF p.239~246</span>），教材把流程总结为十步，全是"验明正身"：</p>
+
+<ol>
+<li>版本号必须是 4，不是就丢</li>
+<li>首部长度/总长度合法性检查（超过 pbuf 长度就丢）</li>
+<li>校验首部校验和，错就丢</li>
+<li>匹配接口：目的 IP 是不是本机的（单播地址比对、广播判定、多播处理）</li>
+<li>源 IP 不能是广播/多播地址</li>
+<li>没找到匹配网卡 → 非本机包：开了 IP_FORWARD 就转发，否则丢弃</li>
+<li>看标志+片偏移：是分片（MF=1 或偏移≠0）就进 <code>ip4_reass</code> 重装，没拼齐先返回</li>
+<li>首部长度超过 20 字节（带选项）→ 本配置下丢弃</li>
+<li>先喂给 RAW 接口（<code>raw_input</code>），没人接才继续</li>
+<li>按协议字段分发：UDP → <code>udp_input</code>，TCP → <code>tcp_input</code>，其他丢弃（ICMP 在这里也是经协议号分给 <code>icmp_input</code>）</li>
+</ol>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 十步的最后一步：去 IP 首部，按协议分发 */</span>
+pbuf_header(p, -(<span style="color:#267F99">s16_t</span>)iphdr_hlen);     <span style="color:#008000">/* 剥掉 IP 首部 */</span>
+<span style="color:#0000FF">switch</span> (IPH_PROTO(iphdr))
+{
+    <span style="color:#0000FF">case</span> IP_PROTO_UDP:
+        udp_input(p, inp);              <span style="color:#008000">/* 交给 UDP 层 */</span>
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">case</span> IP_PROTO_TCP:
+        tcp_input(p, inp);              <span style="color:#008000">/* 交给 TCP 层 */</span>
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">default</span>:
+        pbuf_free(p);                   <span style="color:#008000">/* 未知协议，丢弃 */</span>
+        <span style="color:#0000FF">break</span>;
+}
+</pre>
+
+<div class="tip">
+  <p>💡 记忆锚点：IP 输入是"体检十连"（版本→长度→校验→归属→来源→接口→分片→选项→RAW→分发），IP 输出是"打包四步"（腾位→填单→查 MTU→交 ARP）。源码再长，抓住骨架就不迷路。</p>
+</div>
+
+<h2>5. ICMP：IP 的"质检员与客服"</h2>
+
+<p>IP 太"佛系"：包丢了、TTL 超了、目的不可达，它自己闷声不响。于是有了 ICMP（Internet Control Message Protocol，互联网控制报文协议）——专门用来传递网络本身的状态消息（第 10.1 节 <span class="pg">PDF p.247</span>）。它解决 IP 的两大缺陷：<strong>① 没有差错报告机制 ② 没有主机管理与查询机制</strong>。</p>
+
+<p>ICMP 报文分两大类：</p>
+
+<table>
+<tr><th>类别</th><th>典型类型</th><th>用途</th></tr>
+<tr><td>差错报告报文</td><td>3 目的不可达、4 源站抑制、5 重定向、11 超时、12 参数错误</td><td>路由器/主机把"为什么没送到"告诉源主机</td></tr>
+<tr><td>查询报文</td><td>8/0 回显请求/应答（ping！）、13/14 时间戳、17/18 掩码</td><td>主机之间互相"问话"，成对出现</td></tr>
+</table>
+
+<p>⚠️ 教材明确提示：<strong>lwIP 只实现了差错报文的类型 3（目的不可达）和 11（超时），查询报文只处理回显请求（ping）</strong>——其余一律丢弃（<span class="pg">PDF p.247</span>）。</p>
+
+<p>报文结构（第 10.1.2 节 <span class="pg">PDF p.248~250</span>）：前 4 字节通用（类型 + 代码 + 校验和），后 4 字节随类型而变。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">ICMP 通用首部（<span style="color:#098658">8</span> 字节起）
++--------+--------+----------------+
+| 类型    | 代码    |    校验和      |
+| (<span style="color:#098658">8</span>位)  | (<span style="color:#098658">8</span>位)   |   (<span style="color:#098658">16</span>位)       |
++--------+--------+----------------+
+| 剩余 <span style="color:#098658">4</span> 字节：随类型变化            |
+|   · 回显报文：标识符(<span style="color:#098658">16</span>位)+序号(<span style="color:#098658">16</span>位) |
+|   · 差错报文：未使用(<span style="color:#098658">32</span>位)          |
++----------------------------------+
+| 数据区（可变）                     |
+|   · 回显报文：发送方自选数据，应答原样返回 |
+|   · 差错报文：引起差错的 IP 首部 +    |
+|      原数据报数据区前 <span style="color:#098658">8</span> 字节（含端口号）|
++----------------------------------+
+</pre>
+
+<p>回显报文：类型 8 = 请求（Echo request），类型 0 = 应答（Echo reply），代码恒为 0，标识符 + 序号用来匹配"哪个请求对应哪个应答"（Wireshark 里 ICMP 的 id/seq 字段）。差错报文的数据区为什么要带"原 IP 首部 + 前 8 字节"？因为前 8 字节恰好覆盖传输层的源/目的端口号——源主机据此知道是哪个应用程序的哪个包出了问题（<span class="pg">PDF p.249</span>）。</p>
+
+<h2>6. ICMP 源码：差错与回显</h2>
+
+<h3>6.1 数据结构</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">icmp_echo_hdr</span> {</span>          <span style="color:#008000">/* ICMP 首部（icmp.h） */</span>
+    <span style="color:#267F99">u8_t</span>  type;                 <span style="color:#008000">/* 类型：8 回显请求 / 0 回显应答 */</span>
+    <span style="color:#267F99">u8_t</span>  code;                 <span style="color:#008000">/* 代码：回显恒为 0 */</span>
+    <span style="color:#267F99">u16_t</span> chksum;               <span style="color:#008000">/* 校验和（含数据区） */</span>
+    <span style="color:#267F99">u16_t</span> id;                   <span style="color:#008000">/* 标识符 */</span>
+    <span style="color:#267F99">u16_t</span> seqno;                <span style="color:#008000">/* 序号 */</span>
+};
+
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_ER    0    <span style="color:#008000">/* 回送应答 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_DUR   3    <span style="color:#008000">/* 目标不可达 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_SQ    4    <span style="color:#008000">/* 源站抑制 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_RD    5    <span style="color:#008000">/* 重定向 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_ECHO  8    <span style="color:#008000">/* 回送请求 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_TE   11    <span style="color:#008000">/* 超时 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> ICMP_PP   12    <span style="color:#008000">/* 参数问题 */</span></span>
+<span style="color:#008000">/* 还有时间戳(13/14)、信息请求(15/16)、地址掩码(17/18)等 */</span>
+</pre>
+
+<h3>6.2 发送差错报文：icmp_send_response</h3>
+
+<p><code>icmp_dest_unreach()</code> 和 <code>icmp_time_exceeded()</code> 只是定好类型和代码，实际干活的是 <code>icmp_send_response</code>（<span class="pg">PDF p.252~254</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">static</span> <span style="color:#267F99">void</span>
+<span style="color:#795E26">icmp_send_response</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> pbuf *p, <span style="color:#267F99">u8_t</span> type, <span style="color:#267F99">u8_t</span> code)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">q</span>;</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">ip_hdr</span> *<span style="color:#795E26">iphdr</span>;</span>
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">icmp_echo_hdr</span> *<span style="color:#795E26">icmphdr</span>;</span>
+    <span style="color:#267F99">ip4_addr_t</span> iphdr_src;
+    <span style="color:#008000">/* 申请：ICMP 首部 + 原 IP 首部 + 原数据前 8 字节 */</span>
+    q = pbuf_alloc(PBUF_IP, <span style="color:#0000FF">sizeof</span>(<span style="color:#0000FF">struct</span> icmp_echo_hdr) + IP_HLEN + <span style="color:#098658">8</span>, PBUF_RAM);
+    <span style="color:#0000FF">if</span> (q == <span style="color:#098658">NULL</span>) {
+        <span style="color:#0000FF">return</span>;
+    }
+    icmphdr = (<span style="color:#0000FF">struct</span> icmp_echo_hdr *)q-&gt;payload;
+    icmphdr-&gt;type = type;                   <span style="color:#008000">/* 3 或 11 */</span>
+    icmphdr-&gt;code = code;                   <span style="color:#008000">/* 具体原因 */</span>
+    icmphdr-&gt;id = <span style="color:#098658">0</span>;
+    icmphdr-&gt;seqno = <span style="color:#098658">0</span>;
+    <span style="color:#008000">/* 把&quot;引起差错的 IP 首部 + 前 8 字节数据&quot;拷进数据区 */</span>
+    SMEMCPY((<span style="color:#267F99">u8_t</span> *)q-&gt;payload + <span style="color:#0000FF">sizeof</span>(<span style="color:#0000FF">struct</span> icmp_echo_hdr),
+            (<span style="color:#267F99">u8_t</span> *)p-&gt;payload, IP_HLEN + <span style="color:#098658">8</span>);
+    <span style="color:#008000">/* 发给原数据报的源主机 */</span>
+    ip4_addr_copy(iphdr_src, iphdr-&gt;src);
+    netif = ip4_route(&amp;iphdr_src);
+    <span style="color:#0000FF">if</span> (netif != <span style="color:#098658">NULL</span>) {
+        ip4_output_if(q, <span style="color:#098658">NULL</span>, &amp;iphdr_src, ICMP_TTL, <span style="color:#098658">0</span>, IP_PROTO_ICMP, netif);
+    }
+    pbuf_free(q);
+}
+</pre>
+
+<h3>6.3 接收与回显应答：icmp_input</h3>
+
+<p>IP 层按协议号把 ICMP 包交给 <code>icmp_input</code>（<span class="pg">PDF p.254~258</span>）。它先做长度检查、取出类型字段，然后一个大 switch：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#0000FF">switch</span> (type)
+{
+    <span style="color:#0000FF">case</span> ICMP_ER:                    <span style="color:#008000">/* 回显应答：只统计，不处理 */</span>
+        MIB2_STATS_INC(mib2.icmpinechoreps);
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">case</span> ICMP_ECHO:                  <span style="color:#008000">/* 回显请求：ping！要回包 */</span>
+        <span style="color:#008000">/* 多播/广播目的地址不回（避免风暴） */</span>
+        <span style="color:#0000FF">if</span> (ip4_addr_ismulticast(ip4_current_dest_addr())) <span style="color:#0000FF">goto</span> icmperr;
+        <span style="color:#0000FF">if</span> (ip4_addr_isbroadcast(ip4_current_dest_addr(), ip_current_netif())) <span style="color:#0000FF">goto</span> icmperr;
+        ...
+        <span style="color:#008000">/* 交换源/目的 IP，类型改成应答，重算校验和，原样发回 */</span>
+        ip4_addr_copy(iphdr-&gt;src, *src);                    <span style="color:#008000">/* 源 = 原目的 */</span>
+        ip4_addr_copy(iphdr-&gt;dest, *ip4_current_src_addr()); <span style="color:#008000">/* 目的 = 原源 */</span>
+        ICMPH_TYPE_SET(iecho, ICMP_ER);                     <span style="color:#008000">/* 类型 8 → 0 */</span>
+        iecho-&gt;chksum = <span style="color:#098658">0</span>;                                  <span style="color:#008000">/* 校验和重算 */</span>
+        IPH_TTL_SET(iphdr, ICMP_TTL);
+        IPH_CHKSUM_SET(iphdr, <span style="color:#098658">0</span>);
+        ret = ip4_output_if(p, src, LWIP_IP_HDRINCL, ICMP_TTL, <span style="color:#098658">0</span>, IP_PROTO_ICMP, inp);
+        <span style="color:#0000FF">break</span>;
+    <span style="color:#0000FF">default</span>:                         <span style="color:#008000">/* 其他类型：统计后丢弃 */</span>
+        ICMP_STATS_INC(icmp.drop);
+        <span style="color:#0000FF">break</span>;
+}
+</pre>
+
+<p>ping 的魔法就在这：<strong>收到回显请求 → 把"请求"改写成"应答"（交换 IP、类型 8 改 0）→ 原路发回</strong>。数据区原封不动，所以发送方可以比对内容确认没损坏。整个过程不经过传输层——这就是教材说的"ping 不用经过传输层"。</p>
+
+<div class="warn">
+  <p>⚠️ 关于分片重装：正点原子例程默认可能没开 <code>LWIP_IPV4_REASSEMBLY</code>，所以电脑 ping 板子时别用太大包（超过 1472 字节数据会触发分片）。练习里我们会故意试一次——如果板子 ping 不通大包，先别慌，检查这个宏，这本身就是一次很好的观察实验。</p>
+</div>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 8.1：ping 抓包，解剖 IP 首部与 ICMP 报文</h3>
+  <p class="step">1️⃣ Wireshark 过滤 <code>icmp</code>，电脑 <code>ping 192.168.1.10</code> 抓 4 个包（2 请求 2 应答）。</p>
+  <p class="step">2️⃣ 展开请求包的 <code>Internet Protocol Version 4</code> 层，逐字段对照第 2 节布局：Version=4、Header Length=20（IHL=5）、Total Length=60、Identification 每次 +1、TTL=128（Windows 默认）、Protocol=1（ICMP）、Header Checksum。</p>
+  <p class="step">3️⃣ 再展开 <code>Internet Control Message Protocol</code> 层：Type=8（请求）/Code=0/Checksum/Identifier/Sequence Number。对比应答包：Type=0，Identifier 与 Sequence 与请求相同（它们配对）。</p>
+  <p class="step">4️⃣ 观察板子回的应答包 TTL：lwIP 默认 ICMP_TTL=255，直连没有路由器衰减，所以是 255——对比电脑发出的 128，这就是"不同系统 TTL 初始值不同"的实证。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 8.2：制造分片，观察 IP 分片与重装</h3>
+  <p class="step">1️⃣ 先测基线：电脑 <code>ping 192.168.1.10 -l 1472 -f</code>（1472 数据 + 28 首部 = 正好 1500，-f 禁止分片），应该能通——这是 MTU 边界。</p>
+  <p class="step">2️⃣ 再试 <code>ping 192.168.1.10 -l 1473 -f</code>：1473+28=1501 超 MTU 且禁止分片 → 应该失败，同时 Wireshark 里能看到一个 ICMP 差错报文（目的不可达）。这正好验证第 5 节"差错报文"的存在。</p>
+  <p class="step">3️⃣ 关掉 -f：<code>ping 192.168.1.10 -l 3000</code>，Wireshark 过滤 <code>ip.addr == 192.168.1.10</code>，在 Edit→Preferences→Protocols→IPv4 里取消勾选 "Reassemble fragmented IPv4 datagrams"，就能看到 3 个分片：<strong>标识相同、片偏移 0/185/370、MF 1/1/0</strong>，数据长度 1480/1480/40。</p>
+  <p class="step">4️⃣ 如果板子没开 <code>LWIP_IPV4_REASSEMBLY</code>，3000 字节的 ping 会丢包或不通——去 lwipopts.h 打开这个宏再试，体会"重装"在协议栈里的意义。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. IPv4 固定首部的长度是？</p>
+  <p class="opt">A. 20 字节</p>
+  <p class="opt">B. 32 字节</p>
+  <p class="opt">C. 60 字节</p>
+  <p class="opt">D. 1500 字节</p>
+  <details><summary>查看答案</summary><div class="answer">A。固定 20 字节（首部长度字段=5，单位 4 字节）；带选项最长 60 字节（PDF p.228）。</div></details>
+
+  <p class="q">Q2. IP 分片时各片的"标识 Identification"字段的作用是？</p>
+  <p class="opt">A. 区分数据报的优先级</p>
+  <p class="opt">B. 让接收方把同一数据报的分片归组重装</p>
+  <p class="opt">C. 记录经过的路由器个数</p>
+  <p class="opt">D. 表示数据报的总长度</p>
+  <details><summary>查看答案</summary><div class="answer">B。源主机每发一个数据报计数器加 1，分片时同组各片标识相同，接收方按标识归组重装（PDF p.229）。</div></details>
+
+  <p class="q">Q3. 4000 字节数据报（含 20 字节 IP 首部）在 MTU=1500 的网络上分片，第三片的片偏移是？</p>
+  <p class="opt">A. 0（单位 8 字节）</p>
+  <p class="opt">B. 185（单位 8 字节）</p>
+  <p class="opt">C. 370（单位 8 字节）</p>
+  <p class="opt">D. 2960（单位 8 字节）</p>
+  <details><summary>查看答案</summary><div class="answer">C。数据 3980 拆成 1480+1480+1020，第三片从 2960 字节处开始，2960/8=370（PDF p.230~231）。</div></details>
+
+  <p class="q">Q4. ping 使用的 ICMP 报文类型是？</p>
+  <p class="opt">A. 差错报文类型 3（目的不可达）</p>
+  <p class="opt">B. 回显请求（8）与回显应答（0）</p>
+  <p class="opt">C. 差错报文类型 11（超时）</p>
+  <p class="opt">D. 查询报文类型 13（时间戳）</p>
+  <details><summary>查看答案</summary><div class="answer">B。ping 用回显请求（8）+ 回显应答（0）测试主机可达性；lwIP 也只处理回显请求（PDF p.250/258）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 9 章（<span class="pg">PDF p.228~246</span>）——IP 协议与分片重装源码</li>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 10 章（<span class="pg">PDF p.247~259</span>）——ICMP 报文与源码实现</li>
+<li>🌐 <a href="https://datatracker.ietf.org/doc/html/rfc791">RFC 791：Internet Protocol</a>——IPv4 数据报格式与分片规则的权威定义</li>
+<li>🌐 <a href="https://datatracker.ietf.org/doc/html/rfc792">RFC 792：Internet Control Message Protocol</a>——ICMP 报文格式与全部类型</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 9 课——RAW 编程接口：lwIP 最底层的编程方式，亲手用 UDP 写一个"裸奔"的收发程序，把这几课的结构体真正用起来。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0007-arp-protocol.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0009-raw-udp.html">下一课：RAW 接口 UDP →</a>
+</nav>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 1 课：初识 µC/OS-III — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 1 课</nav>
+
+<h1>第 1 课：初识 µC/OS-III</h1>
+<p class="subtitle">第二个内核、三件套源码结构、以及本课程的真正目标——亲手造一个操作系统</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>FreeRTOS 课里你已经看透了链表就绪表的内核；这课认识第二个经典内核 µC/OS-III——它的"位图就绪表"是另一派设计。学完你能说清 µC/OS-III 的源码三件套结构、它与 FreeRTOS 的总体差异，并理解本课程"手写 MiniOS"这条主线的意义。</p>
+</div>
+
+<h2>1. µC/OS-III 是什么</h2>
+
+<p>µC/OS-III 读作 "Micro C O S Three"，是 Micrium 公司（Jean Labrosse 创立）的第三代实时内核（正点原子《µC/OS-III 开发指南 V1.5》第 1.1 节 <span class="pg">PDF p.13</span>）。它是 RTOS 家族的另一位重量级成员，与 FreeRTOS、RTX、RT-Thread 同类，但血统不同：<strong>FreeRTOS 诞生于社区，µC/OS 诞生于教科书</strong>——Labrosse 写《µC/OS: The Real-Time Kernel》时为了给书配代码而写了它，所以它的内核代码结构以"清晰教学"著称，是所有 RTOS 里最适合用来"拆开研究内核设计"的一个。</p>
+
+<p>一句话理解多任务（与 FreeRTOS 课第 1 课完全一致的概念）：单核 CPU 某一时刻只能跑一个任务，是<strong>任务调度器</strong>在任务间高速切换，造成"同时运行"的错觉。µC/OS-III 的调度器同样按优先级决定下一刻跑谁（PDF p.13）。</p>
+
+<h2>2. 为什么学 µC/OS-III（而不是只学 FreeRTOS）</h2>
+
+<p>你已经学透 FreeRTOS 了，为什么还要学第二个内核？因为两个内核的设计哲学恰好互补，<strong>对照学习才能看清"什么是操作系统共有的本质，什么是具体实现的选择"</strong>：</p>
+
+<table>
+<tr><th>维度</th><th>FreeRTOS（已学）</th><th>µC/OS-III（本课程）</th></tr>
+<tr><td>就绪任务组织</td><td><strong>链表</strong>（列表+列表项）</td><td><strong>位图</strong>（OSRdyGrp/OSRdyTbl）</td></tr>
+<tr><td>优先级方向</td><td>数值越大优先级越高</td><td><strong>数值越小优先级越高</strong></td></tr>
+<tr><td>同优先级多任务</td><td>时间片轮转（可选）</td><td>时间片轮转（内建）</td></tr>
+<tr><td>任务间同步</td><td>队列/信号量/事件组/任务通知</td><td>信号量/互斥量/消息队列/事件标志/<strong>任务内嵌信号量与消息队列</strong></td></tr>
+<tr><td>临界区</td><td>关中断 + BASEPRI</td><td>锁定调度器为主 + BASEPRI（中断禁用时间极短）</td></tr>
+<tr><td>源码组织</td><td>单内核（tasks.c/queue.c/list.c…）</td><td><strong>三件套</strong>：µC/OS-III + µC/CPU + µC/LIB</td></tr>
+<tr><td>定位</td><td>社区驱动、极度普及</td><td>教学经典、结构清晰、商用授权（后转开源）</td></tr>
+</table>
+
+<p>关键差异剧透（本课程会展开）：<strong>位图就绪表</strong>让 µC/OS-III 找"最高优先级就绪任务"只需查一次表，是 O(1) 的；而 FreeRTOS 的链表就绪表需要遍历。两种都是教科书级设计，第 4 课和第 7 课（MiniOS 第一步）你会亲手实现位图算法。</p>
+
+<h2>3. 源码三件套：µC/OS-III 的"俄罗斯套娃"</h2>
+
+<p>µC/OS-III 不像 FreeRTOS 只有一个内核目录，它由三个独立组件组成（PDF 第 1.3 节 <span class="pg">PDF p.20</span>）：</p>
+
+<table>
+<tr><th>组件</th><th>职责</th><th>关键内容</th></tr>
+<tr><td><strong>µC/OS-III</strong><br>（uC-OS3-x.x.x）</td><td>实时内核本体</td><td><code>Source/</code>（os_core/os_task/os_sem/os_mutex/os_q/os_flag/os_tmr/os_mem…）、<code>Ports/</code>（ARM-Cortex-M 移植）、<code>Cfg/</code>（os_cfg.h 模板）</td></tr>
+<tr><td><strong>µC/CPU</strong><br>（uC-CPU-x.x.x）</td><td>CPU 抽象层：数据类型、开关中断、时间戳、CPU 状态</td><td><code>cpu_core.c/h</code>、<code>ARM-Cortex-M/</code>（cpu_a.s 汇编）、<code>BSP/</code>（时间戳定时器）</td></tr>
+<tr><td><strong>µC/LIB</strong><br>（uC-LIB-x.x.x）</td><td>标准库补充：内存拷贝、字符串、数学函数（不依赖编译器库）</td><td><code>lib_mem.c</code>、<code>lib_str.c</code>、<code>lib_math.c</code> 等</td></tr>
+</table>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS：FreeRTOS 把 CPU 相关的东西并进了 portable/ 移植层；µC/OS-III 把它拆成了独立的 µC/CPU 组件。拆开的好处是移植层更薄、内核更纯——这对我们第 7~12 课"手写 MiniOS"是极好的参考样板。</p>
+</div>
+
+<p>版本情报：教材配套源码为 µC/OS-III V3.08.01 + µC/CPU V1.32.01。内核原理与版本基本无关，但看源码时以你分支工程的实际版本为准。</p>
+
+<h2>4. 本课程路线图：16 课，主线是"造一个操作系统"</h2>
+
+<ol>
+<li><strong>入门</strong>（01~02）：概念 + 移植配置</li>
+<li><strong>UCOS 机制</strong>（03~06）：任务基础 / 位图就绪表 / 任务切换 / 中断与临界区——处处对照 FreeRTOS</li>
+<li><strong>手写 MiniOS</strong>（07~12）：⭐ 本课程核心。从零实现一个可运行的最小内核——TCB 与位图就绪表 → PendSV 上下文切换 → 调度器与临界区 → 时基与任务延时 → 信号量 → 三内核验收对比</li>
+<li><strong>UCOS 应用</strong>（13~16）：任务管理 / 信号量与互斥 / 消息队列与事件标志 / 软件定时器与内存管理</li>
+</ol>
+
+<div class="warn">
+  <p>⚠️ 前置依赖：MiniOS 系列（07~12）需要 FreeRTOS 课程第 6/7 课（启动流程、PendSV 切换）打底。如果还没学到那两课，建议先补上再进 MiniOS。</p>
+</div>
+
+<h2>动手练习（约 15 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1.1：在 UCOS 分支工程里指认三件套</h3>
+  <p class="step">1️⃣ 切换到你的 µC/OS-III 分支工程，找到三个组件目录（一般是 <code>Middlewares/</code> 或 <code>uC-OS3/</code>、<code>uC-CPU/</code>、<code>uC-LIB/</code> 之类命名）。</p>
+  <p class="step">2️⃣ 进入 µC/OS-III 的 <code>Source/</code>，数一下 os_ 开头的源文件，找到 os_core.c / os_task.c / os_sem.c / os_mutex.c / os_q.c / os_flag.c / os_tmr.c / os_mem.c。</p>
+  <p class="step">3️⃣ 对照 FreeRTOS 分支工程：FreeRTOS 的 tasks.c/queue.c/list.c 和 UCOS 的 os_task.c/os_core.c 分别承担什么角色？写一段 3 行的笔记。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 1.2：看一段 UCOS 风格的任务创建</h3>
+  <p class="step">1️⃣ 在 UCOS 工程里找到示例任务创建代码（搜索 <code>OSTaskCreate</code>），对比 FreeRTOS 的 <code>xTaskCreate</code>，先感受两者的形参风格差异（提示：UCOS 需要任务栈数组 + 栈大小 + 优先级 + 选项 + 错误码指针……）。</p>
+  <p class="step">2️⃣ 思考题：UCOS 的"优先级数值越小越高"和 FreeRTOS 相反——为什么有的 RTOS 这么设计？（提示：位图算法中"最高优先级"对应最高位，见第 4 课）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. µC/OS-III 找"最高优先级就绪任务"用的是？</p>
+  <p class="opt">A. 链表遍历查找</p>
+  <p class="opt">B. 位图就绪表查表</p>
+  <p class="opt">C. 哈希表映射查找</p>
+  <details><summary>查看答案</summary><div class="answer">B。OSRdyGrp/OSRdyTbl 位图就绪表，O(1) 查最高优先级（本课表格 + 第 4 课展开）。</div></details>
+
+  <p class="q">Q2. µC/OS-III 的优先级数值大小与优先级高低关系是？</p>
+  <p class="opt">A. 数值越大优先级越高</p>
+  <p class="opt">B. 数值越小优先级越高</p>
+  <p class="opt">C. 与数值大小完全无关</p>
+  <details><summary>查看答案</summary><div class="answer">B。与 FreeRTOS 相反，µC/OS-III 数值越小优先级越高（PDF p.84）。</div></details>
+
+  <p class="q">Q3. µC/OS-III 源码由哪三件套组成？</p>
+  <p class="opt">A. µC/OS-III、µC/CPU、µC/LIB</p>
+  <p class="opt">B. µC/OS-III、µC/GUI、µC/FS</p>
+  <p class="opt">C. µC/OS-III、µC/OS-II、µC/OS</p>
+  <details><summary>查看答案</summary><div class="answer">A。内核 + CPU 抽象层 + 标准库补充，三个独立组件（PDF p.20~26）。</div></details>
+
+  <p class="q">Q4. 本课程（07~12 课）的核心主线是？</p>
+  <p class="opt">A. UCOS 全部 API 逐个实验</p>
+  <p class="opt">B. 手写 MiniOS 最小内核</p>
+  <p class="opt">C. UCOS 与 LVGL 集成开发</p>
+  <details><summary>查看答案</summary><div class="answer">B。手写 MiniOS：位图就绪表→上下文切换→调度器→时基→信号量，亲手实现一个操作系统。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 1 章（PDF p.13~27）——本课全部依据</li>
+<li>🌐 <a href="https://weston-embedded.com/uc-os-iii">Weston Embedded（Micrium 后继）µC/OS-III 主页</a>——官方文档与代码库入口</li>
+<li>📕 <a href="https://weston-embedded.com/uc-os-iii">《µC/OS-III: The Real-Time Kernel》</a>——内核作者 Labrosse 亲写的书，配合本章读"Introduction"</li>
+<li>🔁 对照：FreeRTOS 课程第 1 课（初识 FreeRTOS）——本课的对比基准</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 2 课——把 µC/OS-III 移植进你的分支工程并跑起第一个任务，亲手摸到三件套的移植层。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a class="disabled" href="#">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0002-porting-and-config.html">下一课：移植与配置 →</a>
+</nav>
+
+</div>
+</body>
+</html>

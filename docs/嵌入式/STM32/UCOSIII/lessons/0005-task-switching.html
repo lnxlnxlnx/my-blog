@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 5 课：任务切换原理 — µC/OS-III 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 5 课</nav>
+
+<h1>第 5 课：任务切换原理</h1>
+<p class="subtitle">OSSched 选人、OSCtxSw 喊人、PendSV 换人——三条腿走完一次切换</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>上一课解决了"选谁跑"，这一课解决"怎么换人"（PDF 第 8 章 <span class="pg">PDF p.132~144</span>）。学完你能说清 µC/OS-III 的三个问题：任务级切换 <code>OSSched()</code> 的完整流程、中断级切换 <code>OSIntExit()</code> 与 <code>OSIntCtxSw</code> 的差异、<code>OS_CPU_PendSV_Handler</code> 汇编保存/恢复现场的关键段。对照 FreeRTOS 的 <code>vTaskSwitchContext</code> 与 PendSV，看清两大内核<strong>调度点设计</strong>的根本差异。</p>
+</div>
+
+<h2>1. PendSV 异常回顾（FreeRTOS 已学，快速过）</h2>
+
+<p>FreeRTOS 课第 7 课已经解剖过 PendSV，这里只复习三个要点（PDF 第 8.1 节 <span class="pg">PDF p.132</span>）：</p>
+
+<ul>
+<li>🔔 <strong>PendSV = 可挂起服务调用</strong>：可以被挂起、延迟执行，是 RTOS 的"专车"。</li>
+<li>🔻 µC/OS-III 把 PendSV 配成<strong>最低中断优先级</strong>——等其他所有中断处理完，才轮到它做任务切换。这样切换永远不会打断中断服务，中断也不会晚点。</li>
+<li>🚀 触发方式：往 ICSR 寄存器的 PENDSVSET 位写 1 即可挂起。一句话：<strong>挂起≠立刻执行，而是"等其他中断都办完"</strong>。</li>
+</ul>
+
+<h2>2. 何时触发切换：触发≠一定切换</h2>
+
+<p>µC/OS-III 是抢占式内核，系统保证"当前运行的一定是最高优先级就绪任务"，所以内核会在很多时机自动检查（PDF 第 8.2 节 <span class="pg">PDF p.132</span>）：</p>
+
+<table>
+<tr><th>时机</th><th>典型 API</th></tr>
+<tr><td>任务间发信号/消息</td><td><code>OSSemPost()</code>、<code>OSQPost()</code> 等</td></tr>
+<tr><td>任务主动延时</td><td><code>OSTimeDly()</code>、<code>OSTimeDlyHMSM()</code></td></tr>
+<tr><td>等待未发生的事件</td><td><code>OSSemPend()</code>、<code>OSQPend()</code>、<code>OSFlagPend()</code>…</td></tr>
+<tr><td>任务生命周期变化</td><td><code>OSTaskCreate()</code>、<code>OSTaskDel()</code>、<code>OSTaskSuspend()/Resume()</code>、改优先级</td></tr>
+<tr><td>内核对象被删</td><td><code>OSSemDel()</code>、<code>OSQDel()</code>…</td></tr>
+<tr><td>中断嵌套结束</td><td>最内层 ISR 的 <code>OSIntExit()</code></td></tr>
+<tr><td>其他</td><td><code>OSSchedUnlock()</code>、<code>OSSchedRoundRobinYield()</code>、应用主动调 <code>OSSched()</code></td></tr>
+</table>
+
+<p>重要认知：<strong>"触发任务切换"并不一定真的切换</strong>——它只是"保证运行的是最高优先级就绪任务"。如果查完发现当前任务就是最高优先级，白跑一趟，直接返回。</p>
+
+<h2>3. OSSched()：任务级切换的完整流程</h2>
+
+<p><code>OSSched()</code> 定义在 os_core.c，任务里调用（PDF 第 8.3.1 节 <span class="pg">PDF p.133~135</span>），流程如下：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_core.c —— OSSched()：任务级调度器 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSSched</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_SR_ALLOC();
+
+<span style="color:#267F99">#<span style="color:#0000FF">if</span> (OS_CFG_INVALID_OS_CALLS_CHK_EN &gt; 0u)</span>
+    <span style="color:#0000FF">if</span> (OSRunning != OS_STATE_OS_RUNNING) {   <span style="color:#008000">/* ① 系统没跑？不调度 */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+<span style="color:#267F99">#<span style="color:#0000FF">endif</span></span>
+    <span style="color:#0000FF">if</span> (OSIntNestingCtr &gt; <span style="color:#098658">0u</span>) {               <span style="color:#008000">/* ② 在中断里？不调度（那是 OSIntExit 的事） */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+    <span style="color:#0000FF">if</span> (OSSchedLockNestingCtr &gt; <span style="color:#098658">0u</span>) {         <span style="color:#008000">/* ③ 调度器被锁？不调度（OSSchedLock 锁着） */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+
+    CPU_INT_DIS();                            <span style="color:#008000">/* ④ 关中断，进入临界区 */</span>
+    OSPrioHighRdy   = OS_PrioGetHighest();    <span style="color:#008000">/* ⑤ 位图查最高就绪优先级（上一课！） */</span>
+    OSTCBHighRdyPtr = OSRdyList[OSPrioHighRdy].HeadPtr;  <span style="color:#008000">/* ⑥ 取该优先级就绪链表头 */</span>
+    <span style="color:#0000FF">if</span> (OSTCBHighRdyPtr == OSTCBCurPtr) {     <span style="color:#008000">/* ⑦ 还是当前任务？白忙，直接返回 */</span>
+        CPU_INT_EN();
+        <span style="color:#0000FF">return</span>;
+    }
+
+    OSTaskCtxSwCtr++;                         <span style="color:#008000">/* 记录切换次数（调试用） */</span>
+    OS_TASK_SW();                             <span style="color:#008000">/* ⑧ 触发切换：挂起 PendSV */</span>
+    CPU_INT_EN();                             <span style="color:#008000">/* 退出临界区 */</span>
+}
+</pre>
+
+<p>八个步骤，本质就一句话：<strong>先查清楚"该不该换、换成谁"，再喊 PendSV 来换</strong>。真正换人的脏活累活不在 OSSched 里——它只是"决策者"，"执行者"是 PendSV。</p>
+
+<h2>4. OSIntExit() 与 OSIntCtxSw：中断级切换的差异</h2>
+
+<p>中断退出时的调度走 <code>OSIntExit()</code>（PDF 第 8.3.2 节 <span class="pg">PDF p.137~139</span>）。它和 OSSched 的差别在"记账"：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_core.c —— OSIntExit()：ISR 结尾调用，报告&quot;我处理完了&quot; */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">OSIntExit</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    CPU_SR_ALLOC();
+    <span style="color:#0000FF">if</span> (OSRunning != OS_STATE_OS_RUNNING) { <span style="color:#0000FF">return</span>; }
+
+    CPU_INT_DIS();
+    <span style="color:#0000FF">if</span> (OSIntNestingCtr == <span style="color:#098658">0u</span>) { CPU_INT_EN(); <span style="color:#0000FF">return</span>; }  <span style="color:#008000">/* 没进过中断？返回 */</span>
+    OSIntNestingCtr--;                                    <span style="color:#008000">/* ① 中断嵌套计数器 -1 */</span>
+    <span style="color:#0000FF">if</span> (OSIntNestingCtr &gt; <span style="color:#098658">0u</span>) { CPU_INT_EN(); <span style="color:#0000FF">return</span>; }   <span style="color:#008000">/* ② 还有外层中断？不调度 */</span>
+    <span style="color:#0000FF">if</span> (OSSchedLockNestingCtr &gt; <span style="color:#098658">0u</span>) { CPU_INT_EN(); <span style="color:#0000FF">return</span>; }  <span style="color:#008000">/* ③ 调度锁着？不调度 */</span>
+
+    OSPrioHighRdy   = OS_PrioGetHighest();                <span style="color:#008000">/* ④ 位图查最高优先级 */</span>
+    OSTCBHighRdyPtr = OSRdyList[OSPrioHighRdy].HeadPtr;
+    <span style="color:#0000FF">if</span> (OSTCBHighRdyPtr == OSTCBCurPtr) {                 <span style="color:#008000">/* ⑤ 无需切换就返回 */</span>
+        CPU_INT_EN();
+        <span style="color:#0000FF">return</span>;
+    }
+
+    OSIntCtxSw();                                         <span style="color:#008000">/* ⑥ 触发切换 */</span>
+    CPU_INT_EN();
+}
+</pre>
+
+<p>关键差异在最后一步。看 os_cpu_a.asm 里这两个标号的"真面目"——它们是<strong>同一段代码</strong>（PDF 第 8.3.3 节 <span class="pg">PDF p.140</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* os_cpu_a.asm —— 任务级与中断级切换的&quot;触发端&quot;是同一个标号对 */</span>
+NVIC_INT_CTRL   EQU <span style="color:#098658">0xE000ED04</span>   ; 中断控制状态寄存器（ICSR）地址
+NVIC_PENDSVSET  EQU <span style="color:#098658">0x10000000</span>   ; PENDSVSET 位掩码
+
+OSCtxSw
+OSIntCtxSw
+    ; 把 ICSR 的 PENDSVSET 位置 <span style="color:#098658">1</span>：挂起 PendSV，触发任务切换
+    LDR R0, =NVIC_INT_CTRL
+    LDR R1, =NVIC_PENDSVSET
+    STR R1, [R0]
+    BX  LR
+</pre>
+
+<p>为什么两个入口共用一段代码、中断里"不需要额外保存现场"？因为<strong>保存现场这件事 PendSV 的 Handler 统一包办了</strong>：</p>
+
+<ul>
+<li>进入 PendSV 时，CPU 硬件已经自动把 xPSR/PC/LR/R12/R0~R3 压进当前栈（进任何异常都一样）；</li>
+<li>PendSV Handler 再手动保存 R4~R11（加 FPU 时还有 S16~S31）——把"全部现场"凑齐；</li>
+<li>所以无论从任务（OSCtxSw）还是从中断（OSIntCtxSw）挂起 PendSV，<strong>现场保存都在 PendSV 里统一完成</strong>，两个入口自然可以共用。中断级切换省掉的只是"自己找地方压栈"——硬件早替它压好了。</li>
+</ul>
+
+<div class="tip">
+  <p>💡 对照 FreeRTOS：FreeRTOS 的切换触发散在各处（tick 中断里 <code>portYIELD_FROM_ISR()</code>、API 里的 <code>portYIELD()</code>……都只是置位 PENDSVSET），选任务的动作放在 PendSV 里调用 <code>vTaskSwitchContext()</code>；µC/OS-III 反过来——<strong>选任务在 C 层先做完（OSSched/OSIntExit），PendSV 只做纯搬运</strong>。前者"PendSV 身兼选人+换人"，后者"选人换人分居两层"。殊途同归，但 UCOS 的 PendSV 汇编更短、更纯粹。</p>
+</div>
+
+<h2>5. 汇编切换：OS_CPU_PendSV_Handler 的关键段</h2>
+
+<p>真正"换人"的现场，在 os_cpu_a.asm 的 <code>OS_CPU_PendSVHandler</code>（PDF 第 8.4 节 <span class="pg">PDF p.140~144</span>）。核心六步：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">; os_cpu_a.<span style="color:#0000FF">asm</span> —— OS_CPU_PendSVHandler（注释版关键段）
+OS_CPU_PendSVHandler
+    ; ---- ① 保存现场：把<span style="color:#A31515">&quot;现在的我&quot;</span>完整存进当前任务栈 ----
+    MRS     R0, PSP              ; R0 = 当前任务栈顶（PSP）
+    IF {FPU} != <span style="color:#A31515">&quot;SoftVFP&quot;</span>
+    TST     R14, #<span style="color:#098658">0x10</span>           ; 用了 FPU？是则保存 S16~S31
+    IT      EQ
+    VSTMDBEQ R0!, {S16-S31}
+    ENDIF
+    STMFD   R0!, {R4-R11, R14}   ; 手动压栈 R4~R11 + 返回地址（其余寄存器硬件已压）
+
+    ; ---- ② 更新当前任务的栈顶指针 ----
+    MOV32   R5, OSTCBCurPtr
+    LDR     R1, [R5]             ; R1 = 当前任务 TCB
+    STR     R0, [R1]             ; TCB-&gt;StkPtr = 保存后的栈顶（TCB 第一个成员！）
+
+    ; ---- ③ 钩子 + 切换<span style="color:#A31515">&quot;领导权&quot;</span>：Cur 指向新任务 ----
+    MOV     R4, LR
+    BL      OSTaskSwHook         ; 任务切换钩子（统计、栈检查…）
+    MOV32   R0, OSPrioCur
+    MOV32   R1, OSPrioHighRdy
+    LDRB    R2, [R1]
+    STRB    R2, [R0]             ; OSPrioCur = OSPrioHighRdy（第 <span style="color:#098658">4</span> 课选的）
+    MOV32   R1, OSTCBHighRdyPtr
+    LDR     R2, [R1]
+    STR     R2, [R5]             ; OSTCBCurPtr = OSTCBHighRdyPtr
+    ORR     LR, R4, #<span style="color:#098658">0x04</span>        ; 返回时使用 PSP（任务栈）
+
+    ; ---- ④ 恢复现场：把<span style="color:#A31515">&quot;新任务&quot;</span>从它的栈里捞出来 ----
+    LDR     R0, [R2]             ; R0 = 新任务 TCB-&gt;StkPtr
+    LDMFD   R0!, {R4-R11, R14}   ; 弹出 R4~R11 + 返回地址
+    IF {FPU} != <span style="color:#A31515">&quot;SoftVFP&quot;</span>
+    TST     R14, #<span style="color:#098658">0x10</span>
+    IT      EQ
+    VLDMIAEQ R0!, {S16-S31}      ; 恢复 FPU 寄存器
+    ENDIF
+
+    ; ---- ⑤ 换栈 + 异常返回：从新任务上次暂停处继续跑 ----
+    MSR     PSP, R0              ; PSP = 新任务栈顶
+    BX      LR                   ; 异常返回：硬件自动弹出 PC 等寄存器
+</pre>
+
+<p>观察三件事：<strong>① 保存与恢复是对称的</strong>（STMFD 对 LDMFD）；<strong>② TCB 第一个成员必须是 StkPtr</strong>——<code>STR R0,[R1]</code> / <code>LDR R0,[R2]</code> 零偏移直接存取，第 3 课埋的伏笔在此兑现；<strong>③ 整个过程只碰 PSP（任务栈）不碰 MSP（系统栈）</strong>——任务用 PSP，中断用 MSP，互不侵犯。</p>
+
+<div class="warn">
+  <p>⚠️ 不要手痒去改这段汇编！保存/恢复顺序、FPU 标志位判断、EXC_RETURN 的 bit 设置，任何一处错位都会导致"栈错乱 → 任务跑飞 → HardFault"。理解它，但别动它——这正是移植时"PendSV 必须指向 OS_CPU_PendSVHandler"的原因（第 2 课）。</p>
+</div>
+
+<h2>6. 对比 FreeRTOS：调度点设计的两派</h2>
+
+<p>把两门课的知识拼起来，两大内核的调度架构差异一目了然：</p>
+
+<table>
+<tr><th>维度</th><th>FreeRTOS（已学）</th><th>µC/OS-III（本课）</th></tr>
+<tr><td>选任务的地点</td><td>PendSV 内调用 <code>vTaskSwitchContext()</code>（C 层在异常里跑）</td><td>任务级 <code>OSSched()</code> / 中断级 <code>OSIntExit()</code>（C 层在调用现场跑）</td></tr>
+<tr><td>PendSV 的职责</td><td>选人 + 换人（调 C 函数 + 搬现场）</td><td><strong>纯换人</strong>（只搬现场，最短汇编）</td></tr>
+<tr><td>触发点分布</td><td>分散：tick 里 <code>xTaskIncrementTick</code> 判断、FromISR API 置 <code>xYieldPending</code>、<code>portYIELD()</code></td><td>集中：一切路径汇入 <code>OSSched()</code> 或 <code>OSIntExit()</code> 两个出口</td></tr>
+<tr><td>调度器锁定</td><td><code>vTaskSuspendAll()/xTaskResumeAll()</code></td><td><code>OSSchedLock()/OSSchedUnlock()</code>（嵌套计数）</td></tr>
+<tr><td>中断里禁止调度</td><td>ISR 里只允许 FromISR API</td><td><code>OSIntNestingCtr</code> 计数，非 0 时 OSSched 直接返回</td></tr>
+</table>
+
+<p>µC/OS-III 的哲学是"<strong>统一出口</strong>"：所有可能改变就绪状态的动作，最终都会调 OSSched 或 OSIntExit，调度决策集中、可审计；FreeRTOS 的哲学是"<strong>就地标记、延迟执行</strong>"：API 只改状态和标记，PendSV 里统一收割。两派都稳定可靠——理解这个差异，你就拥有了"读懂任何 RTOS 调度器"的框架。</p>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 5.1：给 OSSched 加断点，观察切换时机</h3>
+  <p class="step">1️⃣ 在 <code>os_core.c</code> 的 <code>OSSched()</code> 函数开头和 <code>OS_PrioGetHighest()</code> 调用处各下一个断点，全速运行第 2 课的多任务程序。</p>
+  <p class="step">2️⃣ 每次断点命中，在 Watch 里记录 <code>OSTCBCurPtr->NamePtr</code> 和 <code>OSTCBHighRdyPtr->NamePtr</code>，确认"当前任务"与"将切换任务"的名字。</p>
+  <p class="step"><strong>观察什么：</strong>数一数哪些断点命中时两个名字相同（说明查完发现无需切换）——你会惊讶于"白跑"的比例。再在 <code>OSIntExit()</code> 加断点，观察中断退出路径的切换时机。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 5.2：对比 FreeRTOS 调度点</h3>
+  <p class="step">1️⃣ 在 FreeRTOS 分支工程里，给 <code>vTaskSwitchContext()</code> 和 <code>xTaskIncrementTick()</code> 加断点，跑同样的双任务程序。</p>
+  <p class="step">2️⃣ 对比两边的断点命中规律：FreeRTOS 的切换决策发生在哪（PendSV 里 vs tick 里）？µC/OS-III 的决策发生在哪（任务调用点 vs 中断退出点）？</p>
+  <p class="step"><strong>观察什么：</strong>写一段 6 行的对照笔记：① 选任务代码的存放位置 ② 触发路径的集中/分散 ③ 中断里调度的禁止方式。这是两内核"调度架构"差异的第一手证据。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. OSSched() 在哪种情况下会直接返回、不做切换？</p>
+  <p class="opt">A. 查完发现无需切换</p>
+  <p class="opt">B. 当前任务优先级最低</p>
+  <p class="opt">C. 时间片还没用完</p>
+  <details><summary>查看答案</summary><div class="answer">A。最高就绪任务就是当前任务时直接返回；"触发切换"不保证真的切换（PDF p.133~134）。</div></details>
+
+  <p class="q">Q2. OSCtxSw 与 OSIntCtxSw 的关系是？</p>
+  <p class="opt">A. 完全不同的两段代码</p>
+  <p class="opt">B. 同一段汇编的两个标号</p>
+  <p class="opt">C. 一个 C 函数一个宏</p>
+  <details><summary>查看答案</summary><div class="answer">B。都是"置位 PENDSVSET 挂起 PendSV"的同一条汇编（PDF p.140），现场保存统一由 PendSV Handler 完成。</div></details>
+
+  <p class="q">Q3. PendSV Handler 里保存 R4~R11 用的是哪条指令？</p>
+  <p class="opt">A. STMFD</p>
+  <p class="opt">B. LDMFD</p>
+  <p class="opt">C. STR</p>
+  <details><summary>查看答案</summary><div class="answer">A。STMFD 压栈保存（R4~R11、R14），恢复时用 LDMFD 对称弹出（PDF p.141~143）。</div></details>
+
+  <p class="q">Q4. 与 FreeRTOS 相比，µC/OS-III 的调度决策发生在？</p>
+  <p class="opt">A. PendSV 异常内部</p>
+  <p class="opt">B. 集中的 OSSched/OSIntExit 出口</p>
+  <p class="opt">C. 每个 API 函数内部</p>
+  <details><summary>查看答案</summary><div class="answer">B。µC/OS-III 所有路径汇入 OSSched()（任务级）与 OSIntExit()（中断级）两个出口；FreeRTOS 是在 PendSV 里调 vTaskSwitchContext 决策。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《µC/OS-III 开发指南 V1.5》第 8 章（PDF p.132~144）——本课全部依据</li>
+<li>🌐 <a href="https://weston-embedded.com/uc-os-iii">Weston Embedded（Micrium 后继）µC/OS-III 主页</a>——os_core.c / os_cpu_a.asm 源码在线阅读</li>
+<li>📕 <a href="https://weston-embedded.com/uc-os-iii">《µC/OS-III: The Real-Time Kernel》</a>——第 6 章 Context Switch 与汇编详解</li>
+<li>🔁 对照：FreeRTOS 课程第 7 课（任务切换与 PendSV）——xPortPendSVHandler 与本课逐行对照</li>
+</ul>
+
+<div class="footer-note">
+  <p>切换的"人"换明白了，下一课看看"围墙"——中断管理与临界区：UCOS 为什么敢说"中断禁用时间极短"，BASEPRI 与调度锁怎么配合。有疑问随时问我 😄</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0004-bitmap-ready-list.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0006-interrupts-and-critical-sections.html">下一课：中断与临界区 →</a>
+</nav>
+
+</div>
+</body>
+</html>

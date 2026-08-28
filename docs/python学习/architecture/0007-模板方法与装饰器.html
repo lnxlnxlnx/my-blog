@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0007 · 模板方法与装饰器</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>模板方法与装饰器</h1>
+<p class="meta">架构与设计模式 · 课程 0007 · 预计 20 分钟</p>
+
+<p>这课两个都叫「方法/装饰」的模式:一个你可能早就见过——第一课的 <code>BaseTrainer.run</code>;一个是 Python 最标志性的语法糖<strong>装饰器</strong>。两个都是 AI 代码里的高频面孔。</p>
+
+<h2>知识点 1:模板方法——骨架定在基类,钩子留给子类</h2>
+<p><strong>模板方法(Template Method)</strong>:基类把「流程」写死,把流程中「会变的步骤」留成钩子,子类只填钩子(<a href="https://refactoringguru.cn/design-patterns/template-method">官方讲解</a>)。你第一课就见过:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">abc</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">ABC</span><span style="color: #000">,</span> <span style="color: #001080">abstractmethod</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">BaseTrainer</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">run</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">data</span><span style="color: #000">):</span>                     <span style="color: #008000"># ← 这就是「模板方法」:骨架</span>
+        <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">preprocess</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>         <span style="color: #008000">#   流程定死,顺序不许改</span>
+        <span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">build</span><span style="color: #000">()</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+        <span style="color: #00F">return</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">evaluate</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">preprocess</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">data</span><span style="color: #000">):</span> <span style="color: #000">...</span>          <span style="color: #008000"># 钩子 1:子类填</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">build</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span> <span style="color: #000">...</span>                     <span style="color: #008000"># 钩子 2</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #000">...</span>          <span style="color: #008000"># 钩子 3</span>
+    <span style="color: #AF00DB">@abstractmethod</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">evaluate</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #000">...</span>     <span style="color: #008000"># 钩子 4</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">SVMTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span>               <span style="color: #008000"># 只填空,不碰骨架</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">preprocess</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">data</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #001080">scale</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">build</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">):</span>       <span style="color: #00F">return</span> <span style="color: #001080">SVC</span><span style="color: #000">()</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fit</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">evaluate</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span> <span style="color: #00F">return</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">score</span><span style="color: #000">(</span><span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+</pre>
+<p>好处:所有子类<strong>共享同一套流程</strong>(保证「先清洗、再建模、再评估」的顺序不出错),又各自定制每一步。加一个新模型 = 新类填空,骨架零改动。</p>
+
+<h2>知识点 2:钩子还可以给默认实现</h2>
+<p>钩子不一定要抽象——给个默认实现,子类想改才覆盖:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">BaseTrainer</span><span style="color: #000">(</span><span style="color: #001080">ABC</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">after_each_epoch</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">):</span>   <span style="color: #008000"># 默认钩子:什么都不做</span>
+        <span style="color: #00F">pass</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">run</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">data</span><span style="color: #000">):</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">epoch</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #098658">10</span><span style="color: #000">):</span>
+            <span style="color: #001080">loss</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">)</span>
+            <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">after_each_epoch</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">)</span>   <span style="color: #008000"># 子类可决定要不要覆盖</span>
+
+
+<span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">LoggingTrainer</span><span style="color: #000">(</span><span style="color: #001080">BaseTrainer</span><span style="color: #000">):</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">after_each_epoch</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">):</span>     <span style="color: #008000"># 只覆盖想改的那个钩子</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">)</span>
+</pre>
+<p>这也呼应了上一课的观察者——钩子是一种「写死的观察点」。区别:模板方法的钩子由<strong>子类</strong>实现;观察者的回调由<strong>外部对象</strong>注入。</p>
+
+<h2>知识点 3:装饰器——不改原函数,再包一层能力</h2>
+<p><strong>装饰器(Decorator)</strong>是结构型模式在 Python 里的天生形态:在不改原函数代码的前提下,给它动态加上行为(计时、日志、缓存、权限……)(<a href="https://refactoringguru.cn/design-patterns/decorator">官方讲解</a>)。</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">functools</span>
+<span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">timed</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">):</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;装饰器:给函数加上『打印耗时』的能力。&quot;&quot;&quot;</span>
+    <span style="color: #AF00DB">@functools</span><span style="color: #000">.</span><span style="color: #001080">wraps</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">)</span>                  <span style="color: #008000"># 保真:保留原函数的名字/文档</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">wrapper</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">):</span>
+        <span style="color: #001080">t0</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()</span>
+        <span style="color: #001080">result</span> <span style="color: #000">=</span> <span style="color: #001080">func</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">)</span>
+        <span style="color: #001080">dt</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()</span> <span style="color: #000">-</span> <span style="color: #001080">t0</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;{</span><span style="color: #001080">func</span><span style="color: #000">.</span><span style="color: #001080">__name__</span><span style="color: #A31515">} 耗时 {</span><span style="color: #001080">dt</span><span style="color: #000">*</span><span style="color: #098658">1000</span><span style="color: #A31515">:.1f} ms&quot;</span><span style="color: #000">)</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">result</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">wrapper</span>
+
+
+<span style="color: #AF00DB">@timed</span>                                   <span style="color: #008000"># 等价于 train_score = timed(train_score)</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train_score</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">):</span>
+    <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">score</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+
+
+<span style="color: #001080">train_score</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>     <span style="color: #008000"># 原函数一行没变,就多了计时能力</span>
+</pre>
+<p>关键点:<code>@timed</code> 只是把一个函数<strong>替换</strong>成包了一层的新函数。因为有了 <code>functools.wraps</code>,外面看起来还是原来的 train_score。</p>
+
+<h2>知识点 4:装饰器可以叠加,还能带参数</h2>
+<pre lang="python" class="highlight"><span style="color: #AF00DB">@timed</span>
+<span style="color: #AF00DB">@logged</span>          <span style="color: #008000"># 多个装饰器 = 从下往上逐层包装</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">load</span><span style="color: #000">(</span><span style="color: #001080">path</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">retry</span><span style="color: #000">(</span><span style="color: #001080">times</span><span style="color: #000">=</span><span style="color: #098658">3</span><span style="color: #000">):</span>                      <span style="color: #008000"># 带参数的装饰器:多包一层工厂</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">decorator</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">):</span>
+        <span style="color: #AF00DB">@functools</span><span style="color: #000">.</span><span style="color: #001080">wraps</span><span style="color: #000">(</span><span style="color: #001080">func</span><span style="color: #000">)</span>
+        <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">wrapper</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">):</span>
+            <span style="color: #00F">for</span> <span style="color: #001080">i</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #001080">times</span><span style="color: #000">):</span>
+                <span style="color: #00F">try</span><span style="color: #000">:</span>
+                    <span style="color: #00F">return</span> <span style="color: #001080">func</span><span style="color: #000">(*</span><span style="color: #001080">args</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">kwargs</span><span style="color: #000">)</span>
+                <span style="color: #00F">except</span> <span style="color: #CD3131">Exception</span><span style="color: #000">:</span>
+                    <span style="color: #00F">if</span> <span style="color: #001080">i</span> <span style="color: #000">==</span> <span style="color: #001080">times</span> <span style="color: #000">-</span> <span style="color: #098658">1</span><span style="color: #000">:</span>
+                        <span style="color: #00F">raise</span>
+            <span style="color: #00F">return</span> <span style="color: #00F">None</span>
+        <span style="color: #00F">return</span> <span style="color: #001080">wrapper</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">decorator</span>
+
+
+<span style="color: #AF00DB">@retry</span><span style="color: #000">(</span><span style="color: #001080">times</span><span style="color: #000">=</span><span style="color: #098658">5</span><span style="color: #000">)</span>                          <span style="color: #008000"># 用法:给网络请求加自动重试</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">fetch</span><span style="color: #000">(</span><span style="color: #001080">url</span><span style="color: #000">):</span> <span style="color: #000">...</span>
+</pre>
+<p>AI 代码和很多框架(Flask 路由、FastAPI、pytest.fixture、click 命令)都在大量用装饰器——认得出 @wraps 和「逐层包装」这个动作,你就能读懂它们了。</p>
+
+<h2>知识点 5:什么时候别用</h2>
+<ul>
+  <li>模板方法:子类<strong>只有一两个</strong>、流程万年不变 → 直接一个函数写完更简单</li>
+  <li>装饰器:包装一层<strong>超过两三层</strong> → 调试时你会疯(看不到原函数了)</li>
+  <li>装饰器副作用:做了「悄悄的事」(重试、缓存)吗 → 记得文档里写清楚,否则同事会懵</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">模板方法的核心是?</p>
+  <button class="opt" data-ok="false">子类定义全部</button>
+  <button class="opt" data-ok="false">运行时动态变化</button>
+  <button class="opt" data-ok="true">基类定固定骨架</button>
+  <button class="opt" data-ok="false">静态方法做重载</button>
+  <p class="reveal">骨架(流程)定在基类,会变的步骤留成钩子,子类只填空——所有子类共享同一套流程。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">装饰器函数的能力?</p>
+  <button class="opt" data-ok="false">必须继承原函数</button>
+  <button class="opt" data-ok="false">只能用在类方法</button>
+  <button class="opt" data-ok="false">只能加一层包装</button>
+  <button class="opt" data-ok="true">不改原函数而增强</button>
+  <p class="reveal">装饰器把函数「替换」成包了一层的新函数,原函数本体一行没改,还能多层叠加。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">写装饰器最好保留?</p>
+  <button class="opt" data-ok="false">原函数的重载</button>
+  <button class="opt" data-ok="false">对象的私有状态</button>
+  <button class="opt" data-ok="false">调用的调用栈</button>
+  <button class="opt" data-ok="true">原函数的元信息</button>
+  <p class="reveal">用 @functools.wraps 保留原名和文档字符串,否则调试和自动文档都会认不出原函数。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0007_模板方法与装饰器.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写一个 Report 模板基类(标题→正文→落款三钩子),两个子类填空</li>
+  <li><strong>练习 B</strong>:写 timed / logged 两个装饰器并叠加;再加一个带参数的 retry</li>
+  <li><strong>练习 C</strong>:判断题:模板方法 vs 装饰器 vs 不需要(答案内联)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 模板方法</strong>(<a href="https://refactoringguru.cn/design-patterns/template-method">中文版</a>)与<strong>装饰器</strong>(<a href="https://refactoringguru.cn/design-patterns/decorator">中文版</a>):各读「问题-解决方案-结构」,再对照你自己 repopractice 里的训练循环,找找有没有现成的模板方法。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 B 里你把计时和日志叠加后,调试变得多难受?下一课我们离开单个模式,进入<strong>架构关键词:组合优于继承 + 依赖注入</strong>——从「招式」迈向「内功」。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0006-观察者模式-状态变了通知大家.html">← 上一篇:观察者模式:状态变了通知大家</a>
+  <a href="index.html">课程地图</a>
+  <a href="0008-组合优于继承与依赖注入.html">下一篇:组合优于继承与依赖注入 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 1 课：MDK 编译产物全解 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 1 课</nav>
+
+<h1>第 1 课：MDK 编译产物全解</h1>
+<p class="subtitle">从 .c 到 .hex：你的代码经历了什么（正点原子《STM32 MAP 文件浅析》第 1 章）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>点了编译按钮后，MDK 在背后做了什么？学完你能认出 Output 目录里每一类文件（.o/.axf/.hex/.htm/.map…）是干什么的，说清"可重定向"和"不可重定向"的区别，并能用 .htm 文件查看工程真实栈深——这是后面读 MAP 文件、调栈溢出、做 Bootloader 的地基。</p>
+</div>
+
+<h2>1. 编译链路：.c 是怎么变成 .hex 的</h2>
+
+<p>MDK 编译一次工程，会在 Output 目录生成 11 类、几十个文件（正点原子《STM32 MAP 文件浅析》第 1 章 <span class="pg">PDF p.3</span>）。这条流水线本质是三步：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000"># 编译（compiler，ARMCC/GCC）</span>
+main.c ──────────────► main.o      <span style="color:#008000">// 每个 .c/.s 一个 .o，可重定向（地址还没定）</span>
+startup_stm32f4xx.s ──► startup.o
+
+<span style="color:#008000"># 链接（linker，armlink）</span>
+main.o + startup.o + HAL*.o + ... ──► Project.axf   <span style="color:#008000">// 不可重定向，绝对地址已定</span>
+
+<span style="color:#008000"># 转换（fromelf）</span>
+Project.axf ──► Project.hex  <span style="color:#008000">// 带地址信息，ISP/仿真器下载用</span>
+Project.axf ──► Project.bin  <span style="color:#008000">// 纯代码，Bootloader 升级用</span></pre>
+
+<p>关键概念（<span class="pg">PDF p.3</span>）：</p>
+
+<ul>
+<li><strong>可重定向（relocatable）</strong>：.o 文件里的代码/数据还没分配绝对地址，地址由链接器后续指定</li>
+<li><strong>不可重定向</strong>：.axf 文件所有地址已定死，不能再改</li>
+<li><strong>仿真器下载调试用的是 .axf</strong>，不是 .hex——因为它包含调试符号信息</li>
+</ul>
+
+<h2>2. 11 类文件一览</h2>
+
+<table>
+<tr><th>文件</th><th>是什么</th><th>你关心吗</th></tr>
+<tr><td><strong>.o</strong></td><td>每个源文件编译出的可重定向对象文件</td><td>✅ 分散加载里会见到</td></tr>
+<tr><td><strong>.axf</strong></td><td>链接产物，可执行对象，仿真调试用</td><td>✅ 下载调试依赖它</td></tr>
+<tr><td><strong>.hex</strong></td><td>含地址信息的下载文件</td><td>✅ ISP 下载用</td></tr>
+<tr><td><strong>.htm</strong></td><td>静态调用图 + 栈深分析</td><td>✅ 调栈大小神器</td></tr>
+<tr><td><strong>.map</strong></td><td>链接器生成的详细清单</td><td>⭐⭐ 本课程主角</td></tr>
+<tr><td>.crf</td><td>交叉引用浏览信息</td><td>MDK 浏览功能用</td></tr>
+<tr><td>.d / .dep</td><td>依赖文件</td><td>增量编译用</td></tr>
+<tr><td>.lnp</td><td>链接输入文件</td><td>命令行链接用</td></tr>
+<tr><td>.lst</td><td>编译器列表文件</td><td>反汇编排查用</td></tr>
+<tr><td>.build_log.htm</td><td>编译日志</td><td>看编译警告/错误</td></tr>
+</table>
+
+<h2>3. .hex 和 .bin：下载双雄</h2>
+
+<p>两者都来自 .axf，区别一句话（<span class="pg">PDF p.4</span>）：</p>
+
+<ul>
+<li><strong>.hex</strong>：Intel Hex 格式，<strong>每行带地址信息</strong>。ISP 软件（如 FlyMcu）解析地址后写入对应 Flash 地址</li>
+<li><strong>.bin</strong>：<strong>纯二进制代码，无地址</strong>。Bootloader 升级场景用它，目标地址由 Bootloader 自己指定</li>
+</ul>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>.hex 是"带快递单号的包裹"（地址），.bin 是"光秃秃的货物"（只有内容）</strong>。发货方式不同，用的场景就不同。</p>
+</div>
+
+<h2>4. .htm：免费的栈深分析器</h2>
+
+<p>.htm 文件（浏览器双击打开）包含整个工程的<strong>静态调用图</strong>，两大用途（<span class="pg">PDF p.4</span>）：</p>
+
+<ul>
+<li>① 显示<strong>最大栈深</strong>及调用关系：例如例程中最大栈深 416 字节，调用链是 <code>__rt_entry_main → main → sys_stm32_clock_init → HAL_RCC_ClockConfig → HAL_InitTick → …</code></li>
+<li>② 显示<strong>每个函数的栈深</strong>及其调用关系</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 这个"最大栈深"只是<strong>静态最低要求</strong>——它没统计递归函数、函数指针调用、以及用内存管理（堆）的函数。正点原子经验法则：<strong>实际栈深设置不低于静态值的 2 倍</strong>。例程默认 Stack_Size 为 0x800（2048 字节），正是这个思路。</p>
+</div>
+
+<p>这个 2 倍法则在你做 FreeRTOS 任务栈规划时同样适用——FreeRTOS 的 <code>uxTaskGetStackHighWaterMark()</code> 就是干这个的运行时版。</p>
+
+<h2>5. .map 预告：下一课的主角</h2>
+
+<p>.map 文件是链接器生成的清单，包含 5 大部分（<span class="pg">PDF p.7</span>）：</p>
+
+<ol>
+<li>程序段交叉引用关系（Section Cross References）</li>
+<li>删除映像未使用的程序段</li>
+<li>映像符号表（Image Symbol Table）</li>
+<li>映像内存分布图（Memory Map of the image）</li>
+<li>映像组件大小（Image component sizes）</li>
+</ol>
+
+<p>通过它你能知道：Flash/RAM 占用多少、具体到每个 .c 文件占多少、哪些函数没被用到被删了——第 2 课逐个解剖。</p>
+
+<h2>动手练习（约 20 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 1.1：认领你的 Output 目录</h3>
+  <p class="step">1️⃣ 编译当前工程（EmbedOrigin_4s，含 LVGL + FATFS），打开 Output/OBJ 目录。</p>
+  <p class="step">2️⃣ 对照第 2 节表格，把 11 类文件各找出一两个代表；数一数一共有多少个 .o 文件，想想要是 500 个源文件的工程会怎样。</p>
+  <p class="step">3️⃣ 打开 .build_log.htm，找到最后一次编译的 "Program Size" 行，记下 Code/RO-data/RW-data/ZI-data 四个数——下一课你会真正看懂它们。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 1.2：用 .htm 看栈深</h3>
+  <p class="step">1️⃣ 双击打开工程 Output 下的 .htm 文件（若不存在，先完整编译一次）。</p>
+  <p class="step">2️⃣ 找到"最大栈深"数值，对照启动文件里的 Stack_Size（<code>startup_stm32f4xx.s</code> 里 <code>Stack_Size EQU 0x400</code> 之类），验证是否满足"2 倍法则"。</p>
+  <p class="step">3️⃣ 思考题：如果最大栈深 800 字节、Stack_Size 只有 0x400（1024 字节），会发生什么？（提示：第 3 课启动文件里你会看到栈的真相）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 仿真器在线调试时下载的是哪个文件？</p>
+  <p class="opt">A. .hex 文件，它包含地址信息</p>
+  <p class="opt">B. .axf 文件，它包含调试符号</p>
+  <p class="opt">C. .bin 文件，它最纯净</p>
+  <details><summary>查看答案</summary><div class="answer">B。仿真器下载调试用 .axf（含调试符号），.hex 是 ISP 下载用，.bin 是 Bootloader 用（PDF p.3-4）。</div></details>
+
+  <p class="q">Q2. "可重定向"的 .o 文件含义是？</p>
+  <p class="opt">A. 代码已经烧录到固定地址</p>
+  <p class="opt">B. 地址尚未分配，由链接器指定</p>
+  <p class="opt">C. 文件可以被移动位置</p>
+  <details><summary>查看答案</summary><div class="answer">B。.o 是编译产物，地址未定，链接时由 armlink 统一分配（PDF p.3）。</div></details>
+
+  <p class="q">Q3. Bootloader 升级固件时一般用？</p>
+  <p class="opt">A. .bin，地址由引导程序指定</p>
+  <p class="opt">B. .hex，地址内嵌在文件里</p>
+  <p class="opt">C. .axf，符号信息最全</p>
+  <details><summary>查看答案</summary><div class="answer">A。Bootloader 场景目标地址由 Bootloader 自己决定，用无地址的 .bin（PDF p.4）。</div></details>
+
+  <p class="q">Q4. .htm 报告的"最大栈深"应如何使用？</p>
+  <p class="opt">A. 直接等于 Stack_Size 设置值</p>
+  <p class="opt">B. 乘以 2 作为栈大小的下限</p>
+  <p class="opt">C. 与栈设置完全无关</p>
+  <details><summary>查看答案</summary><div class="answer">B。静态栈深未统计递归/函数指针，正点原子建议栈深设置不低于静态值的 2 倍（PDF p.4）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《STM32 MAP 文件浅析 V1.1》第 1 章（PDF p.3~6）——本课全部依据</li>
+<li>🔧 MDK 内置帮助：<code>uVision Help → B. File Types</code>——11 类文件的官方说明</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 2 课——解剖 .map 文件五大组成部分，真正看懂 Program Size 四个数（Code/RO/RW/ZI）。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a class="disabled" href="#">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0002-map-file-deep-dive.html">下一课：MAP 文件深读 →</a>
+</nav>
+
+</div>
+</body>
+</html>

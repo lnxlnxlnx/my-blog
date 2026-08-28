@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0006 · 观察者模式:状态变了通知大家</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>观察者模式:状态变了通知大家</h1>
+<p class="meta">架构与设计模式 · 课程 0006 · 预计 20 分钟</p>
+
+<p>训练一轮,日志要打印、进度条要动、TensorBoard 要画、早停要判断……你有没有想过这些「跟班」是怎么被通知的?答案就是本课主角——<strong>观察者模式(Observer)</strong>,也叫<strong>发布-订阅(Publish-Subscribe)</strong>。它是所有「回调 / 事件 / 信号」的底子。</p>
+
+<h2>知识点 1:问题的样子——硬编码通知</h2>
+<p>没有观察者模式时,「通知」是写死的:每加一个想被通知的模块,就得回去改训练代码:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">,</span> <span style="color: #001080">epochs</span><span style="color: #000">=</span><span style="color: #098658">10</span><span style="color: #000">):</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">epoch</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #001080">epochs</span><span style="color: #000">):</span>
+        <span style="color: #001080">loss</span> <span style="color: #000">=</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+        <span style="color: #001080">logger</span><span style="color: #000">.</span><span style="color: #001080">log</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;epoch {</span><span style="color: #001080">epoch</span><span style="color: #A31515">}: {</span><span style="color: #001080">loss</span><span style="color: #A31515">}&quot;</span><span style="color: #000">)</span>     <span style="color: #008000"># ① 写死的日志</span>
+        <span style="color: #001080">progress_bar</span><span style="color: #000">.</span><span style="color: #001080">update</span><span style="color: #000">()</span>                    <span style="color: #008000"># ② 写死的进度条</span>
+        <span style="color: #001080">trboard</span><span style="color: #000">.</span><span style="color: #001080">add_scalar</span><span style="color: #000">(</span><span style="color: #A31515">&quot;loss&quot;</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">)</span>         <span style="color: #008000"># ③ 写死的可视化</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">loss</span> <span style="color: #000">&lt;</span> <span style="color: #001080">THRESHOLD</span><span style="color: #000">:</span>                     <span style="color: #008000"># ④ 写死的早停</span>
+            <span style="color: #001080">early_stop</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">)</span>
+<span style="color: #008000"># 想加第 5 个跟班(比如微信告警)?→ 又回来改 train() 一行行插</span>
+</pre>
+<p>问题:train 知道所有跟班的存在,耦合一大堆;跟班多了,主流程被插得支离破碎。</p>
+
+<h2>知识点 2:观察者模式——订阅与通知</h2>
+<p>把关系反过来:跟班们<strong>主动登记</strong>(订阅),主对象只管<strong>广播</strong>(通知),谁在那听随它便(<a href="https://refactoringguru.cn/design-patterns/observer">官方讲解</a>):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">class</span><span style="color: #000"> </span><span style="color: #267F99">Trainer</span><span style="color: #000">:</span>
+<span style="color: #000">    </span><span style="color: #A31515">&quot;&quot;&quot;被观察者(Subject):手里攥着一份订阅名单。&quot;&quot;&quot;</span>
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">__init__</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">model</span><span style="color: #000">):</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span> <span style="color: #000">=</span> <span style="color: #001080">model</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_observers</span> <span style="color: #000">=</span> <span style="color: #000">[]</span>                     <span style="color: #008000"># 订阅名单</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">subscribe</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">callback</span><span style="color: #000">):</span>               <span style="color: #008000"># 观察者自己来挂号</span>
+        <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_observers</span><span style="color: #000">.</span><span style="color: #001080">append</span><span style="color: #000">(</span><span style="color: #001080">callback</span><span style="color: #000">)</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">_notify</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #000">**</span><span style="color: #001080">event</span><span style="color: #000">):</span>                  <span style="color: #008000"># 广播:逐个打电话</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">cb</span> <span style="color: #AF00DB">in</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_observers</span><span style="color: #000">:</span>
+            <span style="color: #001080">cb</span><span style="color: #000">(**</span><span style="color: #001080">event</span><span style="color: #000">)</span>
+
+    <span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train</span><span style="color: #000">(</span><span style="color: #267F99">self</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">,</span> <span style="color: #001080">epochs</span><span style="color: #000">=</span><span style="color: #098658">10</span><span style="color: #000">):</span>
+        <span style="color: #00F">for</span> <span style="color: #001080">epoch</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #001080">epochs</span><span style="color: #000">):</span>
+            <span style="color: #001080">loss</span> <span style="color: #000">=</span> <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+            <span style="color: #267F99">self</span><span style="color: #000">.</span><span style="color: #001080">_notify</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">=</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">=</span><span style="color: #001080">loss</span><span style="color: #000">)</span>  <span style="color: #008000"># 唯一通知点</span>
+
+
+<span style="color: #008000"># ---- 观察者:各自就是一个回调函数 ----</span>
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">log_event</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">):</span>
+    <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;epoch {</span><span style="color: #001080">epoch</span><span style="color: #A31515">}: {</span><span style="color: #001080">loss</span><span style="color: #A31515">:.4f}&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">early_stop_event</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">):</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">loss</span> <span style="color: #000">&lt;</span> <span style="color: #098658">0.15</span><span style="color: #000">:</span>
+        <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #A31515">f&quot;  已达目标,第 {</span><span style="color: #001080">epoch</span><span style="color: #A31515">} 轮早停!&quot;</span><span style="color: #000">)</span>
+
+<span style="color: #001080">trainer</span> <span style="color: #000">=</span> <span style="color: #001080">Trainer</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">)</span>
+<span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">subscribe</span><span style="color: #000">(</span><span style="color: #001080">log_event</span><span style="color: #000">)</span>                  <span style="color: #008000"># 登记</span>
+<span style="color: #001080">trainer</span><span style="color: #000">.</span><span style="color: #001080">subscribe</span><span style="color: #000">(</span><span style="color: #001080">early_stop_event</span><span style="color: #000">)</span>           <span style="color: #008000"># 想加跟班?加一行 subscribe</span>
+</pre>
+<p>对比硬编码版:<strong>train 的代码从此再也不用改</strong>——加日志、加监控,都只是调用方多 subscribe 一行。这就是「通知逻辑」和「主流程」解耦。</p>
+
+<h2>知识点 3:Python 里它经常长成「回调参数」</h2>
+<p>很多库不叫 observer,叫 <code>callback</code> 或 <code>on_xxx</code>——本质一样。AI 生成的训练代码尤其普遍:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">train</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">,</span> <span style="color: #001080">epochs</span><span style="color: #000">=</span><span style="color: #098658">10</span><span style="color: #000">,</span> <span style="color: #001080">on_epoch_end</span><span style="color: #000">=</span><span style="color: #00F">None</span><span style="color: #000">,</span> <span style="color: #001080">on_train_end</span><span style="color: #000">=</span><span style="color: #00F">None</span><span style="color: #000">):</span>
+    <span style="color: #00F">for</span> <span style="color: #001080">epoch</span> <span style="color: #AF00DB">in</span> <span style="color: #0070C1">range</span><span style="color: #000">(</span><span style="color: #001080">epochs</span><span style="color: #000">):</span>
+        <span style="color: #001080">loss</span> <span style="color: #000">=</span> <span style="color: #001080">model</span><span style="color: #000">.</span><span style="color: #001080">fit</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">)</span>
+        <span style="color: #00F">if</span> <span style="color: #001080">on_epoch_end</span> <span style="color: #AF00DB">is</span> <span style="color: #AF00DB">not</span> <span style="color: #00F">None</span><span style="color: #000">:</span>            <span style="color: #008000"># 空档期广播</span>
+            <span style="color: #001080">on_epoch_end</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">=</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">=</span><span style="color: #001080">loss</span><span style="color: #000">)</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">on_train_end</span> <span style="color: #AF00DB">is</span> <span style="color: #AF00DB">not</span> <span style="color: #00F">None</span><span style="color: #000">:</span>
+        <span style="color: #001080">on_train_end</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">=</span><span style="color: #001080">model</span><span style="color: #000">)</span>
+
+
+<span style="color: #008000"># 使用方:自定义回调,像挂插件一样塞进来</span>
+<span style="color: #001080">train</span><span style="color: #000">(</span><span style="color: #001080">X</span><span style="color: #000">,</span> <span style="color: #001080">y</span><span style="color: #000">,</span>
+      <span style="color: #001080">on_epoch_end</span><span style="color: #000">=</span><span style="color: #00F">lambda</span> <span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">:</span> <span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">epoch</span><span style="color: #000">,</span> <span style="color: #001080">loss</span><span style="color: #000">),</span>
+      <span style="color: #001080">on_train_end</span><span style="color: #000">=</span><span style="color: #00F">lambda</span> <span style="color: #001080">model</span><span style="color: #000">:</span> <span style="color: #001080">save</span><span style="color: #000">(</span><span style="color: #001080">model</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;best.pth&quot;</span><span style="color: #000">))</span>
+</pre>
+<p>参数列表里的 <code>callbacks=[...]</code>、<code>on_xxx=...</code>,背后都是观察者模式。Keras 的 <code>callbacks</code>、PyTorch Lightning 的 <code>callbacks</code>、sklearn 里的 <code>callbacks</code>,全是同一个套路。</p>
+
+<h2>知识点 4:和策略模式怎么区分</h2>
+<p>初学者容易混——都是「传一个函数进来」:</p>
+<div class="grid">
+  <div class="card"><h3>策略模式</h3><p>主对象<strong>主动调用</strong>这个函数去完成一项工作(算折扣、排序)。一用一换。</p></div>
+  <div class="card"><h3>观察者模式</h3><p>主对象<strong>被动广播事件</strong>,函数们自己决定要不要响应、响应几次。一群收听者。</p></div>
+</div>
+<p>一句话:策略是「换个干活的人」,观察者是「喊一嗓子,爱听的来听」。</p>
+
+<h2>知识点 5:什么时候别用</h2>
+<ul>
+  <li>只有 <strong>1 个</strong>跟班、永远不变 → 直接函数调用更清楚</li>
+  <li>回调<strong>层层嵌套、没人说得清执行顺序</strong>时 → 观察者也会变成一团乱麻(回调地狱),此时该考虑别的手段</li>
+  <li>判断标准:跟班数量会<strong>增长 / 变化</strong>,才值得做成订阅/广播。</li>
+</ul>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">观察者怎么被通知?</p>
+  <button class="opt" data-ok="false">主动轮询查询</button>
+  <button class="opt" data-ok="false">全局配置监听</button>
+  <button class="opt" data-ok="false">手动逐一定位</button>
+  <button class="opt" data-ok="true">登记订阅等待</button>
+  <p class="reveal">观察者先在订阅名单里登记,状态变化时被通知者会逐个调用其回调(订阅 + 广播)。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">Python 里最常见形式?</p>
+  <button class="opt" data-ok="false">继承父类重写</button>
+  <button class="opt" data-ok="false">加全局锁控制</button>
+  <button class="opt" data-ok="false">直接修改源码</button>
+  <button class="opt" data-ok="true">回调函数参数</button>
+  <p class="reveal">训练 API 里的 callbacks=[...] / on_epoch_end=...,本质就是观察者:注册回调,事件时广播。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">观察者和策略区别是?</p>
+  <button class="opt" data-ok="false">名字完全不同</button>
+  <button class="opt" data-ok="false">一个要写接口</button>
+  <button class="opt" data-ok="true">主动调用广播</button>
+  <button class="opt" data-ok="false">一个面向对象</button>
+  <p class="reveal">策略是「主对象主动调用一个算法」;观察者是「主对象广播事件,一群订阅者响应」。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/architecture/0006_观察者模式.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:写一个 TrainCallbacks 版训练循环(epoch_end / batch_end),并新增一个「第 5 轮自动存 checkpoint」的观察者——不碰训练主循环</li>
+  <li><strong>练习 B</strong>:把「按 loss 变化率早停」实现成观察者</li>
+  <li><strong>练习 C</strong>:判断题:5 个场景用观察者还是策略(答案内联)</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Refactoring Guru · 观察者</strong>(<a href="https://refactoringguru.cn/design-patterns/observer">中文版</a>):读「问题-解决方案-结构」,顺便看「真实世界类比」(杂志订阅)。对照本课的训练回调例子,你就彻底记住了。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完练习回来告诉我:练习 A 里 checkpoint 观察者,你用了回调参数还是 subscribe 列表?下一课<strong>模板方法与装饰器</strong>——模板你其实第一课就见过(BaseTrainer.run),这课正式命名;装饰器则是 Python 最标志性的语法糖。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0005-适配器与门面-两个结构型模式.html">← 上一篇:适配器与门面:两个结构型模式</a>
+  <a href="index.html">课程地图</a>
+  <a href="0007-模板方法与装饰器.html">下一篇:模板方法与装饰器 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

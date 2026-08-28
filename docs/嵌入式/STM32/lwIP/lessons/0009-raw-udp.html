@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 9 课：RAW API · UDP — lwIP 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 9 课</nav>
+
+<h1>第 9 课：RAW API · UDP</h1>
+<p class="subtitle">UDP 协议、报文结构、udp_new / udp_bind / udp_sendto / udp_recv，RAW UDP 收发实验</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>从这一课开始，你正式迈入"三套编程接口"阶段，亲手写第一个网络应用。学完你能说清：UDP 报文长什么样、lwIP 怎么发怎么收 UDP 数据、RAW API 的回调式风格是怎么回事，并能在板子和电脑之间跑通一次 UDP 收发（Wireshark 亲眼看到端口和载荷）。这是后面 TCP（第 10 课）的暖场，也是理解 NETCONN / Socket 的对照基准。</p>
+</div>
+
+<h2>1. UDP 协议：最快但最"不负责"的传输层协议</h2>
+
+<p>UDP（User Datagram Protocol）是传输层的两个核心协议之一。它的性格一句话概括：<strong>面向数据报、无连接、不可靠，但简单快</strong>（正点原子《lwIP 开发指南 V1.7》第 11.1 节 <span class="pg">PDF p.260</span>）。它不提供分组、组装、排序，发出去就不知道对方收没收到——正因为无连接、无握手，资源消耗小、处理速度快，音频、视频、DNS、SNMP 这类"丢了重发不如直接丢"的场景最爱用它。</p>
+
+<p>UDP 数据报结构（<span class="pg">PDF p.260</span>）：首部固定 <strong>8 字节</strong>，4 个字段各 2 字节：</p>
+
+<table>
+<tr><th>字段</th><th>长度</th><th>作用</th></tr>
+<tr><td>源端口</td><td>16 位</td><td>需要对方回信时用；不需要可全置 0</td></tr>
+<tr><td>目的端口</td><td>16 位</td><td>终点交付报文时靠它找到接收应用</td></tr>
+<tr><td>长度</td><td>16 位</td><td>整个 UDP 数据报（首部+数据）字节数，最小 8</td></tr>
+<tr><td>校验和</td><td>16 位</td><td>检测传输是否有错，有错直接丢弃</td></tr>
+</table>
+
+<p>端口号用 2 字节表示，范围 0~65535；一般大于 49151 的是动态端口。封装时 UDP 报文整体装进 IP 数据报，IP 层再装进以太网帧——每层套一层首部，这就是第 1 课说的"套娃"。</p>
+
+<div class="tip">
+  <p>💡 记忆锚点：<strong>UDP 首部 8 字节 = 4 个 u16</strong>。lwIP 里对应结构体 <code>udp_hdr</code>，字段名和教材图一一对应，等下代码里就能看到。</p>
+</div>
+
+<h2>2. lwIP 里 UDP 怎么发、怎么收</h2>
+
+<h3>2.1 发送路径：udp_sendto → udp_sendto_if_src → ip_output_if_src</h3>
+
+<p>发送核心函数是 <code>udp_sendto_if_src</code>（<span class="pg">PDF p.262</span>），流程很直白：</p>
+
+<ul>
+<li>① 校验控制块与源/目的 IP 版本匹配；若 PCB 还没绑端口，先自动 <code>udp_bind</code></li>
+<li>② 给 pbuf 添加 UDP 首部（空间不够就另申请一个 <code>PBUF_IP</code> 类型的 pbuf 装首部，再用 <code>pbuf_chain</code> 把首部和数据链起来）</li>
+<li>③ 填首部：源端口、目的端口、长度、校验和（发送时先置 0，由 IP 层做校验和计算）</li>
+<li>④ 调用 <code>ip_output_if_src</code> 把数据报交给网络层，一路向下出网卡</li>
+</ul>
+
+<p>你平时调用的是封装好的 <code>udp_sendto(pcb, p, dst_ip, dst_port)</code>（官方 API，自动完成上述流程），或 <code>udp_send(pcb, p)</code>（发给 <code>udp_connect</code> 绑定的对端）。</p>
+
+<h3>2.2 接收路径：udp_input → 遍历 PCB 链表 → 回调</h3>
+
+<p>收包由 <code>udp_input</code> 处理（<span class="pg">PDF p.265</span>）：IP 层剥完 IP 首部后把 pbuf 交进来，它做四件事：</p>
+
+<ul>
+<li>① 检查长度 ≥ 8（UDP_HLEN），否则丢弃</li>
+<li>② 从首部取出源/目的端口</li>
+<li>③ <strong>遍历 <code>udp_pcbs</code> 链表</strong>找匹配的控制块：先按目的端口 + 本地 IP 匹配，再按远程端口 + 源 IP 做"完全匹配"（优先命中 <code>udp_connect</code> 过的连接）；都找不到就用第一个未连接的 PCB</li>
+<li>④ 命中后把 pbuf 指针移到数据区，调用 <code>pcb->recv</code> <strong>回调函数</strong>把数据交给你的代码；没人注册回调就直接释放</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ 回调函数 <strong>必须负责释放传入的 pbuf</strong>（<code>pbuf_free(p)</code>），否则内存池会被耗尽——这是 RAW 编程最容易踩的坑，比"忘了注册回调"还隐蔽。</p>
+</div>
+
+<h2>3. RAW API 风格：回调驱动的"内核里办事"</h2>
+
+<p>RAW API 是离 lwIP 内核最近的接口（<span class="pg">PDF p.269</span>），风格特点：</p>
+
+<ul>
+<li>🎯 <strong>回调驱动</strong>：接收函数由你编写，用 <code>udp_recv</code> 注册进控制块；内核收到数据直接调你的函数（NETCONN/Socket 则无需用户写回调，内核注册的回调会把数据塞进邮箱）</li>
+<li>🚫 <strong>无阻塞</strong>：所有函数立即返回，绝不等待；"等待收包"这件事不存在，数据来了自然调你</li>
+<li>⚡ <strong>高效率</strong>：无 OS 也能跑、无线程切换、零拷贝路径最短，适合协议栈内部（如 DHCP、DNS 客户端）和追求性能/低资源的场景</li>
+<li>🧠 <strong>代价</strong>：你得懂协议栈、自己管理 pbuf 生命周期、数据量大时回调里不能干重活</li>
+</ul>
+
+<p>一句话：<strong>RAW 像"在协议栈内部上班"，NETCONN 像"在办公室打电话办事"</strong>。本课先练 RAW，第 11 课再对比着学 NETCONN。</p>
+
+<h2>4. RAW UDP 接口全家桶</h2>
+
+<p>教材列出的 RAW UDP API（<span class="pg">PDF p.269</span>）：</p>
+
+<table>
+<tr><th>函数</th><th>作用</th></tr>
+<tr><td><code>udp_new()</code></td><td>从内存池申请一个 UDP 控制块（udp_pcb），初始化后 TTL=255</td></tr>
+<tr><td><code>udp_remove(pcb)</code></td><td>把控制块从 udp_pcbs 链表摘除并释放内存</td></tr>
+<tr><td><code>udp_bind(pcb, ip, port)</code></td><td>绑定本地 IP 和端口，注册进链表</td></tr>
+<tr><td><code>udp_connect(pcb, ip, port)</code></td><td>"连接"远端 IP/端口（UDP 无真实连接，只记录对端，之后可只用 udp_send）</td></tr>
+<tr><td><code>udp_disconnect(pcb)</code></td><td>断开"连接"，回到非连接状态</td></tr>
+<tr><td><code>udp_send(pcb, p)</code></td><td>发给已 connect 的对端</td></tr>
+<tr><td><code>udp_sendto(pcb, p, dst_ip, dst_port)</code></td><td>指定目的 IP/端口发送（官方 API，最常用）</td></tr>
+<tr><td><code>udp_recv(pcb, recv_fn, arg)</code></td><td>注册接收回调函数及参数，必须调用才能收到数据</td></tr>
+</table>
+
+<p>回调函数签名（<code>udp_recv_fn</code>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 接收回调原型：arg 为注册时传入的参数，upcb 是控制块，
+   p 是收到的数据（由回调负责释放），addr/port 是发送方地址 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">udp_recv_fn</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> udp_pcb *upcb,
+                 <span style="color:#0000FF">struct</span> pbuf *p, <span style="color:#267F99">const</span> <span style="color:#267F99">ip_addr_t</span> *addr, <span style="color:#267F99">u16_t</span> port)</span>;
+</pre>
+
+<div class="tip">
+  <p>💡 <code>udp_recv</code> 的实现就两行：<code>pcb-&gt;recv = recv; pcb-&gt;recv_arg = recv_arg;</code>——把函数指针塞进控制块而已（<span class="pg">PDF p.270</span>）。看懂这个，你就懂了 RAW API 的本质：<strong>注册 = 让内核的某个指针指向你的函数</strong>。</p>
+</div>
+
+<h2>5. 最小可用代码：RAW UDP 收发全流程</h2>
+
+<p>参考教材 11.3 节（<span class="pg">PDF p.271</span>），配置步骤五连：<code>udp_new</code> → <code>udp_connect</code>（绑定远端）→ <code>udp_bind</code>（绑定本地）→ <code>udp_recv</code>（注册回调）→ <code>udp_send</code>/<code>udp_sendto</code>（发送）。下面给出一份能直接跑通的最小工程骨架：</p>
+
+<h3>5.1 创建、绑定、注册（初始化阶段）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 简化自教材 lwip_demo()：创建 + 连接 + 绑定 + 注册回调 */</span>
+<span style="color:#0000FF">struct</span> udp_pcb *<span style="color:#795E26">udp_echoserver_init</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">udp_pcb</span> *<span style="color:#795E26">upcb</span>;</span>
+    <span style="color:#267F99">ip_addr_t</span> rmtipaddr;
+    <span style="color:#267F99">err_t</span> err;
+
+    <span style="color:#008000">/* 1. 创建 UDP 控制块（内存来自 MEMP_UDP_PCB 内存池） */</span>
+    upcb = udp_new();
+    <span style="color:#0000FF">if</span> (upcb == <span style="color:#098658">NULL</span>) {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;udp_new 失败\r\n&quot;</span>);
+        <span style="color:#0000FF">return</span> <span style="color:#098658">NULL</span>;
+    }
+
+    <span style="color:#008000">/* 2. 指定远端：电脑 IP 192.168.1.2，端口 8080 */</span>
+    IP4_ADDR(&amp;rmtipaddr, <span style="color:#098658">192</span>, <span style="color:#098658">168</span>, <span style="color:#098658">1</span>, <span style="color:#098658">2</span>);
+    err = udp_connect(upcb, &amp;rmtipaddr, <span style="color:#098658">8080</span>);
+    <span style="color:#0000FF">if</span> (err != ERR_OK) {
+        udp_remove(upcb);
+        <span style="color:#0000FF">return</span> <span style="color:#098658">NULL</span>;
+    }
+
+    <span style="color:#008000">/* 3. 绑定本地端口 8080（IP_ADDR_ANY 表示绑定所有本地 IP） */</span>
+    err = udp_bind(upcb, IP_ADDR_ANY, <span style="color:#098658">8080</span>);
+    <span style="color:#0000FF">if</span> (err != ERR_OK) {
+        udp_remove(upcb);
+        <span style="color:#0000FF">return</span> <span style="color:#098658">NULL</span>;
+    }
+
+    <span style="color:#008000">/* 4. 注册接收回调（不注册 = 永远收不到数据） */</span>
+    udp_recv(upcb, udp_demo_recv_callback, <span style="color:#098658">NULL</span>);
+    <span style="color:#0000FF">return</span> upcb;
+}
+</pre>
+
+<h3>5.2 接收回调（内核"送货上门"）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 接收回调：数据以 pbuf 链表形式递进来，用完必须 pbuf_free */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">udp_demo_recv_callback</span><span style="color:#001080">(<span style="color:#267F99">void</span> *arg, <span style="color:#0000FF">struct</span> udp_pcb *upcb,
+                                   <span style="color:#0000FF">struct</span> pbuf *p,
+                                   <span style="color:#267F99">const</span> <span style="color:#267F99">ip_addr_t</span> *addr, <span style="color:#267F99">u16_t</span> port)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">q</span>;</span>
+    <span style="color:#267F99">u16_t</span> data_len = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">if</span> (p == <span style="color:#098658">NULL</span>) {
+        udp_disconnect(upcb);          <span style="color:#008000">/* 空数据表示连接异常，断开 */</span>
+        <span style="color:#0000FF">return</span>;
+    }
+
+    <span style="color:#795E26">memset</span>(recv_buf, <span style="color:#098658">0</span>, RECV_BUF_SIZE);          <span style="color:#008000">/* 接收缓冲区清零 */</span>
+
+    <span style="color:#008000">/* 遍历 pbuf 链表，把数据全部拷贝到用户缓冲区（注意防越界） */</span>
+    <span style="color:#0000FF">for</span> (q = p; q != <span style="color:#098658">NULL</span>; q = q-&gt;next) {
+        <span style="color:#0000FF">if</span> (q-&gt;len &gt; (RECV_BUF_SIZE - data_len)) {
+            <span style="color:#795E26">memcpy</span>(recv_buf + data_len, q-&gt;payload, RECV_BUF_SIZE - data_len);
+            <span style="color:#0000FF">break</span>;
+        }
+        <span style="color:#795E26">memcpy</span>(recv_buf + data_len, q-&gt;payload, q-&gt;len);
+        data_len += q-&gt;len;
+    }
+
+    <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;收到 %d.%d.%d.%d:%d 的数据: %s\r\n&quot;</span>,
+           (addr-&gt;addr &amp; <span style="color:#098658">0xff</span>), ((addr-&gt;addr &gt;&gt; <span style="color:#098658">8</span>) &amp; <span style="color:#098658">0xff</span>),
+           ((addr-&gt;addr &gt;&gt; <span style="color:#098658">16</span>) &amp; <span style="color:#098658">0xff</span>), ((addr-&gt;addr &gt;&gt; <span style="color:#098658">24</span>) &amp; <span style="color:#098658">0xff</span>),
+           port, recv_buf);
+
+    pbuf_free(p);                      <span style="color:#008000">/* ★ 必须释放，否则内存池泄漏 */</span>
+}
+</pre>
+
+<h3>5.3 发送数据（用 udp_sendto 指定对端）</h3>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 发送数据：数据装进 pbuf，交给 udp_sendto 发往指定 IP/端口 */</span>
+<span style="color:#267F99">err_t</span> <span style="color:#795E26">udp_send_data</span><span style="color:#001080">(<span style="color:#0000FF">struct</span> udp_pcb *upcb, <span style="color:#267F99">const</span> <span style="color:#267F99">char</span> *data)</span>
+{
+    <span style="color:#267F99"><span style="color:#0000FF">struct</span> <span style="color:#795E26">pbuf</span> *<span style="color:#795E26">ptr</span>;</span>
+    <span style="color:#267F99">err_t</span> err;
+
+    <span style="color:#008000">/* 申请 PBUF_TRANSPORT 类型 pbuf（自动预留 UDP 首部空间） */</span>
+    ptr = pbuf_alloc(PBUF_TRANSPORT, <span style="color:#795E26">strlen</span>(data), PBUF_POOL);
+    <span style="color:#0000FF">if</span> (ptr == <span style="color:#098658">NULL</span>) {
+        <span style="color:#0000FF">return</span> ERR_MEM;
+    }
+
+    <span style="color:#008000">/* 把用户数据拷进 pbuf 的 payload */</span>
+    pbuf_take(ptr, data, <span style="color:#795E26">strlen</span>(data));
+
+    <span style="color:#008000">/* 指定对端发送：192.168.1.2:8080（即使没 connect 也能发） */</span>
+    <span style="color:#267F99">ip_addr_t</span> dst;
+    IP4_ADDR(&amp;dst, <span style="color:#098658">192</span>, <span style="color:#098658">168</span>, <span style="color:#098658">1</span>, <span style="color:#098658">2</span>);
+    err = udp_sendto(upcb, ptr, &amp;dst, <span style="color:#098658">8080</span>);
+
+    pbuf_free(ptr);                    <span style="color:#008000">/* 发送完释放 */</span>
+    <span style="color:#0000FF">return</span> err;
+}
+</pre>
+
+<div class="warn">
+  <p>⚠️ 发送用的 pbuf 由 <strong>你的代码申请和释放</strong>（<code>udp_sendto</code> 不会帮你释放）；接收用的 pbuf 由 <strong>回调函数释放</strong>。两条规则记牢，RAW 内存就不会乱。</p>
+</div>
+
+<h2>动手练习（约 45 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 9.1：板子 ↔ 电脑 UDP 互发（网络调试助手）</h3>
+  <p class="step">1️⃣ 电脑网卡配静态 IP <code>192.168.1.2</code>，掩码 <code>255.255.255.0</code>；板子固定 <code>192.168.1.10</code>，网线直连。</p>
+  <p class="step">2️⃣ 在你的 lwIP 实验工程里新建 udp_demo.c，把第 5 节三段代码按"初始化 → 回调 → 发送"组装好，主循环里用按键触发发送。</p>
+  <p class="step">3️⃣ 电脑打开网络调试助手（SocketTool / 网络调试助手均可）：<strong>协议选 UDP，本地端口填 8080</strong>，点击"连接"进入监听。</p>
+  <p class="step">4️⃣ 板子发数据 → 工具里应收到板子 192.168.1.10 发来的载荷；工具发送框输入任意字符串回发 → 板子串口应打印出"收到 192.168.1.2:xxxx 的数据"。</p>
+  <p class="step">5️⃣ 验收标准：双向数据都到达对端，且无乱码、无丢失（连续发 50 次计数对比）。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 9.2：Wireshark 抓包验证 UDP 报文</h3>
+  <p class="step">1️⃣ 打开 Wireshark，选电脑的以太网网卡，过滤条件输入 <code>udp.port == 8080</code>。</p>
+  <p class="step">2️⃣ 让板子发一条 "ALIENTEK DATA"（或任意字符串），在 Wireshark 里找到这条 UDP 报文，展开查看：</p>
+  <p class="step">3️⃣ 核对四个字段：Source Port（板子本地端口）、Destination Port（8080）、Length（8 + 数据长度）、Checksum。再用 <strong>Follow UDP Stream</strong> 看完整载荷是否与串口打印一致。</p>
+  <p class="step">4️⃣ 思考：Length 为什么比你发的数据多 8？如果板子没绑定本地端口就发送，源端口会是多少？</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. UDP 首部共多少字节，包含哪四个字段？</p>
+  <p class="opt">A. 20 字节：源端口、目的端口、序号、确认号</p>
+  <p class="opt">B. 8 字节：源端口、目的端口、长度、校验和</p>
+  <p class="opt">C. 12 字节：源端口、目的端口、校验和、紧急指针</p>
+  <details><summary>查看答案</summary><div class="answer">B。UDP 首部固定 8 字节，4 个 u16 字段：源/目的端口、长度、校验和（PDF p.260）。</div></details>
+
+  <p class="q">Q2. RAW 接口下，内核收到 UDP 数据后做了什么？</p>
+  <p class="opt">A. 把数据拷贝到全局缓冲区并设置标志位</p>
+  <p class="opt">B. 调用控制块 recv 字段指向的用户回调函数</p>
+  <p class="opt">C. 直接丢弃并回复 ICMP 差错报文</p>
+  <details><summary>查看答案</summary><div class="answer">B。udp_input 遍历 udp_pcbs 找到匹配控制块后调用 pcb-&gt;recv 回调；回调里必须 pbuf_free（PDF p.268）。</div></details>
+
+  <p class="q">Q3. 用 udp_recv 注册的回调函数，谁负责释放接收到的 pbuf？</p>
+  <p class="opt">A. 内核在调用后自动释放</p>
+  <p class="opt">B. 由用户回调函数负责释放</p>
+  <p class="opt">C. 由 udp_remove 统一释放</p>
+  <details><summary>查看答案</summary><div class="answer">B。udp_input 源码注释明确"回调函数 recv 需要负责释放 p"（PDF p.267）。</div></details>
+
+  <p class="q">Q4. 板子要主动给电脑 192.168.1.2:8080 发包，最合适的函数是？</p>
+  <p class="opt">A. udp_sendto(upcb, p, &amp;dst, 8080)</p>
+  <p class="opt">B. udp_remove(upcb) 后重建控制块</p>
+  <p class="opt">C. udp_recv(upcb, NULL, NULL) 直接发送</p>
+  <details><summary>查看答案</summary><div class="answer">A。udp_sendto 指定目的 IP 与端口直接发送；udp_remove 是删控制块，udp_recv 是注册回调，都不能发包。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《lwIP 开发指南 V1.7》第 11 章（<span class="pg">PDF p.260~280</span>）——UDP 协议、源码解析与 RAW UDP 实验</li>
+<li>🌐 <a href="https://savannah.nongnu.org/projects/lwip/">lwIP 官网</a>——查阅 udp.h 中 udp_sendto / udp_recv_fn 的官方声明</li>
+<li>📕 RFC 768（UDP）——最简协议 RFC，通读一遍只需十分钟</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 10 课——RAW API · TCP，从"发出去就完事"的 UDP 进阶到"三次握手 + 重传 + 滑动窗口"的可靠传输，难度陡增但收获翻倍。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0008-ip-and-icmp.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0010-raw-tcp.html">下一课：RAW API · TCP →</a>
+</nav>
+
+</div>
+</body>
+</html>

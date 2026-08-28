@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0002 · 内置函数与一等公民</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>内置函数与函数当一等公民</h1>
+<p class="meta">Pythonic 代码 · 课程 0002 · 预计 20 分钟</p>
+
+<p>上一课我们让循环「少了下标」。这一课的思路更进一步:很多循环<strong>根本不用写</strong>——Python 自带一堆内建函数,把「遍历 + 变形 + 过滤 + 汇总」一次说完。核心观念:<strong>函数是值,可以当参数传来传去</strong>。</p>
+
+<h2>知识点 1:把循环汇总交给内置函数</h2>
+<p>C 思维(手动建变量累加 / 找最大):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">nums</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">9</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">]</span>
+<span style="color: #001080">total</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>
+<span style="color: #00F">for</span> <span style="color: #001080">n</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span><span style="color: #000">:</span>
+    <span style="color: #001080">total</span> <span style="color: #000">+=</span> <span style="color: #001080">n</span>
+<span style="color: #001080">biggest</span> <span style="color: #000">=</span> <span style="color: #001080">nums</span><span style="color: #000">[</span><span style="color: #098658">0</span><span style="color: #000">]</span>
+<span style="color: #00F">for</span> <span style="color: #001080">n</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span><span style="color: #000">:</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">n</span> <span style="color: #000">&gt;</span> <span style="color: #001080">biggest</span><span style="color: #000">:</span>
+        <span style="color: #001080">biggest</span> <span style="color: #000">=</span> <span style="color: #001080">n</span>
+<span style="color: #001080">count_gt3</span> <span style="color: #000">=</span> <span style="color: #098658">0</span>
+<span style="color: #00F">for</span> <span style="color: #001080">n</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span><span style="color: #000">:</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">n</span> <span style="color: #000">&gt;</span> <span style="color: #098658">3</span><span style="color: #000">:</span>
+        <span style="color: #001080">count_gt3</span> <span style="color: #000">+=</span> <span style="color: #098658">1</span>
+</pre>
+<p>Pythonic——<code>sum / max / min</code> 一个函数一次,<code>len</code> 数长度;「有几个满足条件」用 <code>sum(生成器)</code>(True 算 1):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">nums</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">,</span> <span style="color: #098658">9</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">]</span>
+<span style="color: #001080">total</span> <span style="color: #000">=</span> <span style="color: #0070C1">sum</span><span style="color: #000">(</span><span style="color: #001080">nums</span><span style="color: #000">)</span>
+<span style="color: #001080">biggest</span> <span style="color: #000">=</span> <span style="color: #0070C1">max</span><span style="color: #000">(</span><span style="color: #001080">nums</span><span style="color: #000">)</span>
+<span style="color: #001080">count_gt3</span> <span style="color: #000">=</span> <span style="color: #0070C1">sum</span><span style="color: #000">(</span><span style="color: #001080">n</span> <span style="color: #000">&gt;</span> <span style="color: #098658">3</span> <span style="color: #00F">for</span> <span style="color: #001080">n</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span><span style="color: #000">)</span>   <span style="color: #008000"># True == 1</span>
+</pre>
+<p>要点:凡是「对一整个序列做汇总」,先想内置函数,别手写循环。判断类统计用 <code>sum(cond for x in xs)</code> 是 Python 特有的一招。</p>
+
+<h2>知识点 2:any / all——「有没有」和「是不是都」</h2>
+<p>C 思维(写 bool 标志 + break):</p>
+<pre lang="python" class="highlight"><span style="color: #001080">found</span> <span style="color: #000">=</span> <span style="color: #00F">False</span>
+<span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]:</span>
+    <span style="color: #00F">if</span> <span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span><span style="color: #000">:</span>
+        <span style="color: #001080">found</span> <span style="color: #000">=</span> <span style="color: #00F">True</span>
+        <span style="color: #00F">break</span>
+</pre>
+<p>Pythonic:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">found</span> <span style="color: #000">=</span> <span style="color: #0070C1">any</span><span style="color: #000">(</span><span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">])</span>   <span style="color: #008000"># 有没有偶数 → True</span>
+<span style="color: #001080">all_odd</span> <span style="color: #000">=</span> <span style="color: #0070C1">all</span><span style="color: #000">(</span><span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">1</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #000">[</span><span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">5</span><span style="color: #000">])</span>  <span style="color: #008000"># 是不是全是奇数 → True</span>
+</pre>
+<p><code>any</code>=一有满足就 True;<code>all</code>=全部满足才 True。它们都<strong>短路</strong>(early exit),不用自己 break。</p>
+
+<h2>知识点 3:sorted 不修改原列表</h2>
+<p>C 程序员总想着「就地排序」(像 <code>qsort</code> 或 <code>sort()</code>)。但 Python 的 <code>sorted()</code> <strong>返回新列表</strong>,原列表不动;还能加 key 排序:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">)</span>                      <span style="color: #008000"># [&#39;apple&#39;, &#39;banana&#39;, &#39;cherry&#39;],words 不变</span>
+<span style="color: #001080">by_len</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #0070C1">len</span><span style="color: #000">)</span>        <span style="color: #008000"># [&#39;apple&#39;, &#39;cherry&#39;, &#39;banana&#39;]:按长度排</span>
+<span style="color: #001080">by_last</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #00F">lambda</span> <span style="color: #001080">w</span><span style="color: #000">:</span> <span style="color: #001080">w</span><span style="color: #000">[-</span><span style="color: #098658">1</span><span style="color: #000">])</span>  <span style="color: #008000"># 按最后一个字母排</span>
+</pre>
+<p>注意区分:<code>sorted(xs)</code> 返回新表;而 list 自己的 <code>xs.sort()</code> 才就地排序。想不破坏原数据就用 sorted。</p>
+
+<h2>知识点 4:map / filter——其实推导式就够了</h2>
+<p>C 程序员(或学函数式语言的人)常想着用 <code>map(f, xs)</code> 和 <code>filter(pred, xs)</code>。</p>
+<pre lang="python" class="highlight"><span style="color: #001080">nums</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">2</span><span style="color: #000">,</span> <span style="color: #098658">3</span><span style="color: #000">,</span> <span style="color: #098658">4</span><span style="color: #000">]</span>
+<span style="color: #001080">squared</span> <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #0070C1">map</span><span style="color: #000">(</span><span style="color: #00F">lambda</span> <span style="color: #001080">x</span><span style="color: #000">:</span> <span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span><span style="color: #000">,</span> <span style="color: #001080">nums</span><span style="color: #000">))</span>     <span style="color: #008000"># [1,4,9,16]</span>
+<span style="color: #001080">evens</span>   <span style="color: #000">=</span> <span style="color: #0070C1">list</span><span style="color: #000">(</span><span style="color: #0070C1">filter</span><span style="color: #000">(</span><span style="color: #00F">lambda</span> <span style="color: #001080">x</span><span style="color: #000">:</span> <span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #001080">nums</span><span style="color: #000">))</span>  <span style="color: #008000"># [2,4]</span>
+</pre>
+<p><strong>但是——Python 社区普遍认为推导式更可读、更 Pythonic</strong>,能一眼看出结构:</p>
+<pre lang="python" class="highlight"><span style="color: #001080">squared</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #001080">x</span> <span style="color: #000">*</span> <span style="color: #001080">x</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span><span style="color: #000">]</span>                 <span style="color: #008000"># 等价于 map</span>
+<span style="color: #001080">evens</span>   <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #001080">x</span> <span style="color: #00F">for</span> <span style="color: #001080">x</span> <span style="color: #AF00DB">in</span> <span style="color: #001080">nums</span> <span style="color: #00F">if</span> <span style="color: #001080">x</span> <span style="color: #000">%</span> <span style="color: #098658">2</span> <span style="color: #000">==</span> <span style="color: #098658">0</span><span style="color: #000">]</span>       <span style="color: #008000"># 等价于 filter</span>
+</pre>
+<p>判断:<code>map/filter</code> 只在「已经有一个现成函数名」(如 <code>map(str.strip, lines)</code>、<code>filter(None, xs)</code>)时比较顺;要写 lambda 的,一律用推导式。</p>
+
+<h2>知识点 5:函数当值——sorted 的 key 与 lambda</h2>
+<p>上一节见到的 <code>key=len</code> / <code>key=lambda...</code>,背后是「函数当参数」这回事。Python 里函数就是普通值,能存、能传:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">def</span><span style="color: #000"> </span><span style="color: #795E26">by_last_letter</span><span style="color: #000">(</span><span style="color: #001080">w</span><span style="color: #000">):</span>
+    <span style="color: #00F">return</span> <span style="color: #001080">w</span><span style="color: #000">[-</span><span style="color: #098658">1</span><span style="color: #000">]</span>
+
+<span style="color: #001080">words</span> <span style="color: #000">=</span> <span style="color: #000">[</span><span style="color: #A31515">&quot;banana&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;cherry&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;apple&quot;</span><span style="color: #000">]</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #0070C1">sorted</span><span style="color: #000">(</span><span style="color: #001080">words</span><span style="color: #000">,</span> <span style="color: #001080">key</span><span style="color: #000">=</span><span style="color: #001080">by_last_letter</span><span style="color: #000">)</span>   <span style="color: #008000"># 把函数名传进去(不加括号!)</span>
+</pre>
+<p>注意:<code>key=by_last_letter</code> 传的是<strong>函数本身</strong>(不调用),sorted 内部对每个元素调用它。lambda 只是「就地写的临时匿名函数」。想传现成函数就传名字,想现写就 lambda。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">求和 nums,Pythonic 写法?</p>
+  <button class="opt" data-ok="false">for 循环累加</button>
+  <button class="opt" data-ok="true">sum(nums)</button>
+  <button class="opt" data-ok="false">reduce 累加</button>
+  <button class="opt" data-ok="false">len 求和</button>
+  <p class="reveal">对整列做汇总用内置函数 sum(nums),别再手写循环。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">「有没有满足条件」用哪个?</p>
+  <button class="opt" data-ok="false">all(...)</button>
+  <button class="opt" data-ok="true">any(...)</button>
+  <button class="opt" data-ok="false">sum(...)</button>
+  <button class="opt" data-ok="false">len(...)</button>
+  <p class="reveal">any = 一有就 True;all = 全满足才 True。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">sorted(xs) 之后 xs 会?</p>
+  <button class="opt" data-ok="false">被就地排序</button>
+  <button class="opt" data-ok="true">原样不变</button>
+  <button class="opt" data-ok="false">被清空</button>
+  <button class="opt" data-ok="false">变成元组</button>
+  <p class="reveal">sorted() 返回新列表,原列表不动;就地排序要用 xs.sort()。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">要 lambda 的 map/filter,更 Pythonic 的替代?</p>
+  <button class="opt" data-ok="false">多写几行 for</button>
+  <button class="opt" data-ok="true">列表推导式</button>
+  <button class="opt" data-ok="false">reduce + lambda</button>
+  <button class="opt" data-ok="false">zip 组合</button>
+  <p class="reveal">要写 lambda 的 map/filter 用推导式替代,更可读;除非已有现成函数名。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0002_内置函数与一等公民.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:把 3 段手写汇总循环翻成内置函数写法,先翻译再对答案</li>
+  <li><strong>练习 B</strong>:用 any/all 写「名单里有没有空名」「成绩是否都及格」;用 sorted+key 按分数排序</li>
+  <li><strong>练习 C</strong>:map/filter vs 推导式二选一 + 训练 repo 里一段「手写累加/找极值」的代码</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p>同看 <strong>Hettinger 演讲</strong>(<a href="https://www.youtube.com/watch?v=OSGv2VnC0go">YouTube</a>)讲「用 any/all/reduce 取代循环」那段;<strong>Python 官方文档的 <a href="https://docs.python.org/3/library/functions.html">Built-in Functions</a></strong> 刷一遍前 20 个,你能记住哪些函数替你省了循环。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:哪个内置函数最让你「哇原来不用写循环」?下一课讲<strong>真值与空判断</strong>——<code>if x</code> 和 <code>if x is None</code> 到底差在哪,C 程序员最容易搞混。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0001-迭代与推导式.html">← 上一篇:从下标循环到迭代与推导式</a>
+  <a href="index.html">课程地图</a>
+  <a href="0003-真值与空判断.html">下一篇:真值与空判断 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

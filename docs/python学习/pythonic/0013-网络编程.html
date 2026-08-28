@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0013 · 网络编程 requests/socket</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>网络编程 requests / socket</h1>
+<p class="meta">Pythonic 代码 · 课程 0013 · 预计 30 分钟</p>
+
+<p>C 里写网络十分痛苦(socket、bind、listen、accept、解析 HTTP 报文……)。Python 里分两层:95% 的日常用<strong><code>requests</code></strong>(发 HTTP 请求、调 API、抓网页,自动解析);只有做底层协议/自写服务器才碰 <code>socket</code>。本课主攻 requests,顺带讲清 socket 的定位。</p>
+
+<h2>知识点 1:requests——GET 请求与响应</h2>
+<p><code>requests</code> 是第三方库(要先 <code>pip install requests</code>),发 GET 拿网页/JSON 就几行:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">requests</span>
+<span style="color: #001080">resp</span> <span style="color: #000">=</span> <span style="color: #001080">requests</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://api.github.com/users/octocat&quot;</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">resp</span><span style="color: #000">.</span><span style="color: #001080">status_code</span><span style="color: #000">)</span>     <span style="color: #008000"># 200</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">resp</span><span style="color: #000">.</span><span style="color: #001080">headers</span><span style="color: #000">)</span>         <span style="color: #008000"># 响应头(dict)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">resp</span><span style="color: #000">.</span><span style="color: #001080">text</span><span style="color: #000">)</span>            <span style="color: #008000"># 原始文本</span>
+<span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">resp</span><span style="color: #000">.</span><span style="color: #001080">json</span><span style="color: #000">()</span>          <span style="color: #008000"># 自动解析成 dict(若响应是 JSON)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">data</span><span style="color: #000">[</span><span style="color: #A31515">&quot;login&quot;</span><span style="color: #000">])</span>
+</pre>
+<p>要点:<code>resp.status_code</code> 是状态码(200 OK / 404 没找到 / 500 服务器错);<code>.json()</code> 直接把 JSON 体变 dict。<code>.text</code> 原始字符串;中文网页看 <code>resp.encoding</code>。</p>
+
+<h2>知识点 2:带参数、带请求头、POST</h2>
+<p>GET 带查询参数用 <code>params=</code>;带自定义头(如 User-Agent)用 <code>headers=</code>;发数据用 <code>POST + json=</code> / <code>data=</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">requests</span>
+<span style="color: #008000"># GET 带参数:GET /search?q=python&amp;page=2</span>
+<span style="color: #001080">r</span> <span style="color: #000">=</span> <span style="color: #001080">requests</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://httpbin.org/get&quot;</span><span style="color: #000">,</span>
+                 <span style="color: #001080">params</span><span style="color: #000">={</span><span style="color: #A31515">&quot;q&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;python&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;page&quot;</span><span style="color: #000">:</span> <span style="color: #098658">2</span><span style="color: #000">},</span>
+                 <span style="color: #001080">headers</span><span style="color: #000">={</span><span style="color: #A31515">&quot;User-Agent&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;my-app/1.0&quot;</span><span style="color: #000">})</span>
+
+<span style="color: #008000"># POST 发 JSON 数据</span>
+<span style="color: #001080">r2</span> <span style="color: #000">=</span> <span style="color: #001080">requests</span><span style="color: #000">.</span><span style="color: #001080">post</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://httpbin.org/post&quot;</span><span style="color: #000">,</span>
+                   <span style="color: #001080">json</span><span style="color: #000">={</span><span style="color: #A31515">&quot;name&quot;</span><span style="color: #000">:</span> <span style="color: #A31515">&quot;Ann&quot;</span><span style="color: #000">})</span>     <span style="color: #008000"># 自动转 JSON + 设 Content-Type</span>
+</pre>
+<p><code>params=</code> 会自动把 dict 编码成 <code>key=value&amp;...</code> 拼到 URL;比手拼字符串安全(自动处理特殊字符)。POST 传 JSON 用 <code>json=</code>,表单用 <code>data=</code>。</p>
+
+<h2>知识点 3:检查响应、异常、超时</h2>
+<p>C 思维(不检查错误);Pythonic 应检查状态码、设超时防卡死:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">requests</span>
+<span style="color: #001080">resp</span> <span style="color: #000">=</span> <span style="color: #001080">requests</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://httpbin.org/status/404&quot;</span><span style="color: #000">,</span>
+                    <span style="color: #001080">timeout</span><span style="color: #000">=</span><span style="color: #098658">10</span><span style="color: #000">)</span>      <span style="color: #008000"># 超时 10 秒,不设会一直等</span>
+<span style="color: #001080">resp</span><span style="color: #000">.</span><span style="color: #001080">raise_for_status</span><span style="color: #000">()</span>   <span style="color: #008000"># 状态码 4xx/5xx 会抛 HTTPError —— 推荐</span>
+<span style="color: #008000"># 不想抛异常就手动判断:</span>
+<span style="color: #008000"># if resp.status_code == 200: ...</span>
+</pre>
+<p>两点:<code>timeout=</code> 一定要设,否则网络卡住程序会无限等;<code>raise_for_status()</code> 让失败立刻报错,别假装成功。对接 4xx/5xx 错误,HTTPStatus 语义看 <a href="https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status">MDN 状态码表</a>。</p>
+
+<h2>知识点 4:响应 timeout 与 Session 复用</h2>
+<p>多次请求到同一站点,反复握手很浪费;<code>requests.Session()</code> 复用连接和 cookie:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">requests</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">requests</span><span style="color: #000">.</span><span style="color: #001080">Session</span><span style="color: #000">()</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://httpbin.org/cookies/set/name/Ann&quot;</span><span style="color: #000">)</span>   <span style="color: #008000"># 设置 cookie</span>
+<span style="color: #001080">r</span> <span style="color: #000">=</span> <span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">get</span><span style="color: #000">(</span><span style="color: #A31515">&quot;https://httpbin.org/cookies&quot;</span><span style="color: #000">)</span>            <span style="color: #008000"># 复用会话,带 cookie</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">r</span><span style="color: #000">.</span><span style="color: #001080">json</span><span style="color: #000">())</span>
+</pre>
+<p>抓登录态、批量请求、保持 cookie 用 <code>Session</code>;一次性单发用顶层 <code>requests.get</code> 即可。</p>
+
+<h2>知识点 5:socket 是什么、何时用</h2>
+<p><code>socket</code> 是底层 TCP/UDP 接口(C 的 socket 一样)。日常抓网页/调 API <strong>用 requests 就够,不用碰 socket</strong>;只有要「自定义二进制协议、自己写 TCP 服务器、UDP 通信」才用:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">socket</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">socket</span><span style="color: #000">.</span><span style="color: #001080">socket</span><span style="color: #000">(</span><span style="color: #001080">socket</span><span style="color: #000">.</span><span style="color: #001080">AF_INET</span><span style="color: #000">,</span> <span style="color: #001080">socket</span><span style="color: #000">.</span><span style="color: #001080">SOCK_STREAM</span><span style="color: #000">)</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">connect</span><span style="color: #000">((</span><span style="color: #A31515">&quot;example.com&quot;</span><span style="color: #000">,</span> <span style="color: #098658">80</span><span style="color: #000">))</span>        <span style="color: #008000"># TCP 连上 80 端口</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">sendall</span><span style="color: #000">(</span><span style="color: #A31515">b&quot;GET / HTTP/1.1\r\nHost: example.com\r\n\r\n&quot;</span><span style="color: #000">)</span>
+<span style="color: #001080">data</span> <span style="color: #000">=</span> <span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">recv</span><span style="color: #000">(</span><span style="color: #098658">1024</span><span style="color: #000">)</span>
+<span style="color: #001080">s</span><span style="color: #000">.</span><span style="color: #001080">close</span><span style="color: #000">()</span>
+</pre>
+<p>判断:发 HTTP 用 requests;底层裸 TCP/UDP 才用 socket。多数 C 程序员担心的「网络编程」在 Python 里其实就是 requests。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">发一个 GET 请求到网页,用?</p>
+  <button class="opt" data-ok="false">socket 手拼</button>
+  <button class="opt" data-ok="true">requests.get(url)</button>
+  <button class="opt" data-ok="false">http.open</button>
+  <button class="opt" data-ok="false">urlparse</button>
+  <p class="reveal">发 HTTP 用 requests.get,自动处理响应;不用碰底层 socket。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">把响应里的 JSON 变 dict,用?</p>
+  <button class="opt" data-ok="false">resp.text</button>
+  <button class="opt" data-ok="true">resp.json()</button>
+  <button class="opt" data-ok="false">resp.dict()</button>
+  <button class="opt" data-ok="false">json.loads(resp)</button>
+  <p class="reveal">响应若是 JSON,resp.json() 自动解析成 dict。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">GET 带查询参数?</p>
+  <button class="opt" data-ok="false">拼到 URL 字符串</button>
+  <button class="opt" data-ok="true">requests.get(url, params=dict)</button>
+  <button class="opt" data-ok="false">data= 传参</button>
+  <button class="opt" data-ok="false">argparse 传参</button>
+  <p class="reveal">params=dict 自动编码成 ?key=value,比手拼安全。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">多次请求同一站点想复用连接/cookie,用?</p>
+  <button class="opt" data-ok="false">每次 requests.get</button>
+  <button class="opt" data-ok="true">requests.Session()</button>
+  <button class="opt" data-ok="false">socket 长连</button>
+  <button class="opt" data-ok="false">threading</button>
+  <p class="reveal">Session 复用 TCP 连接和 cookie,适合相同站点的多次请求。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0013_网络编程.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:GET 一个公开 API,打印状态码和部分 JSON;设 timeout</li>
+  <li><strong>练习 B</strong>:GET 带 params、POST 发 json、用 raise_for_status 处理失败</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段(如果有)抓数据/调 API 代码,改成 requests</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong><code>requests</code> 官方文档(<a href="https://requests.readthedocs.io/en/latest/">英文</a> / <a href="https://requests.readthedocs.io/zh-cn/latest/">中文</a>)</strong>的「快速上手」一节:几分钟能做完全部常用操作,之后再回来看高级用法。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:.json() 自动解析是不是很省事?下一课讲<strong>多线程与并发 threading / concurrent.futures</strong>——怎么让多个任务同时跑,大幅提速。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0012-系统与命令行.html">← 上一篇:系统与命令行 sys / os.environ / argparse</a>
+  <a href="index.html">课程地图</a>
+  <a href="0014-多线程与并发.html">下一篇:多线程与并发 threading / concurrent.futures →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

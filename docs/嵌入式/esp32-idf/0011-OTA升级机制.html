@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0011 · OTA 升级机制</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>OTA 升级机制</h1>
+<p class="meta">ESP-IDF 课程 · 课程 0011 · 预计 15 分钟</p>
+
+<p>STM32 做 IAP 要自己写引导程序;ESP32 的 OTA 是<strong>官方内置方案</strong>:双分区 + 引导回滚。xiaozhi 连服务器第一步就是 OTA 握手(你现在服务器上那个 <code>/xiaozhi/ota/</code> 接口),所以这课是理解 xiaozhi 网络流程的必选项。</p>
+
+<h2>知识点 1:双分区原理</h2>
+<pre lang="csv" class="highlight"><span style="color: #008000"># 有两份 app 分区,新固件写"另一个"</span>
+ota_0, app, ota_0, 0x10000, 0x1f0000,
+ota_1, app, ota_1, 0x200000, 0x1f0000,
+</pre>
+<p>流程:下载新固件 → 写进当前未用的 ota 分区 → <code>esp_ota_set_boot_partition</code> 指向它 → 重启。如果新固件起不来,<strong>回滚保护</strong>让它退回旧分区。这就是为什么 xiaozhi 的 <code>sdkconfig.defaults</code> 里开着 <code>CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE</code>。</p>
+
+<h2>知识点 2:esp_ota 核心 API</h2>
+<pre lang="c" class="highlight"><span style="color: #795E26">esp_ota_begin</span>(part, OTA_SIZE_UNKNOWN, &amp;handle);   <span style="color: #008000">// 开始</span>
+<span style="color: #795E26">esp_ota_write</span>(handle, buf, len);                  <span style="color: #008000">// 流式写</span>
+<span style="color: #795E26">esp_ota_end</span>(handle);                             <span style="color: #008000">// 结束/校验</span>
+<span style="color: #795E26">esp_ota_set_boot_partition</span>(part);                <span style="color: #008000">// 切换启动</span>
+<span style="color: #795E26">esp_restart</span>();                                    <span style="color: #008000">// 重启</span>
+</pre>
+<p>看 xiaozhi 的 <code>main/ota.cc</code>:第 336 行附近正是 <code>esp_ota_begin</code>,整个文件就是这套 API 的实战。</p>
+
+<h2>动手</h2>
+<p>打开 <code>xiaozhi-esp32-2.2.4/main/ota.cc</code> 读前 100 行:<strong>画出手握 HTTP 下载 → 写分区 → 校验 → 重启 的流程</strong>。再到 <code>basic_routines/36_bootloader</code> 看双 OTA 分区表和引导流程。</p>
+
+<h2>小测验</h2>
+<div class="quiz">
+  <h3>Q1</h3>
+  <p class="q">新固件起不来时靠什么回退?</p>
+  <button class="opt" data-ok="true">回滚保护</button>
+  <button class="opt" data-ok="false">看门狗</button>
+  <button class="opt" data-ok="false">备份芯片</button>
+  <p class="reveal">Bootloader 回滚保护,验证失败自动退旧分区。</p>
+</div>
+<div class="quiz">
+  <h3>Q2</h3>
+  <p class="q">设备开机先连服务器的什么接口?</p>
+  <button class="opt" data-ok="true">OTA</button>
+  <button class="opt" data-ok="false">WebSocket</button>
+  <button class="opt" data-ok="false">MQTT</button>
+  <p class="reveal">OTA 握手(/xiaozhi/ota/),拿配置和固件版本。</p>
+</div>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>乐鑫官方《OTA 升级指南》</strong>(<a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/ota.html">OTA 文档</a>):重点看 App Rollback 一节。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>下一课:音频基础——I2S/Codec/Opus,读 xiaozhi 音频流水线的前置知识。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0010-NVS与文件系统.html">← 上一篇:NVS</a>
+  <a href="index.html">课程地图</a>
+  <a href="0012-音频基础.html">下一篇:音频 →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 9 课：信号量 — FreeRTOS 课程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/vendor/vs.min.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 9 课</nav>
+
+<h1>第 9 课：信号量</h1>
+<p class="subtitle">同步与互斥：二值/计数型信号量、优先级翻转、互斥量与递归互斥量</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>信号量是任务间同步与资源管理的经典机制（教材第 14 章，PDF p.284~325）。学完你能说清：四种信号量各自是什么、什么时候用哪个；二值信号量为什么会导致优先级翻转、互斥量为什么能缓解它；以及中断如何安全地"通知"任务。这一课你会反复看到上一课的影子——信号量全家桶都是队列的变体。</p>
+</div>
+
+<h2>1. 信号量是什么：队列的特例</h2>
+
+<p>信号量解决两类问题（PDF p.284）：<strong>同步</strong>（一个任务等另一个任务/中断完成某事再继续）和<strong>有序访问</strong>（多任务访问共享资源时排队）。教材用停车场打比方：空车位数量 = 信号量资源数，停车 = 获取（Take），开走 = 释放（Give）。</p>
+
+<p>从源码看，信号量就是队列——上节课那个联合体 <code>u</code> 就是为它准备的（PDF p.232）：</p>
+
+<table>
+<tr><th>信号量类型</th><th>本质</th><th>创建函数实际做的事</th></tr>
+<tr><td>二值信号量</td><td>队列长度为 1、项目大小为 0 的队列</td><td><code>xQueueGenericCreate(1, 0, queueQUEUE_TYPE_BINARY_SEMAPHORE)</code></td></tr>
+<tr><td>计数型信号量</td><td>队列长度 = 最大资源数的队列</td><td><code>xQueueGenericCreate(uxMaxCount, 0, COUNTING)</code>，再设 <code>uxMessagesWaiting = uxInitialCount</code></td></tr>
+<tr><td>互斥信号量</td><td>带优先级继承的二值信号量</td><td>创建后额外记录持有者（<code>xMutexHolder</code>）</td></tr>
+<tr><td>递归互斥信号量</td><td>持有者可重复获取的互斥量</td><td>额外维护 <code>uxRecursiveCallCount</code> 计数</td></tr>
+</table>
+
+<p>所以信号量的"资源数"就是 <code>uxMessagesWaiting</code>，Take 就是"等队列有货"，Give 就是"往队列塞一个空消息"。下面逐个看。</p>
+
+<h2>2. 二值信号量：中断与任务的"传令兵"</h2>
+
+<p>二值信号量只有 0/1 两种状态，典型用途是<strong>任务同步</strong>：中断里 <code>xSemaphoreGiveFromISR</code>，任务里 <code>xSemaphoreTake</code> 阻塞等待——中断一发生，任务立刻被唤醒。API 全部是对队列函数的包装（PDF p.285~295）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 创建：就是创建一个长度 1、项目大小 0 的队列 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreCreateBinary()                                          \
+    xQueueGenericCreate( ( UBaseType_t ) 1,                               \
+                         semSEMAPHORE_QUEUE_ITEM_LENGTH,                  \
+                         queueQUEUE_TYPE_BINARY_SEMAPHORE )</span>
+
+<span style="color:#008000">/* 获取：uxMessagesWaiting &gt; 0 则减 1 成功返回，否则阻塞 xBlockTime */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreTake( xSemaphore, xBlockTime )   \
+    xQueueSemaphoreTake( ( xSemaphore ), ( xBlockTime ) )</span>
+
+<span style="color:#008000">/* 释放：往队列塞一个空消息，uxMessagesWaiting 加 1 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreGive( xSemaphore )                \
+    xQueueGenericSend( ( QueueHandle_t ) ( xSemaphore ),  \
+                       NULL, semGIVE_BLOCK_TIME, queueSEND_TO_BACK )</span>
+
+<span style="color:#008000">/* 中断里释放：无阻塞，附&quot;唤醒标志&quot;输出 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreGiveFromISR( xSemaphore, pxHigherPriorityTaskWoken ) \
+    xQueueGiveFromISR( ( QueueHandle_t ) ( xSemaphore ),               \
+                       ( pxHigherPriorityTaskWoken ) )</span></pre>
+
+<p>教材 14.3 节实验是标准模板（PDF p.297~299）：task1 扫按键，按 KEY0 就 <code>xSemaphoreGive</code>；task2 <code>xSemaphoreTake</code> 阻塞等待，拿到就刷屏。把 task1 换成中断就是"中断同步任务"的完整形态：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* task2：阻塞等信号量，拿到才干活 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>
+{
+    <span style="color:#267F99">uint32_t</span> task2_num = <span style="color:#098658">0</span>;
+
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        xSemaphoreTake(BinarySemaphore, portMAX_DELAY);  <span style="color:#008000">/* 没信号就睡觉 */</span>
+        lcd_fill(<span style="color:#098658">6</span>, <span style="color:#098658">131</span>, <span style="color:#098658">233</span>, <span style="color:#098658">313</span>, lcd_discolor[++task2_num % <span style="color:#098658">11</span>]);
+    }
+}
+
+<span style="color:#008000">/* 外部中断里：给信号，唤醒 task2 */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">EXTI0_IRQHandler</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    <span style="color:#0000FF">if</span> (EXTI_GetITStatus(EXTI_Line0) != RESET)
+    {
+        EXTI_ClearITPendingBit(EXTI_Line0);
+        xSemaphoreGiveFromISR(BinarySemaphore, &amp;xHigherPriorityTaskWoken);
+    }
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}</pre>
+
+<div class="tip">
+  <p>💡 同步语义的要点：二值信号量的 Give 和 Take 不必成对——连续给两次，任务只被唤醒一次（第二次给时信号量已满，直接丢弃）。它表达的是"事件发生过"这个事实，不是"事件次数"。要计数，用计数型信号量。</p>
+</div>
+
+<h2>3. 计数型信号量：数资源、数事件</h2>
+
+<p>创建函数多了两个参数（PDF p.301~302）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreCreateCounting( uxMaxCount, uxInitialCount )  \
+    xQueueCreateCountingSemaphore( ( uxMaxCount ), ( uxInitialCount ) )</span>
+
+QueueHandle_t <span style="color:#795E26">xQueueCreateCountingSemaphore</span><span style="color:#001080">( <span style="color:#267F99">const</span> UBaseType_t uxMaxCount,
+                                             <span style="color:#267F99">const</span> UBaseType_t uxInitialCount )</span>
+{
+    <span style="color:#0000FF">if</span>( ( uxMaxCount != <span style="color:#098658">0</span> ) &amp;&amp; ( uxInitialCount &lt;= uxMaxCount ) )
+    {
+        <span style="color:#008000">/* 队列长度 = 最大资源数；初始资源数直接写进 uxMessagesWaiting */</span>
+        xHandle = xQueueGenericCreate( uxMaxCount,
+                                       queueSEMAPHORE_QUEUE_ITEM_LENGTH,
+                                       queueQUEUE_TYPE_COUNTING_SEMAPHORE );
+        <span style="color:#0000FF">if</span>( xHandle != <span style="color:#098658">NULL</span> )
+        {
+            ( ( Queue_t * ) xHandle )-&gt;uxMessagesWaiting = uxInitialCount;
+        }
+    }
+    <span style="color:#0000FF">return</span> xHandle;
+}</pre>
+
+<p>两种经典用法（PDF p.300~301）：</p>
+
+<ul>
+<li><strong>事件计数</strong>：初始 0，每次事件 Give +1，任务 Take 消费——事件比任务快也不丢，攒着慢慢处理。</li>
+<li><strong>资源管理</strong>：初始 = 资源总数，每个任务 Take 前"占坑"、用完 Give 归还——比如 3 个 DMA 通道，最多 3 个任务同时用。</li>
+</ul>
+
+<p>教材 14.5 节实验：task1 连按 5 次 KEY0（<code>xSemaphoreGive</code> 五次），task2 每 1000 tick 才 <code>xSemaphoreTake</code> 一次并刷屏（PDF p.304~306）——串口/LCD 上你会看到资源数先涨到 5，再被 task2 每 1000 tick 吃掉一个。这个"积攒-消费"节奏就是事件计数的直观演示。</p>
+
+<h2>4. 优先级翻转：三个任务的一出悲剧</h2>
+
+<p>二值/计数型信号量有个著名副作用——<strong>优先级翻转</strong>（PDF p.307~308）。场景三个任务：H（最高）、M（中等）、L（最低），共享一个被信号量保护的资源：</p>
+
+<ol>
+<li>任务 L 正在运行，拿到信号量开始访问共享资源。</li>
+<li>任务 H 就绪，抢占 L，也想拿信号量——但信号量在 L 手里，H 只能阻塞等待。</li>
+<li>此时任务 M 就绪（它不需要信号量），把 L 抢占——L 被堵住，迟迟无法释放信号量。</li>
+<li>结果：优先级最高的 H 要等 M 跑完、再等 L 跑完才能拿到资源。最高优先级反而最后执行！</li>
+</ol>
+
+<p>教材 14.7 节实验把这一幕演给你看（PDF p.309~312）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 三个任务优先级：task1(最高) &gt; task2(中) &gt; task3(低) */</span>
+<span style="color:#267F99">void</span> <span style="color:#795E26">task1</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>      <span style="color:#008000">/* 高优先级：等信号量 */</span>
+{
+    vTaskDelay(<span style="color:#098658">500</span>);                <span style="color:#008000">/* 让低优先级先拿到信号量 */</span>
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 ready to take semaphore\r\n&quot;</span>);
+        xSemaphoreTake(Semaphore, portMAX_DELAY);
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 has taked semaphore\r\n&quot;</span>);
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task1 give semaphore\r\n&quot;</span>);
+        xSemaphoreGive(Semaphore);
+        vTaskDelay(<span style="color:#098658">100</span>);
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task2</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>      <span style="color:#008000">/* 中优先级：纯捣乱，不用信号量 */</span>
+{
+    <span style="color:#267F99">uint32_t</span> task2_num = <span style="color:#098658">0</span>;
+    vTaskDelay(<span style="color:#098658">200</span>);
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#0000FF">for</span> (task2_num=<span style="color:#098658">0</span>; task2_num&lt;<span style="color:#098658">5</span>; task2_num++)
+        {
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task2 running\r\n&quot;</span>);
+            delay_ms(<span style="color:#098658">100</span>);          <span style="color:#008000">/* 模拟运行，不触发任务调度 */</span>
+        }
+        vTaskDelay(<span style="color:#098658">1000</span>);
+    }
+}
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">task3</span><span style="color:#001080">(<span style="color:#267F99">void</span> *pvParameters)</span>      <span style="color:#008000">/* 低优先级：先拿信号量慢慢跑 */</span>
+{
+    <span style="color:#267F99">uint32_t</span> task3_num = <span style="color:#098658">0</span>;
+    <span style="color:#0000FF">while</span> (<span style="color:#098658">1</span>)
+    {
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task3 ready to take semaphore\r\n&quot;</span>);
+        xSemaphoreTake(Semaphore, portMAX_DELAY);
+        <span style="color:#0000FF">for</span> (task3_num=<span style="color:#098658">0</span>; task3_num&lt;<span style="color:#098658">5</span>; task3_num++)
+        {
+            <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task3 running\r\n&quot;</span>);
+            delay_ms(<span style="color:#098658">100</span>);
+        }
+        <span style="color:#795E26">printf</span>(<span style="color:#A31515">&quot;task3 give semaphore\r\n&quot;</span>);
+        xSemaphoreGive(Semaphore);
+        vTaskDelay(<span style="color:#098658">1000</span>);
+    }
+}</pre>
+
+<p>运行顺序你会看到：task3 拿信号量 → task2 抢占 → task1 抢占 task2 后拿不到信号量被阻塞 → task2 继续跑完 → task3 跑完释放 → task1 才拿到。串口输出顺序印证了"最高优先级最后才运行"（PDF p.312）。</p>
+
+<div class="warn">
+  <p>⚠️ 优先级翻转在抢占式 RTOS 里是"合法的行为"但危害极大：它把高优先级任务的实时性拖成"取决于中优先级任务的脸色"，可能引发超时、丢数据甚至看门狗复位。二值信号量适合"同步"（第 2 节场景），<strong>保护共享资源请用互斥信号量</strong>——下一节就是它的解药。</p>
+</div>
+
+<h2>5. 互斥信号量：优先级继承的解药</h2>
+
+<p>互斥信号量 = 拥有<strong>优先级继承</strong>机制的二值信号量（PDF p.313）。优先级继承的规则：当高优先级任务 H 因获取被 L 持有的互斥量而阻塞时，<strong>L 的优先级被临时提升到与 H 相同</strong>；L 释放互斥量后恢复原优先级。这样 M 就无法再插队——因为 L 此刻的优先级比 M 高，H 的等待时间从"M+L"缩短为"只有 L"。</p>
+
+<p>源码佐证：<code>xQueueSemaphoreTake()</code> 里对互斥量类型的队列会调用 <code>xTaskPriorityInherit(xMutexHolder)</code>（PDF p.289）；<code>xSemaphoreGive</code> 释放时会检查并恢复持有者的原始优先级（<code>uxBasePriority</code>，创建任务时就存好了，第 6 课见过）。创建互斥量时还会额外初始化持有者并"预先给一次"，保证初始有资源（PDF p.314）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreCreateMutex()   xQueueCreateMutex( queueQUEUE_TYPE_MUTEX )</span>
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">void</span> <span style="color:#795E26">prvInitialiseMutex</span><span style="color:#001080">( Queue_t * pxNewQueue )</span>
+{
+    <span style="color:#0000FF">if</span>( pxNewQueue != <span style="color:#098658">NULL</span> )
+    {
+        pxNewQueue-&gt;u.xSemaphore.xMutexHolder = <span style="color:#098658">NULL</span>;   <span style="color:#008000">/* 持有者清空 */</span>
+        pxNewQueue-&gt;uxQueueType = queueQUEUE_IS_MUTEX;  <span style="color:#008000">/* 标记互斥类型 */</span>
+        pxNewQueue-&gt;u.xSemaphore.uxRecursiveCallCount = <span style="color:#098658">0</span>;
+        <span style="color:#008000">/* 预置一个资源：新互斥量创建后是&quot;有货&quot;的 */</span>
+        ( <span style="color:#267F99">void</span> ) xQueueGenericSend( pxNewQueue, <span style="color:#098658">NULL</span>, <span style="color:#098658">0</span>, queueSEND_TO_BACK );
+    }
+}</pre>
+
+<p>教材 14.9 节实验就是把 14.7 节的计数型信号量换成互斥信号量，其余代码几乎不变（PDF p.316~319）。串口输出对比：task1 阻塞后，task3 的优先级被提到 task1 水平，<strong>task2 抢不动了</strong>——task3 一口气跑完释放，task1 立刻接手。同一套任务代码，换一个创建函数，行为天差地别。</p>
+
+<p>两个硬性限制（PDF p.313）：互斥信号量<strong>不能用于中断</strong>——中断不是任务、没有优先级可继承；且中断里不能阻塞等待。递归互斥量同理。</p>
+
+<div class="tip">
+  <p>💡 注意措辞：优先级继承只是"缓解"优先级翻转，不是"消除"。它把影响从"所有中间优先级任务"缩小为"持锁者本人"，但持锁者若被更高优先级任务抢占，H 还是要等。真正的根治是在设计上缩短持锁时间、避免高优先级任务等锁。教材原话：实时应用应在设计之初就要避免优先级翻转的发生（PDF p.313）。</p>
+</div>
+
+<h2>6. 递归互斥信号量：可以重复上锁的锁</h2>
+
+<p>场景：任务 A 的函数 f1 获取互斥量，f1 又调用 f2，f2 也要获取同一个互斥量——普通互斥量会把自己锁死（持有者再次 Take 会阻塞）。递归互斥信号量解决这个问题：<strong>持有者可以重复获取</strong>，内部用 <code>uxRecursiveCallCount</code> 记录获取次数，释放次数必须等于获取次数才算真正释放（PDF p.320~323）。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">#<span style="color:#0000FF">define</span> xSemaphoreCreateRecursiveMutex()  xQueueCreateMutex( queueQUEUE_TYPE_RECURSIVE_MUTEX )</span>
+
+<span style="color:#008000">/* 获取：持有者本人重复获取直接计数 +1，不阻塞 */</span>
+BaseType_t <span style="color:#795E26">xQueueTakeMutexRecursive</span><span style="color:#001080">( QueueHandle_t xMutex, TickType_t xTicksToWait )</span>
+{
+    <span style="color:#0000FF">if</span>( pxMutex-&gt;u.xSemaphore.xMutexHolder == xTaskGetCurrentTaskHandle() )
+    {
+        ( pxMutex-&gt;u.xSemaphore.uxRecursiveCallCount )++;  <span style="color:#008000">/* 再取一次，计数加一 */</span>
+        xReturn = pdPASS;
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        xReturn = xQueueSemaphoreTake( pxMutex, xTicksToWait );  <span style="color:#008000">/* 非持有者：正常拿 */</span>
+        <span style="color:#0000FF">if</span>( xReturn != pdFAIL )
+        {
+            ( pxMutex-&gt;u.xSemaphore.uxRecursiveCallCount )++;
+        }
+    }
+    <span style="color:#0000FF">return</span> xReturn;
+}
+
+<span style="color:#008000">/* 释放：每 Give 一次计数减一，减到 0 才真正释放给其他任务 */</span>
+BaseType_t <span style="color:#795E26">xQueueGiveMutexRecursive</span><span style="color:#001080">( QueueHandle_t xMutex )</span>
+{
+    <span style="color:#0000FF">if</span>( pxMutex-&gt;u.xSemaphore.xMutexHolder == xTaskGetCurrentTaskHandle() )
+    {
+        ( pxMutex-&gt;u.xSemaphore.uxRecursiveCallCount )--;
+        <span style="color:#0000FF">if</span>( pxMutex-&gt;u.xSemaphore.uxRecursiveCallCount == <span style="color:#098658">0</span> )
+        {
+            ( <span style="color:#267F99">void</span> ) xQueueGenericSend( pxMutex, <span style="color:#098658">NULL</span>,
+                                        queueMUTEX_GIVE_BLOCK_TIME,
+                                        queueSEND_TO_BACK );
+        }
+        xReturn = pdPASS;
+    }
+    <span style="color:#0000FF">else</span>
+    {
+        xReturn = pdFAIL;   <span style="color:#008000">/* 非持有者释放 = 非法操作 */</span>
+    }
+    <span style="color:#0000FF">return</span> xReturn;
+}</pre>
+
+<p>注意配套 API 不同名：<code>xSemaphoreTakeRecursive()</code> / <code>xSemaphoreGiveRecursive()</code>，别拿普通 Take/Give 混用。它也带优先级继承、也不能用于中断。使用场景比较窄（函数递归嵌套、可重入模块），了解机制即可，不必特意做实验。</p>
+
+<h2>动手练习（约 25 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 9.1：二值信号量中断同步实验</h3>
+  <p class="step">1️⃣ 在你的 FreeRTOS 分支工程里，仿照第 2 节：task2 <code>xSemaphoreTake(BinarySemaphore, portMAX_DELAY)</code> 阻塞等信号，把按键扫描任务换成"中断给信号"（用探索者的一个外部中断或定时器中断调用 <code>xSemaphoreGiveFromISR</code>）。</p>
+  <p class="step">2️⃣ 验证同步语义：连续快速触发两次中断，LCD 只刷新一次（信号量满时 Give 被丢弃）；把 <code>xSemaphoreTakeFromISR</code> 也加进中断里读一下资源，观察计数变化。</p>
+  <p class="step">3️⃣ 在 Watch 窗口盯着二值信号量句柄指向的 <code>uxMessagesWaiting</code>：中断触发前/后、task2 Take 后，它分别在什么值？和"队列长度为 1"的认知对照。</p>
+  <p class="step">4️⃣ 验收标准：能画出"中断 → GiveFromISR → 唤醒 task2 → Take"的时序，并解释 <code>pxHigherPriorityTaskWoken</code> 在整个链路里的作用。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 9.2：优先级翻转 vs 互斥量对比实验</h3>
+  <p class="step">1️⃣ 把第 4 节的三个任务代码搬进工程（task1 高、task2 中、task3 低），先用 <code>xSemaphoreCreateCounting(1, 1)</code> 创建信号量，下载运行，记录串口输出顺序——确认出现优先级翻转（最高优先级最后运行）。</p>
+  <p class="step">2️⃣ 只改一行：换成 <code>xSemaphoreCreateMutex()</code>，重新下载运行，对比串口输出。任务执行顺序哪里变了？为什么？</p>
+  <p class="step">3️⃣ 在 <code>xTaskPriorityInherit()</code>（tasks.c）打断点，观察 task1 阻塞时，task3 的 <code>uxPriority</code> 和 <code>uxBasePriority</code> 如何被临时改变、释放后又如何恢复。</p>
+  <p class="step">4️⃣ 验收标准：能用一张时间轴画出两种场景下三个任务的运行区间，并说出互斥量"临时提升持有者优先级"这一步发生在哪个函数里。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 二值信号量在 FreeRTOS 源码中的本质是？</p>
+  <p class="opt">A. 一个长度为 1 的特殊队列</p>
+  <p class="opt">B. 一个独立的计数器结构体</p>
+  <p class="opt">C. 一个受保护的全局变量</p>
+  <p class="opt">D. 一个硬件定时器的中断标志</p>
+  <details><summary>查看答案</summary><div class="answer">A。xSemaphoreCreateBinary 实际调用 xQueueGenericCreate(1, 0, BINARY)——长度为 1、项目大小为 0 的队列，uxMessagesWaiting 即资源数（PDF p.285）。</div></details>
+
+  <p class="q">Q2. 计数型信号量的初始资源数存储在哪个成员？</p>
+  <p class="opt">A. uxLength 队列长度字段</p>
+  <p class="opt">B. uxMessagesWaiting 非空闲项目数</p>
+  <p class="opt">C. uxItemSize 项目大小字段</p>
+  <p class="opt">D. uxRecursiveCallCount 递归计数</p>
+  <details><summary>查看答案</summary><div class="answer">B。xQueueCreateCountingSemaphore 创建队列后直接写 uxMessagesWaiting = uxInitialCount（PDF p.302），Give/Take 就是对这个数的加减。</div></details>
+
+  <p class="q">Q3. 优先级继承机制的具体行为是？</p>
+  <p class="opt">A. 高优先级任务主动降低自己的优先级</p>
+  <p class="opt">B. 高优先级任务临时提升持锁低优先级任务的优先级</p>
+  <p class="opt">C. 低优先级任务复制高优先级任务的代码段</p>
+  <p class="opt">D. 调度器按任务年龄轮流分配优先级</p>
+  <details><summary>查看答案</summary><div class="answer">B。H 因等待被 L 持有的互斥量而阻塞时，L 被临时提升到 H 的优先级（xTaskPriorityInherit），释放后恢复 uxBasePriority，从而压缩 H 的等待时间（PDF p.313）。</div></details>
+
+  <p class="q">Q4. 递归互斥信号量真正释放给其他任务的条件是？</p>
+  <p class="opt">A. 持有者调用一次 xSemaphoreGiveRecursive</p>
+  <p class="opt">B. 释放次数与获取次数相等且均为持有者</p>
+  <p class="opt">C. 任意任务调用一次 xSemaphoreGive</p>
+  <p class="opt">D. 持有者任务被删除或挂起</p>
+  <details><summary>查看答案</summary><div class="answer">B。uxRecursiveCallCount 记录获取次数，GiveRecursive 每次减一，减到 0 才真正把资源交还（PDF p.322）；非持有者释放直接返回 pdFAIL。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《FreeRTOS 开发指南 V1.12》第 14 章（<span class="pg">PDF p.284~325</span>）——本课全部依据，14.6 节的优先级翻转示意图值得反复对照实验现象</li>
+<li>🌐 <a href="https://www.freertos.org/Embedded-RTOS-Binary-Semaphores.html">FreeRTOS 官方信号量文档</a>——二值/计数/互斥/递归四种信号量的官方讲解与示例</li>
+<li>📕 <a href="https://www.freertos.org/Documentation/RTOS_book.html">Mastering the FreeRTOS™ Real Time Kernel</a> 第 6 章（Semaphores &amp; Mutexes）——官方书对优先级翻转与继承的深入论述</li>
+</ul>
+
+<div class="footer-note">
+  <p>到这里，任务间通信的两大支柱（队列 + 信号量）已经立起来了。下一课预告：第 10 课——软件定时器，看看 FreeRTOS 怎么用"一个定时器服务任务"统一管理所有定时器，以及它和硬件定时器的区别。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0008-queues.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0010-software-timers.html">下一课：软件定时器 →</a>
+</nav>
+
+</div>
+</body>
+</html>

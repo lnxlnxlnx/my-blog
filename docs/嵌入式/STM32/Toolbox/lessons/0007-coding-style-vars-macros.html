@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 7 课：变量、宏与常量 + 重构实战 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 7 课</nav>
+
+<h1>第 7 课：变量、宏与常量 + 重构实战</h1>
+<p class="subtitle">把学过的规范用起来：正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 5、6 章（PDF p.20~24）+ 工程重构</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>前两课是"认识规范"，这一课是"用规范"。学完你能写干净的变量声明与初始化、识破带参宏的副作用陷阱、会用 <code>do{}while(0)</code> 和 <code>const</code>/枚举替代裸宏，并照着"问题清单 → 改命名 → 拆函数 → 加注释"的流程把 <code>lvgl_snake.c</code> 重构一遍。本课约 50~60 分钟，重构练习是重头戏。</p>
+</div>
+
+<h2>1. 变量：一个变量只能有一个功能</h2>
+
+<p>第五章第一条（<span class="pg">PDF p.20</span>）：<strong>一个变量只能有一个特定功能</strong>，不能因为取值不同代表不同含义就反复复用——最典型的反面教材：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：同一个变量身兼两职 */</span>
+<span style="color:#267F99">int</span> time;
+time = <span style="color:#098658">200</span>;         <span style="color:#008000">/* 表示时间 */</span>
+time = getvalue();  <span style="color:#008000">/* 又被用作返回值 —— 谁看谁糊涂 */</span>
+
+<span style="color:#008000">/* 正例：各归各 */</span>
+<span style="color:#267F99">int</span> time, ret;
+time = <span style="color:#098658">200</span>;
+ret = getvalue();</pre>
+
+<p>紧接着的硬规则：<strong>严禁使用未经初始化的变量作为右值</strong>，且首次使用前的初始化<strong>离使用的地方越近越好</strong>。教材还给了两个更优雅的写法（<span class="pg">PDF p.20~21</span>）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 不可取：初始化和声明分离, 变量在 if 前处于&quot;半初始化&quot;状态 */</span>
+<span style="color:#267F99">int</span> num;
+<span style="color:#0000FF">if</span> (a)
+{
+    num = <span style="color:#098658">3</span>;
+}
+<span style="color:#0000FF">else</span>
+{
+    num = <span style="color:#098658">4</span>;
+}
+
+<span style="color:#008000">/* 较好：默认有意义的初始化, 只改需要改的分支 */</span>
+<span style="color:#267F99">int</span> num = <span style="color:#098658">3</span>;
+<span style="color:#0000FF">if</span> (a)
+{
+    num = <span style="color:#098658">4</span>;
+}
+
+<span style="color:#008000">/* 更好：用 ?: 减少数据流和控制流的混合 */</span>
+<span style="color:#267F99">int</span> num = a ? <span style="color:#098658">4</span> : <span style="color:#098658">3</span>;</pre>
+
+<div class="warn">
+  <p>⚠️ 未初始化变量是 C/C++ 最臭名昭著的错误源。嵌入式里更隐蔽：栈上局部变量初值是随机数，有时"碰巧能用"，换个编译器优化等级就翻车。<strong>声明即初始化</strong>是成本最低的防呆。</p>
+</div>
+
+<h2>2. 全局变量：少用，封私有</h2>
+
+<p>原则（<span class="pg">PDF p.20~21</span>）：</p>
+
+<ul>
+<li><strong>不用或少用全局变量</strong>。确实需要跨函数共享时，优先用 <code>static</code> 修饰成<strong>文件私有</strong>——模块的私有数据不能作为对外接口，直接访问别的模块的私有数据会增强模块间耦合</li>
+<li><strong>防止局部变量和全局变量重名</strong>，容易让人误读</li>
+<li><strong>明确全局变量的初始化顺序</strong>：启动阶段"使用"和"初始化"的时序必须分析清楚（典型坑：BSP 函数在 <code>SystemInit</code> 之前被调用）</li>
+<li><strong>尽量减少不必要的数据类型转换</strong>：转换可能改变数据意义和取值</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例：裸全局变量, 谁都能改, 谁都能坏 */</span>
+<span style="color:#267F99">uint16_t</span> score;      <span style="color:#008000">/* 模块私有数据暴露给全工程 */</span>
+
+<span style="color:#008000">/* 正例：static 私有 + 函数接口 —— 你的 lvgl_snake.c 就是这么干的 ✅ */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint16_t</span> snake_length;             <span style="color:#008000">/* 文件私有 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint16_t</span> best_score = <span style="color:#098658">0</span>;           <span style="color:#008000">/* 文件私有 */</span>
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint16_t</span> <span style="color:#795E26">game_get_score</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>      <span style="color:#008000">/* 对外只开函数口子 */</span>
+{
+    <span style="color:#0000FF">return</span> best_score;
+}</pre>
+
+<div class="tip">
+  <p>💡 检查你工程里的全局变量：<code>gui_menu.c</code> 的 <code>AppState g_app</code> 是模块间通信，带 <code>g_</code> 前缀合理；但如果一个变量只在单文件内用，就立刻改成 <code>static</code>。</p>
+</div>
+
+<h2>3. 宏定义规范：命名与括号</h2>
+
+<p>第六章（<span class="pg">PDF p.22</span>）：<strong>常量宏和枚举标签用大写 + 下划线</strong>；"在定义几个相关的常量时，最好使用枚举"。表达式宏的坑主要是<strong>忘记优先级</strong>——凡是用表达式定义常量，整个表达式必须套一层括号：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">#<span style="color:#0000FF">define</span> CONSTANT 0x4000</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> CONSTEXP  (CONSTANT | 3)   <span style="color:#008000">/* ✅ 外层括号保护 */</span></span>
+
+<span style="color:#008000">/* 反例：你工程里的真雷 —— lvgl_snake.c 第 8 行 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LVGL_SNAKE_MAX_LENGTH (LVGL_SNAKE_GRID_SIZE * LVGL_SNAKE_GRID_SIZE) / 2</span>
+
+<span style="color:#008000">/* 一旦被&quot;除&quot;就翻车 */</span>
+<span style="color:#267F99">float</span> ratio = <span style="color:#098658">1.0f</span> / LVGL_SNAKE_MAX_LENGTH;
+<span style="color:#008000">/* 展开成 1.0f / 144 / 2, 得到 0.00347f, 而不是预期的 1.0f / 72 = 0.01389f */</span>
+
+<span style="color:#008000">/* 正例 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LVGL_SNAKE_MAX_LENGTH ((LVGL_SNAKE_GRID_SIZE * LVGL_SNAKE_GRID_SIZE) / 2)</span></pre>
+
+<p>带参宏还有几条禁令（<span class="pg">PDF p.22~23</span>）：</p>
+
+<ul>
+<li><strong>避免影响控制流程的宏</strong>：宏里写 <code>return</code>，会让"调用"它的函数悄悄退出，防不胜防</li>
+<li><strong>不要定义"可作为左值"的宏</strong>：<code>FOO(x) = y</code> 这种用法，一旦宏改成内联函数就崩</li>
+<li><strong>宏的参数不允许发生变化</strong>：见下节副作用</li>
+</ul>
+
+<h2>4. 带参宏的副作用与 do{}while(0)</h2>
+
+<p>经典副作用（<span class="pg">PDF p.22~23</span>）：宏是文本替换，参数被<strong>原样粘贴</strong>，传 <code>i++</code> 就会执行多次：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#267F99">#<span style="color:#0000FF">define</span> SQUARE(a) ((a) * (a))</span>
+
+<span style="color:#267F99">int</span> a = <span style="color:#098658">5</span>;
+<span style="color:#267F99">int</span> b;
+b = SQUARE(a++);   <span style="color:#008000">/* 展开为 ((a++) * (a++)), a 被自增两次 */</span>
+                   <span style="color:#008000">/* 结果 a = 7, 而不是期望的 6 */</span>
+
+<span style="color:#008000">/* 应改为: 先自增, 再传参 */</span>
+b = SQUARE(a);
+a++;               <span style="color:#008000">/* 结果 a = 6, 只执行一次 */</span></pre>
+
+<p>多语句宏的正确姿势：<strong>函数宏不管几个参数，一定用 <code>do{}while(0)</code> 包裹</strong>（<span class="pg">PDF p.23~24</span>）。看看不用它的下场：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例: 多语句宏不加 do{}while(0) */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> foo(x) fun1(x); fun2(x);</span>
+
+<span style="color:#0000FF">if</span> (!x)
+    foo(x);        <span style="color:#008000">/* 展开后: if (!x) fun1(x); fun2(x); */</span>
+                   <span style="color:#008000">/* fun2 在 x 为假时也会执行 —— 静默出错! */</span>
+
+<span style="color:#008000">/* 正例: do{}while(0) 结构 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> foo(x) do { fun1(x); fun2(x); } while (0)</span>
+
+<span style="color:#0000FF">if</span> (!x)
+    foo(x);
+<span style="color:#0000FF">else</span>
+    bar(x);        <span style="color:#008000">/* 展开后语法、逻辑全部正确 */</span></pre>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 教材里的标准写法: 多语句宏一律 do{}while(0) */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> DHT11_IO_IN()           \
+    do {                        \
+        GPIOC-&gt;MODER &amp;= ~(3 &lt;&lt; (13 * 2)); \
+        GPIOC-&gt;MODER |= 0 &lt;&lt; 13 * 2;      \
+    } while (0)</span></pre>
+
+<div class="warn">
+  <p>⚠️ 记死：<strong>能写成内联函数（static inline）的就不要写函数宏</strong>（教材原话）。函数宏没有类型检查、调试器里看不见、展开报错看不懂。只有需要"操作寄存器"这类场景才值得用函数宏。</p>
+</div>
+
+<h2>5. 常量：const 与枚举</h2>
+
+<p>三条（<span class="pg">PDF p.22~23</span>）：</p>
+
+<ul>
+<li><strong>常量建议用 const 定义来代替宏</strong>——宏常量没有数据类型，const 有。类型能让编译器帮你抓错（比如把 <code>uint32_t</code> 传给 <code>uint16_t</code> 参数时报警告）</li>
+<li><strong>几个相关的常量，用枚举</strong>：一个枚举就是一组互相关联的合法取值，编译器还能做范围检查</li>
+<li><strong>魔法数字要消灭</strong>：散落在代码里的裸数字，改名/改值都要全局搜，迟早漏一个</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 反例: 裸魔法数字满天飞 */</span>
+<span style="color:#0000FF">if</span> (board[r][c] &gt;= <span style="color:#098658">2048</span>) { ... }   <span style="color:#008000">/* 2048 是什么? 胜利阈值? */</span>
+<span style="color:#267F99">uint8_t</span> buf[<span style="color:#098658">5</span>];                     <span style="color:#008000">/* 5 是什么? 魔数+1? */</span>
+
+<span style="color:#008000">/* 正例: const 有类型, 枚举带分组, 宏管配置 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> TILE_WIN_VALUE 2048         <span style="color:#008000">/* 胜利阈值, 大写常量宏 */</span></span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">const</span> <span style="color:#267F99">uint16_t</span> TILE_EMPTY_COLOR = <span style="color:#098658">0xCDC1B4</span>;  <span style="color:#008000">/* 有类型的 const */</span>
+
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">enum</span>
+{</span>
+    TILE_2 = <span style="color:#098658">2</span>,
+    TILE_4 = <span style="color:#098658">4</span>,
+    TILE_8 = <span style="color:#098658">8</span>,
+    TILE_16 = <span style="color:#098658">16</span>
+} TileValue;                        <span style="color:#008000">/* 相关常量用枚举 */</span>
+
+<span style="color:#267F99">uint8_t</span> buf[EE_BUF_SIZE];           <span style="color:#008000">/* 宏配置, 见名知义 */</span></pre>
+
+<h2>6. 综合重构实战：给 lvgl_snake.c 做体检</h2>
+
+<p>把前六节全部串起来，走一遍完整的规范重构流程。以 <code>BSP/LVGL_APP/lvgl_snake.c</code>（382 行）为例：</p>
+
+<h3>第一步：列问题清单</h3>
+
+<table>
+<tr><th>#</th><th>位置</th><th>问题</th><th>对应规则</th></tr>
+<tr><td>1</td><td>第 8 行</td><td><code>LVGL_SNAKE_MAX_LENGTH</code> 表达式缺外层括号</td><td>6 章 §3 优先级</td></tr>
+<tr><td>2</td><td>第 28 行</td><td>注释"游戏状态变量c"结尾多了个 c</td><td>2 章注释要校对</td></tr>
+<tr><td>3</td><td>第 29 行</td><td>注释超 80 列且冗长绕口</td><td>2.1.2 行宽</td></tr>
+<tr><td>4</td><td>全文</td><td><code>//</code> 风格注释遍布</td><td>2.2.1 放弃 //</td></tr>
+<tr><td>5</td><td>第 56/64 行</td><td><code>rng_next/rng_seed</code> 与 lvgl_2048.c 完全重复</td><td>4 章 §2 重复代码提炼</td></tr>
+<tr><td>6</td><td>全部函数</td><td>没有 doxygen 函数头（@brief/@param）</td><td>2.2.3 函数注释</td></tr>
+</table>
+
+<h3>第二步到第四步：改命名 → 拆函数 → 加注释</h3>
+
+<p>重构后，<code>rng_next/rng_seed</code> 提炼进公共小模块，两个游戏文件共用一份随机数代码；函数头按 doxygen 模板补齐。改完逐条对照：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 重构后: 宏带全括号, 注释按规范改写 */</span>
+<span style="color:#008000">/* 网格尺寸（单元格数）和蛇的最大长度 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LVGL_SNAKE_GRID_SIZE   12</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> LVGL_SNAKE_MAX_LENGTH  ((LVGL_SNAKE_GRID_SIZE * LVGL_SNAKE_GRID_SIZE) / 2)</span>
+
+<span style="color:#008000">/**
+ * @brief 伪随机数生成（LCG 算法）
+ * @note  公式: X(n+1) = (a * X(n) + c) mod m, 与 2048 模块共用
+ * @retval 下一个伪随机数
+ */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint32_t</span> <span style="color:#795E26">rng_next</span><span style="color:#001080">(<span style="color:#267F99">void</span>)</span>
+{
+    rng_state = rng_state * <span style="color:#098658">1103515245u</span> + <span style="color:#098658">12345u</span>;
+    <span style="color:#0000FF">return</span> rng_state;
+}</pre>
+
+<div class="tip">
+  <p>💡 重构铁律：<strong>每次只改一类问题，改完立刻编译 + 跑一遍游戏</strong>。先把 1~4（纯格式）一轮改完编译一次，再做 5（拆函数）和 6（注释），最后全量回归。别想着一次改到位——改出 bug 时你根本不知道是哪步改坏的。</p>
+</div>
+
+<h2>动手练习（约 35 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 7.1（重构练习）：按清单重构 lvgl_snake.c</h3>
+  <p class="step">1️⃣ 打开 <code>BSP/LVGL_APP/lvgl_snake.c</code>，对照第 6 节的 6 条问题清单逐条修改。</p>
+  <p class="step">2️⃣ 宏括号、注释笔误、<code>//</code> 改 <code>/* */</code>、行宽、doxygen 函数头——分两轮改，每轮编译一次。</p>
+  <p class="step">3️⃣ 第 5 条"重复代码提炼"按你自己的判断做：可以抽一个 <code>BSP/LCG/rng.c</code> 公共模块，也可以先记录 TODO 并说明理由——<strong>但必须给出明确决策</strong>。</p>
+  <p class="step">验收标准：编译零警告零错误；贪吃蛇玩法、EEPROM 存分、方向控制与重构前完全一致；清单 6 条全部闭环。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 7.2：消灭魔法数字（扩展）</h3>
+  <p class="step">1️⃣ 看 <code>lvgl_2048.c</code> 的 <code>tile_color()</code>：一堆 <code>0xCDC1B4</code> 这样的裸颜色值。给 12 个颜色建一个枚举或一组 <code>static const uint16_t</code>，用"见名知义"的标识符替代。</p>
+  <p class="step">2️⃣ 顺带把 <code>lvgl_2048_init()</code> 里的 <code>cell_size = 50</code>、<code>gap = 6</code> 抽成宏或 const。</p>
+  <p class="step">验收标准：全文件搜索不到裸的 0x 颜色字面量；编译零警告；游戏界面颜色与重构前逐像素一致。</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 以下哪段宏定义符合规范？</p>
+  <p class="opt">A. #define MAX_NUM N + 1</p>
+  <p class="opt">B. #define MAX_NUM (N + 1)</p>
+  <p class="opt">C. #define MAX_NUM (N) + (1)</p>
+  <details><summary>查看答案</summary><div class="answer">B。表达式常量必须整段套括号，防止优先级问题（PDF p.22~23）。C 只保护了各自，MAX_NUM 整体仍无保护。</div></details>
+
+  <p class="q">Q2. int a = 5; b = SQUARE(a++); 执行后 a 等于？</p>
+  <p class="opt">A. a = 5</p>
+  <p class="opt">B. a = 6</p>
+  <p class="opt">C. a = 7</p>
+  <details><summary>查看答案</summary><div class="answer">C。宏展开为 ((a++)*(a++))，自增执行两次（PDF p.23）。</div></details>
+
+  <p class="q">Q3. 多语句函数宏为什么要用 do{}while(0) 包裹？</p>
+  <p class="opt">A. 让宏拥有独立的变量作用域</p>
+  <p class="opt">B. 保证展开后逻辑和语法始终正确</p>
+  <p class="opt">C. 让宏可以被递归调用</p>
+  <details><summary>查看答案</summary><div class="answer">B。裸多语句宏在 if/else 下展开会改变控制流甚至编译报错，do{}while(0) 把它包成一条语句（PDF p.23~24）。</div></details>
+
+  <p class="q">Q4. 常量为什么建议用 const 而不用宏？</p>
+  <p class="opt">A. 宏定义没有数据类型</p>
+  <p class="opt">B. 宏会占用更多内存</p>
+  <p class="opt">C. 宏无法跨文件使用</p>
+  <details><summary>查看答案</summary><div class="answer">A。宏常量没有类型，const 有类型，编译器能帮忙做类型检查（PDF p.23）。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>📖 正点原子《嵌入式单片机 C 代码规范与风格 V1.1》第 5、6 章（PDF p.20~24）——本课全部依据</li>
+<li>🔍 <a href="https://blog.csdn.net/xiaoyilong2007101095/article/details/77067686">do{}while(0) 原理分析</a>——教材附录引用的经典文章，讲清了"为什么要包一层"</li>
+<li>🧹 反思清单：把 0005/0006/0007 三课的检查项合成一份"工程体检表"，每次写完代码过一遍</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 8 课——像素与调色板。三课规范学完，回到你正在玩的 LVGL 世界：看看屏幕上的颜色是怎么组织的，你的 2048 颜色表会迎来一次"懂行"的升级。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0006-coding-style-naming.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0008-pixels-and-palette.html">下一课：像素与调色板 →</a>
+</nav>
+
+</div>
+</body>
+</html>

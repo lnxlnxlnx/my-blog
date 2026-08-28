@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程 0009 · 时间与日期 datetime/time</title>
+<link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+<main>
+
+<h1>时间与日期 datetime / time</h1>
+<p class="meta">Pythonic 代码 · 课程 0009 · 预计 20 分钟</p>
+
+<p>C 里取时间要 time()、要自己转结构体、格式化要 strftime 还很绕。Python 有两个模块干活:<code>time</code> 管「计时、停顿、当前时间戳」;<code>datetime</code> 管「日历上的日期和时间(时区、加减、格式化)」。本课讲透日常 80% 会用到的部分。</p>
+
+<h2>知识点 1:计时与停顿——用 time,别用 time() 猜</h2>
+<p>C 思维(用 time_t 整数秒来测耗时,精度太粗):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+<span style="color: #001080">t0</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">time</span><span style="color: #000">()</span>
+<span style="color: #008000"># ... 干活 ...</span>
+<span style="color: #001080">dt</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">time</span><span style="color: #000">()</span> <span style="color: #000">-</span> <span style="color: #001080">t0</span>      <span style="color: #008000"># 秒,但 time.time() 是墙钟,可能跳变</span>
+</pre>
+<p>Pythonic——测代码耗时用 <code>time.perf_counter()</code>(高精度单调时钟,不受系统改时影响);想让程序睡一会用 <code>time.sleep</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+<span style="color: #001080">t0</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()</span>
+<span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">sleep</span><span style="color: #000">(</span><span style="color: #098658">0.5</span><span style="color: #000">)</span>            <span style="color: #008000"># 停 0.5 秒</span>
+<span style="color: #001080">dt</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">perf_counter</span><span style="color: #000">()</span> <span style="color: #000">-</span> <span style="color: #001080">t0</span>   <span style="color: #008000"># ≈ 0.5 秒</span>
+</pre>
+<p>要点:<code>perf_counter</code> 只用来测相对耗时;要「当前日历时间」才用 <code>time.time()</code>。想手动 sleep 请用 decorator 封装,别散落各处。</p>
+
+<h2>知识点 2:当前日期时间——datetime.now()</h2>
+<p><code>datetime</code> 是核心:拿到「此刻」用 <code>datetime.now()</code>,得到的是一个 datetime 对象,自带 year/month/day/hour/minute/second:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">datetime</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">datetime</span>
+<span style="color: #001080">now</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">.</span><span style="color: #001080">now</span><span style="color: #000">()</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">year</span><span style="color: #000">,</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">month</span><span style="color: #000">,</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">day</span><span style="color: #000">)</span>      <span style="color: #008000"># 2026 8 24</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">hour</span><span style="color: #000">,</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">minute</span><span style="color: #000">,</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">second</span><span style="color: #000">)</span>  <span style="color: #008000"># 当前时分秒</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">date</span><span style="color: #000">())</span>    <span style="color: #008000"># 只要日期部分 → datetime.date(2026,8,24)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">time</span><span style="color: #000">())</span>    <span style="color: #008000"># 只要时间部分</span>
+</pre>
+<p>注意 <code>datetime</code> 是从 <code>datetime</code> 模块里 import 的一个<strong>类</strong>——名字撞了,这是历史包袱,记住 <code>from datetime import datetime</code> 就好。</p>
+
+<h2>知识点 3:日期加减与间隔——timedelta</h2>
+<p>要「明天」「三天后」「两个时刻差多久」,用 <code>timedelta</code>:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">datetime</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">datetime</span><span style="color: #000">,</span> <span style="color: #001080">timedelta</span>
+<span style="color: #001080">now</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">.</span><span style="color: #001080">now</span><span style="color: #000">()</span>
+<span style="color: #001080">tomorrow</span> <span style="color: #000">=</span> <span style="color: #001080">now</span> <span style="color: #000">+</span> <span style="color: #001080">timedelta</span><span style="color: #000">(</span><span style="color: #001080">days</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>            <span style="color: #008000"># +1 天</span>
+<span style="color: #001080">three_hours_later</span> <span style="color: #000">=</span> <span style="color: #001080">now</span> <span style="color: #000">+</span> <span style="color: #001080">timedelta</span><span style="color: #000">(</span><span style="color: #001080">hours</span><span style="color: #000">=</span><span style="color: #098658">3</span><span style="color: #000">)</span>
+<span style="color: #001080">last_week</span> <span style="color: #000">=</span> <span style="color: #001080">now</span> <span style="color: #000">-</span> <span style="color: #001080">timedelta</span><span style="color: #000">(</span><span style="color: #001080">weeks</span><span style="color: #000">=</span><span style="color: #098658">1</span><span style="color: #000">)</span>
+
+<span style="color: #008000"># 两个时刻之间的间隔</span>
+<span style="color: #001080">d1</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">(</span><span style="color: #098658">2026</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">,</span> <span style="color: #098658">1</span><span style="color: #000">,</span> <span style="color: #098658">12</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">)</span>
+<span style="color: #001080">d2</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">(</span><span style="color: #098658">2026</span><span style="color: #000">,</span> <span style="color: #098658">8</span><span style="color: #000">,</span> <span style="color: #098658">24</span><span style="color: #000">,</span> <span style="color: #098658">9</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">,</span> <span style="color: #098658">0</span><span style="color: #000">)</span>
+<span style="color: #001080">diff</span> <span style="color: #000">=</span> <span style="color: #001080">d2</span> <span style="color: #000">-</span> <span style="color: #001080">d1</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">diff</span><span style="color: #000">.</span><span style="color: #001080">days</span><span style="color: #000">)</span>        <span style="color: #008000"># 22</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">diff</span><span style="color: #000">.</span><span style="color: #001080">total_seconds</span><span style="color: #000">())</span>  <span style="color: #008000"># 秒(含小数)</span>
+</pre>
+<p>timedelta 的字段:days / hours / minutes / seconds / weeks 等,可加减。</p>
+
+<h2>知识点 4:格式化与解析——strftime / strptime</h2>
+<p>把 datetime 变成字符串给用户看:<code>strftime(格式)</code>;把字符串读成 datetime:<code>strptime</code>。格式符和 C 的 strftime 同源:</p>
+<pre lang="python" class="highlight"><span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">datetime</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">datetime</span>
+<span style="color: #001080">now</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">.</span><span style="color: #001080">now</span><span style="color: #000">()</span>
+<span style="color: #001080">s</span> <span style="color: #000">=</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">strftime</span><span style="color: #000">(</span><span style="color: #A31515">&quot;%Y-%m-%d %H:%M:%S&quot;</span><span style="color: #000">)</span>    <span style="color: #008000"># &#39;2026-08-24 09:15:30&#39;</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">s</span><span style="color: #000">)</span>
+<span style="color: #001080">s2</span> <span style="color: #000">=</span> <span style="color: #001080">now</span><span style="color: #000">.</span><span style="color: #001080">strftime</span><span style="color: #000">(</span><span style="color: #A31515">&quot;%A, %B %d&quot;</span><span style="color: #000">)</span>           <span style="color: #008000"># &#39;Monday, August 24&#39;</span>
+
+<span style="color: #008000"># 解析回来(格式必须和字符串完全对应)</span>
+<span style="color: #001080">parsed</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">.</span><span style="color: #001080">strptime</span><span style="color: #000">(</span><span style="color: #A31515">&quot;2026-08-24 09:15:30&quot;</span><span style="color: #000">,</span> <span style="color: #A31515">&quot;%Y-%m-%d %H:%M:%S&quot;</span><span style="color: #000">)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">parsed</span><span style="color: #000">)</span>
+</pre>
+<p>常用格式符:<code>%Y</code>年 <code>%m</code>月 <code>%d</code>日 <code>%H</code>时 <code>%M</code>分 <code>%S</code>秒 <code>%A</code>星期名 %B月名。<code>strftime</code> 是把对象→字符串,<code>strptime</code> 是字符串→对象,别记反(p 是 parse 解析,f 是 format 格式化)。</p>
+
+<h2>知识点 5:time 模块的当前时间戳与 UTC</h2>
+<p>需要 Unix 时间戳(秒数)用 <code>time.time()</code>;UTC 时间用 <code>datetime.utcnow()</code>(3.11 起推荐 <code>datetime.now(timezone.utc)</code>):</p>
+<pre lang="python" class="highlight"><span style="color: #00F">import</span><span style="color: #000"> </span><span style="color: #001080">time</span>
+<span style="color: #001080">ts</span> <span style="color: #000">=</span> <span style="color: #001080">time</span><span style="color: #000">.</span><span style="color: #001080">time</span><span style="color: #000">()</span>                 <span style="color: #008000"># 1774... (Unix 秒)</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">ts</span><span style="color: #000">)</span>
+
+<span style="color: #00F">from</span><span style="color: #000"> </span><span style="color: #001080">datetime</span><span style="color: #000"> </span><span style="color: #00F">import</span> <span style="color: #001080">datetime</span><span style="color: #000">,</span> <span style="color: #001080">timezone</span>
+<span style="color: #001080">utc_now</span> <span style="color: #000">=</span> <span style="color: #001080">datetime</span><span style="color: #000">.</span><span style="color: #001080">now</span><span style="color: #000">(</span><span style="color: #001080">timezone</span><span style="color: #000">.</span><span style="color: #001080">utc</span><span style="color: #000">)</span>   <span style="color: #008000"># 带时区的 UTC 时间</span>
+<span style="color: #0070C1">print</span><span style="color: #000">(</span><span style="color: #001080">utc_now</span><span style="color: #000">)</span>
+</pre>
+<p>跨时区、存数据库要 UTC;给用户显示再转本地。时区处理进阶用 <code>zoneinfo</code>(3.9+)。</p>
+
+<h2>测一测(先自己答,再点答案)</h2>
+
+<div class="quiz" id="q1">
+  <h3>测验 1</h3>
+  <p class="q">测一段代码耗时的最佳时钟?</p>
+  <button class="opt" data-ok="false">time.time()</button>
+  <button class="opt" data-ok="true">time.perf_counter()</button>
+  <button class="opt" data-ok="false">datetime.now()</button>
+  <button class="opt" data-ok="false">time.sleep()</button>
+  <p class="reveal">perf_counter 是高精度单调时钟,只用来测相对耗时;time.time() 是墙钟会跳变。</p>
+</div>
+
+<div class="quiz" id="q2">
+  <h3>测验 2</h3>
+  <p class="q">「三天后」怎么写?</p>
+  <button class="opt" data-ok="false">now + days(3)</button>
+  <button class="opt" data-ok="true">now + timedelta(days=3)</button>
+  <button class="opt" data-ok="false">now.set(days=+3)</button>
+  <button class="opt" data-ok="false">now.add(days=3)</button>
+  <p class="reveal">datetime 加减用 timedelta:now + timedelta(days=3)。</p>
+</div>
+
+<div class="quiz" id="q3">
+  <h3>测验 3</h3>
+  <p class="q">把 datetime 变成字符串用?</p>
+  <button class="opt" data-ok="false">strptime()</button>
+  <button class="opt" data-ok="true">strftime()</button>
+  <button class="opt" data-ok="false">format()</button>
+  <button class="opt" data-ok="false">parse()</button>
+  <p class="reveal">strftime = format(对象→字符串);strptime = parse(字符串→对象)。</p>
+</div>
+
+<div class="quiz" id="q4">
+  <h3>测验 4</h3>
+  <p class="q">想「睡半秒」用哪个?</p>
+  <button class="opt" data-ok="false">time.delay(0.5)</button>
+  <button class="opt" data-ok="true">time.sleep(0.5)</button>
+  <button class="opt" data-ok="false">datetime.sleep</button>
+  <button class="opt" data-ok="false">time.wait(0.5)</button>
+  <p class="reveal">time.sleep(秒) 让当前线程停顿;测耗时用 perf_counter。</p>
+</div>
+
+<h2>练习(在配套 ipynb 里做)</h2>
+<p>打开 <code>practice/pythonic/0009_时间与日期.ipynb</code>:</p>
+<ul>
+  <li><strong>练习 A</strong>:打印当前日期时间;计算并格式化「明天此时」</li>
+  <li><strong>练习 B</strong>:给一个函数计时(perf_counter);把 "2026-08-24" 解析成 datetime 再算和今天差几天</li>
+  <li><strong>练习 C</strong>:训练 repo 里一段手动测耗时 / 日期处理的代码</li>
+</ul>
+
+<h2>推荐阅读(今天就做)</h2>
+<blockquote>
+  <p><strong>Python 官方文档「<a href="https://docs.python.org/zh-cn/3/library/datetime.html">datetime 模块</a>」</strong>里的常用例子,和「<a href="https://docs.python.org/zh-cn/3/library/time.html">time 模块</a>」:各刷一节,记住你实际用到的函数。</p>
+</blockquote>
+
+<h2>下一步</h2>
+<p>做完回来告诉我:你以前怎么测耗时的?下一课讲<strong>数学与随机 math / random</strong>——常用数值函数和模拟/抽样。</p>
+<p><strong>有任何不懂的,直接问我——我是你的老师。</strong></p>
+
+<nav class="lesson-nav">
+  <a href="0008-上下文管理器与装饰器.html">← 上一篇:上下文管理器(with)与装饰器</a>
+  <a href="index.html">课程地图</a>
+  <a href="0010-数学与随机.html">下一篇:数学与随机 math / random →</a>
+</nav>
+
+</main>
+<script>
+(function () {
+  document.querySelectorAll(".quiz").forEach(function (quiz) {
+    var reveal = quiz.querySelector(".reveal");
+    var answered = false;
+    quiz.querySelectorAll("button.opt").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (answered) return;
+        answered = true;
+        quiz.querySelectorAll("button.opt").forEach(function (b) { b.disabled = true; });
+        if (btn.dataset.ok === "true") { btn.classList.add("ok"); }
+        else {
+          btn.classList.add("bad");
+          var good = quiz.querySelector('button.opt[data-ok="true"]');
+          if (good) good.classList.add("ok");
+        }
+        reveal.classList.add("show");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

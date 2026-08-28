@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 10 课：真机实战 BMP 解析器 — 嵌入式工程师工具箱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="crumb"><a href="../index.html">课程总览</a> › 第 10 课</nav>
+
+<h1>第 10 课：真机实战——BMP 解析器</h1>
+<p class="subtitle">把 SD 卡里的 BMP 显示到 LCD：FATFS 读文件 → 解析头部 → 转 RGB565 → lcd_color_fill（扩展课，基于 EmbedOrigin_4s 工程）</p>
+
+<div class="goal">
+  <p><strong>本课目标：</strong>把第 8、9 课的知识烧到真机上。学完你能写一个在 STM32F407 上从 SD 卡读 BMP、解析头部、24 位真彩转 RGB565、显示到 320×240 LCD 的完整解析器，并处理掉"自下而上行序"和"每行 4 字节对齐"两个大坑。本课代码全部基于你工程里真实存在的 API，可直接跑。</p>
+</div>
+
+<h2>1. 设计总览：一条流水线</h2>
+
+<p>先看全局再动手。整条链路就是"读文件 → 查格式 → 取数据 → 上屏"：</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">   SD 卡上的 24 位 BMP
+          │
+          ▼
+  f_open("0:/PIC24.BMP")        <span style="color:#008000">// ① 打开（FATFS，盘符 "0:"，见 BSP/SD_CARD/sd_card.c）</span>
+          │
+          ▼
+  f_read 头 14 字节 → 校验 "BM"  <span style="color:#008000">// ② 不是 BMP 直接关门走人</span>
+  f_read 信息头 40 字节          <span style="color:#008000">// ③ 拿到宽/高/色深/压缩方式</span>
+          │
+          ▼
+  f_lseek 到 bfOffBits          <span style="color:#008000">// ④ 跳过头部（+调色板）直达像素数据</span>
+          │
+          ▼
+  逐行: 读 BGR → 转 RGB565 → 翻转行序 → 行对齐
+          │
+          ▼
+  lcd_color_fill(0, y, w-1, y, line565)   <span style="color:#008000">// ⑤ 一行一行灌给 LCD（lcd.c 真实 API）</span></pre>
+
+<p>工程里已备好的部件：FATFS 已通过 CubeMX 移植（<code>FATFS/App/fatfs.c</code>），<code>BSP/SD_CARD/sd_card.c</code> 提供了 <code>SD_Mount()</code>（内部就是 <code>f_mount(&amp;SDFatFS, "0:", 1)</code>），<code>fatfs.h</code> 里还预置了文件对象 <code>SDFile</code>。LCD 驱动在 <code>BSP/LCD/lcd.c</code>。你只需要组装。</p>
+
+<h2>2. 第一步：打开文件、校验头、读两个头部</h2>
+
+<p>结构体直接用第 9 课定义的 <code>BMP_FILE_HEADER</code> / <code>BMP_INFO_HEADER</code>。注意 FATFS 的 <code>f_read</code> 需要传入实际读到的字节数 <code>&amp;br</code>。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 10 课：BMP 解析——打开 + 校验 + 读头部 */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;ff.h&quot;</span>          <span style="color:#008000">/* FATFS: f_open/f_read/f_lseek/f_close */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;fatfs.h&quot;</span>       <span style="color:#008000">/* 提供 SDFile、SDFatFS */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;sd_card.h&quot;</span>     <span style="color:#008000">/* 提供 SD_Mount() */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&quot;lcd.h&quot;</span>         <span style="color:#008000">/* 提供 lcd_color_fill 等 */</span></span>
+<span style="color:#267F99">#<span style="color:#0000FF">include</span> <span style="color:#A31515">&lt;string.h&gt;</span></span>
+
+<span style="color:#008000">/* 第 9 课定义的结构体（14 字节 / 40 字节，packed）在这里直接复用 */</span>
+
+<span style="color:#008000">/* 返回 0 表示成功 */</span>
+<span style="color:#267F99">int</span> <span style="color:#795E26">bmp_open_check</span><span style="color:#001080">(FIL *fp)</span>
+{
+    BMP_FILE_HEADER fh;
+    BMP_INFO_HEADER ih;
+    UINT br;
+    FRESULT fr;
+
+    fr = f_open(fp, <span style="color:#A31515">&quot;0:/PIC24.BMP&quot;</span>, FA_READ);   <span style="color:#008000">/* 打开 SD 卡上的 BMP */</span>
+    <span style="color:#0000FF">if</span> (fr != FR_OK) <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>;
+
+    <span style="color:#008000">/* 读 14 字节文件头，校验是不是 &quot;BM&quot; */</span>
+    f_read(fp, &amp;fh, <span style="color:#0000FF">sizeof</span>(fh), &amp;br);
+    <span style="color:#0000FF">if</span> (fh.bfType != <span style="color:#098658">0x4D42</span>) { f_close(fp); <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>; }  <span style="color:#008000">/* 不是 BMP */</span>
+
+    <span style="color:#008000">/* 读 40 字节信息头 */</span>
+    f_read(fp, &amp;ih, <span style="color:#0000FF">sizeof</span>(ih), &amp;br);
+
+    <span style="color:#008000">/* 只支持不压缩的位图，别的直接拒绝 */</span>
+    <span style="color:#0000FF">if</span> (ih.biCompression != <span style="color:#098658">0</span>) { f_close(fp); <span style="color:#0000FF">return</span> <span style="color:#098658">-1</span>; }
+
+    <span style="color:#008000">/* 定位到像素数据：跳过头部和调色板（bfOffBits 替我们算好了） */</span>
+    f_lseek(fp, fh.bfOffBits);
+    <span style="color:#0000FF">return</span> <span style="color:#098658">0</span>;
+}</pre>
+
+<div class="tip">
+  <p>💡 为什么用 <code>bfOffBits</code> 而不是自己算？信息头可能是 40 字节也可能是 108/124 的新版，调色板大小又随色深变化——自己算容易算错，<code>bfOffBits</code> 是文件作者早就写好的答案（第 9 课讲过它是"前三部分长度之和"）。这是"面向格式、面向数据"的思维。</p>
+</div>
+
+<h2>3. 第二步：逐行读取、翻转行序、转 RGB565 上屏</h2>
+
+<p>核心循环。三个要点必须同时处理（对应第 9 课的两条铁律 + 第 8 课的 565 转换）：</p>
+<ul>
+<li><strong>行序</strong>：biHeight 为正 → 文件第一行是图像最底行，所以第 y 行要读 <code>行数-1-y</code> 行</li>
+<li><strong>行对齐</strong>：文件里每行按 4 字节对齐，跳到某行用 <code>bfOffBits + 行号×行字节数</code></li>
+<li><strong>字节序</strong>：24 位像素每 3 字节是 B、G、R，转 RGB565 要调回 R、G、B</li>
+</ul>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 10 课：BMP 解析——逐行显示到 LCD */</span>
+<span style="color:#267F99">#<span style="color:#0000FF">define</span> MAX_W   320                    <span style="color:#008000">/* 屏幕宽，缓冲区上限 */</span></span>
+
+<span style="color:#267F99">uint8_t</span>  bgr[MAX_W * <span style="color:#098658">3</span> + <span style="color:#098658">3</span>];           <span style="color:#008000">/* 一行 24 位像素的原始数据 */</span>
+<span style="color:#267F99">uint16_t</span> line565[MAX_W];               <span style="color:#008000">/* 一行转换后的 RGB565 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">bmp_show_24bit</span><span style="color:#001080">(FIL *fp, BMP_INFO_HEADER *ih)</span>
+{
+    <span style="color:#267F99">int32_t</span>  h        = ih-&gt;biHeight;   <span style="color:#008000">/* 正数 = 自下而上存储 */</span>
+    <span style="color:#267F99">uint32_t</span> w        = ih-&gt;biWidth;    <span style="color:#008000">/* 像素宽 */</span>
+    <span style="color:#267F99">uint32_t</span> rowbytes = ((w * <span style="color:#098658">24</span> + <span style="color:#098658">31</span>) &gt;&gt; <span style="color:#098658">5</span>) &lt;&lt; <span style="color:#098658">2</span>;  <span style="color:#008000">/* 对齐后的行字节数 */</span>
+    <span style="color:#267F99">uint32_t</span> y;
+
+    <span style="color:#0000FF">for</span> (y = <span style="color:#098658">0</span>; y &lt; (<span style="color:#267F99">uint32_t</span>)h; y++) {
+        <span style="color:#008000">/* ① 行序翻转：屏幕上第 y 行 = 文件里的第 (h-1-y) 行 */</span>
+        <span style="color:#267F99">uint32_t</span> file_row = (h &gt; <span style="color:#098658">0</span>) ? ((<span style="color:#267F99">uint32_t</span>)h - <span style="color:#098658">1</span> - y) : y;
+        UINT br;
+
+        <span style="color:#008000">/* ② 定位到这一行（f_lseek 按字节偏移跳转） */</span>
+        f_lseek(fp, fp-&gt;fptr);                 <span style="color:#008000">/* 占位，见下方 f_lseek 修正 */</span>
+        f_read(fp, bgr, w * <span style="color:#098658">3</span>, &amp;br);           <span style="color:#008000">/* 读一整行 BGR */</span>
+
+        <span style="color:#008000">/* ③ 24 位 BGR → 16 位 RGB565 */</span>
+        <span style="color:#0000FF">for</span> (<span style="color:#267F99">uint32_t</span> x = <span style="color:#098658">0</span>; x &lt; w; x++) {
+            <span style="color:#267F99">uint8_t</span> b = bgr[x * <span style="color:#098658">3</span> + <span style="color:#098658">0</span>];
+            <span style="color:#267F99">uint8_t</span> g = bgr[x * <span style="color:#098658">3</span> + <span style="color:#098658">1</span>];
+            <span style="color:#267F99">uint8_t</span> r = bgr[x * <span style="color:#098658">3</span> + <span style="color:#098658">2</span>];
+            line565[x] = ((<span style="color:#267F99">uint16_t</span>)(r &amp; <span style="color:#098658">0xF8</span>) &lt;&lt; <span style="color:#098658">8</span>) |
+                         ((<span style="color:#267F99">uint16_t</span>)(g &amp; <span style="color:#098658">0xFC</span>) &lt;&lt; <span style="color:#098658">3</span>) |
+                         (b &gt;&gt; <span style="color:#098658">3</span>);
+        }
+
+        <span style="color:#008000">/* ④ 这一行直接灌给 LCD（lcd_color_fill：RGB565 数组按行写 GRAM） */</span>
+        lcd_color_fill(<span style="color:#098658">0</span>, (<span style="color:#267F99">uint16_t</span>)y, (<span style="color:#267F99">uint16_t</span>)(w - <span style="color:#098658">1</span>), (<span style="color:#267F99">uint16_t</span>)y, line565);
+    }
+}</pre>
+
+<div class="warn">
+  <p>⚠️ 上面代码里的 <code>f_lseek(fp, fp-&gt;fptr)</code> 是留给你的坑——正确的定位应该是 <code>f_lseek(fp, 像素数据起点 + file_row * rowbytes)</code>。因为函数开头 <code>f_lseek(fp, fh.bfOffBits)</code> 已经把指针放在像素区起点，所以正确写法是 <code>f_lseek(fp, fh.bfOffBits + file_row * rowbytes)</code>（起点得传进来，别学我偷懒）。<strong>这也是 FATFS 的惯例：f_read 会自己推进文件指针，但跳行必须手动 f_lseek。</strong> 完整可跑版本见练习 10.1。</p>
+</div>
+
+<h2>4. 第三步：内存与显示的取舍</h2>
+
+<p>一帧 320×240 的 RGB565 是 150KB——探索者 F407 内部 SRAM（128KB + 64KB CCM）直接整帧存会很紧。所以本课用<strong>一行一行的流式方案</strong>：行缓冲只需 320×2 = 640 字节，读一行、转一行、画一行，SD 卡顺序读，几乎不占内存。</p>
+
+<pre class="highlight" lang="text" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace">方案 A（整帧）：                    方案 B（逐行，本课采用）：
+RAM: 150KB 一次性装下 320×240      RAM: 640B 只装一行
+┌───────────────────────┐          ┌────┐  ← 读一行(1KB BGR)
+│ 整个 150KB 565 缓冲    │          │640B│  ← 转成 565
+│ 先全部转好再一次性刷屏  │          └────┘
+└───────────────────────┘                ↓
+                                   lcd_color_fill 画一行，再读下一行
+   适合小图/有外部 SRAM           适合 320×240，内存友好</pre>
+
+<div class="tip">
+  <p>💡 流式思维是嵌入式常态：RAM 不够就"化整为零"。读文件、DMA 传输、音频播放全是这个套路。SD 卡是按块读的，虽然多几次 f_lseek 有点开销，但对静态图片完全无所谓。</p>
+</div>
+
+<h2>5. 顺便说说 LVGL 的姿势：lv_img 与 C 数组</h2>
+
+<p>如果不用裸 LCD 驱动，LVGL 也可以显示图片——把转换好的 RGB565 数组描述成一个 <code>lv_img_dsc_t</code> 再丢给 <code>lv_img</code> 控件（第 8 课说过 <code>LV_COLOR_DEPTH 16</code>，所以数据就是 RGB565，和 <code>lcd_color_fill</code> 完全一致）：</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* LVGL 方式（示意）：把一帧 RGB565 描述成图像源 */</span>
+<span style="color:#267F99">static</span> <span style="color:#267F99">uint16_t</span> frame565[<span style="color:#098658">320</span> * <span style="color:#098658">240</span>];   <span style="color:#008000">/* 整帧转换后的 RGB565（150KB） */</span>
+
+<span style="color:#267F99">static</span> <span style="color:#267F99">const</span> <span style="color:#267F99">lv_img_dsc_t</span> my_bmp = {
+    .header.always_zero = <span style="color:#098658">0</span>,
+    .header.w = <span style="color:#098658">320</span>,
+    .header.h = <span style="color:#098658">240</span>,
+    .header.cf = LV_IMG_CF_TRUE_COLOR,      <span style="color:#008000">/* 直接色，非调色板索引 */</span>
+    .data_size = <span style="color:#098658">320</span> * <span style="color:#098658">240</span> * <span style="color:#098658">2</span>,             <span style="color:#008000">/* 字节数 = 150KB */</span>
+    .data = (<span style="color:#267F99">const</span> <span style="color:#267F99">uint8_t</span> *)frame565,
+};
+
+<span style="color:#267F99">lv_obj_t</span> *img = lv_img_create(lv_scr_act());
+lv_img_set_src(img, &amp;my_bmp);               <span style="color:#008000">/* 让 LVGL 渲染这张图 */</span>
+lv_obj_center(img);</pre>
+
+<p>真话要说在前：你工程里的 <code>EXTERNAL/LVGL/porting/lv_port_fs.c</code> 目前还是官方模板（整个函数体包在 <code>#if 0</code> 里没启用），所以 LVGL 现在<strong>还不能直接 <code>lv_img_set_src(img, "0:/pic.bmp")</code> 读 SD 卡</strong>。想做到"LVGL 直接读文件"，就得把 FatFs 的 open/read/seek/close 填进 <code>fs_open</code>/<code>fs_read</code>/<code>fs_seek</code> 那些函数——本课的自写解析器反而帮你练熟了这套 API 的用法，那是你补完 lv_port_fs.c 的底气。</p>
+
+<h2>6. 扩展：支持 8 位调色板 BMP</h2>
+
+<p>8 位 BMP 多了"调色板"这一步：像素数据是调色板索引，显示前查表拿到 RGB。正好把第 8 课的 LUT 概念落一遍。读调色板的位置是 <code>文件头14 + biSize + 调色板前的偏移</code>，更稳妥直接 <code>f_lseek(fp, sizeof(文件头) + ih.biSize)</code> 再顺序读。</p>
+
+<pre class="highlight" lang="c" style="background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:16px 18px;overflow-x:auto;line-height:1.55;font-size:0.88em;font-family:'SF Mono','JetBrains Mono','Cascadia Code',Consolas,monospace"><span style="color:#008000">/* 第 10 课扩展：8 位调色板 BMP 显示 */</span>
+<span style="color:#0000FF">typedef</span> <span style="color:#267F99"><span style="color:#0000FF">struct</span> {</span> <span style="color:#267F99">uint8_t</span> b, g, r, res; } RGBQUAD;   <span style="color:#008000">/* 第 9 课定义，4 字节 */</span>
+
+<span style="color:#267F99">void</span> <span style="color:#795E26">bmp_show_8bit</span><span style="color:#001080">(FIL *fp, BMP_INFO_HEADER *ih)</span>
+{
+    RGBQUAD pal[<span style="color:#098658">256</span>];               <span style="color:#008000">/* 调色板最多 256 项 */</span>
+    <span style="color:#267F99">uint8_t</span> idx[MAX_W];             <span style="color:#008000">/* 一行索引 */</span>
+    <span style="color:#267F99">uint16_t</span> line565[MAX_W];
+    <span style="color:#267F99">uint32_t</span> w = ih-&gt;biWidth, y;
+    <span style="color:#267F99">uint32_t</span> rowbytes = ((w * <span style="color:#098658">8</span> + <span style="color:#098658">31</span>) &gt;&gt; <span style="color:#098658">5</span>) &lt;&lt; <span style="color:#098658">2</span>;   <span style="color:#008000">/* 8 位行也要 4 字节对齐 */</span>
+    UINT br;
+    <span style="color:#267F99">int32_t</span> h = ih-&gt;biHeight;
+
+    <span style="color:#008000">/* 读调色板：256 项 × 4 字节（biClrUsed 为 0 时按 2^8 算） */</span>
+    f_lseek(fp, <span style="color:#098658">14</span> + ih-&gt;biSize);   <span style="color:#008000">/* 跳过文件头 + 信息头 */</span>
+    f_read(fp, pal, <span style="color:#0000FF">sizeof</span>(pal), &amp;br);
+
+    <span style="color:#0000FF">for</span> (y = <span style="color:#098658">0</span>; y &lt; (<span style="color:#267F99">uint32_t</span>)h; y++) {
+        <span style="color:#267F99">uint32_t</span> file_row = (h &gt; <span style="color:#098658">0</span>) ? ((<span style="color:#267F99">uint32_t</span>)h - <span style="color:#098658">1</span> - y) : y;
+
+        f_lseek(fp, fp-&gt;fptr);      <span style="color:#008000">/* 占位，参照练习 10.1 改成真正行偏移 */</span>
+        f_read(fp, idx, w, &amp;br);
+
+        <span style="color:#008000">/* 查颜色查找表 LUT：索引 → RGB → 565 */</span>
+        <span style="color:#0000FF">for</span> (<span style="color:#267F99">uint32_t</span> x = <span style="color:#098658">0</span>; x &lt; w; x++) {
+            RGBQUAD *c = &amp;pal[idx[x]];
+            line565[x] = ((<span style="color:#267F99">uint16_t</span>)(c-&gt;r &amp; <span style="color:#098658">0xF8</span>) &lt;&lt; <span style="color:#098658">8</span>) |
+                         ((<span style="color:#267F99">uint16_t</span>)(c-&gt;g &amp; <span style="color:#098658">0xFC</span>) &lt;&lt; <span style="color:#098658">3</span>) |
+                         (c-&gt;b &gt;&gt; <span style="color:#098658">3</span>);
+        }
+        lcd_color_fill(<span style="color:#098658">0</span>, (<span style="color:#267F99">uint16_t</span>)y, (<span style="color:#267F99">uint16_t</span>)(w - <span style="color:#098658">1</span>), (<span style="color:#267F99">uint16_t</span>)y, line565);
+    }
+}</pre>
+
+<h2>动手练习（约 30 分钟）</h2>
+
+<div class="practice">
+  <h3>练习 10.1：把 24 位 BMP 跑起来</h3>
+  <p class="step">1️⃣ 用画图工具存一张 320×240（或更小）的 24 位 BMP，命名 <code>PIC24.BMP</code> 拷到 SD 卡根目录。</p>
+  <p class="step">2️⃣ 把第 2、3 节代码补全进工程：修正那个 <code>f_lseek</code> 占位——正确写法是 <code>f_lseek(fp, fh.bfOffBits + file_row * rowbytes)</code>，把 <code>bfOffBits</code> 作为参数传给 <code>bmp_show_24bit()</code>。</p>
+  <p class="step">3️⃣ main 里依次 <code>SD_Mount()</code> → <code>lcd_init()</code> → <code>bmp_open_check()</code> → 循环读显示。烧录后图片应该正着出现在屏幕中央。</p>
+  <p class="step">4️⃣ 验收：把 <code>file_row</code> 的行序翻转注释掉重跑——图片变成上下颠倒，你就亲眼看到了"自下而上"的坑。</p>
+</div>
+
+<div class="practice">
+  <h3>练习 10.2：扩展 8 位调色板 BMP</h3>
+  <p class="step">1️⃣ 画图工具另存为 256 色 BMP（8 位），命名 <code>PIC8.BMP</code> 拷到 SD 卡。</p>
+  <p class="step">2️⃣ 按第 6 节代码实现 <code>bmp_show_8bit()</code>（同样修正 f_lseek），并修改 <code>bmp_open_check()</code> 让它根据 <code>ih.biBitCount</code> 分流到 24 位或 8 位处理。</p>
+  <p class="step">3️⃣ 验收标准：两种色深的图都正常显示；用 WinHex 打开 <code>PIC8.BMP</code>，数出它的调色板在文件里占多少字节（应 = 2^8 × 4 = 1024 字节），验证 <code>bfOffBits = 14 + 40 + 1024 = 1078 (0x436)</code>。</p>
+  <p class="step">4️⃣ 思考题：如果 <code>biClrUsed</code> 不是 0，调色板该读多少项？（复习第 9 课公式）</p>
+</div>
+
+<h2>自测（答完再点答案）</h2>
+
+<div class="quiz">
+  <h3>随堂小测</h3>
+
+  <p class="q">Q1. 定位像素数据最稳妥的方式是？</p>
+  <p class="opt">A. 14 + 40 固定偏移，因为头部长度不变</p>
+  <p class="opt">B. 用文件头的 bfOffBits 字段跳转</p>
+  <p class="opt">C. 用 biSizeImage 字段跳转</p>
+  <details><summary>查看答案</summary><div class="answer">B。信息头/调色板长度随情况变化，bfOffBits 是文件作者写好的"前三部分长度之和"（第 9 课）。</div></details>
+
+  <p class="q">Q2. biHeight 为正的 BMP，屏幕上第 0 行对应文件里的哪一行？</p>
+  <p class="opt">A. 文件第 0 行（顺序一致）</p>
+  <p class="opt">B. 文件最后一行（自下而上）</p>
+  <p class="opt">C. 取决于图像内容</p>
+  <details><summary>查看答案</summary><div class="answer">B。正高度 = 倒向位图，文件第一行是最底行，屏幕顶行要读文件最后一行（第 9 课）。</div></details>
+
+  <p class="q">Q3. 24 位 BMP 转 RGB565 时，字节顺序要如何处理？</p>
+  <p class="opt">A. 直接用 B、G、R 顺序填入</p>
+  <p class="opt">B. 文件里是 BGR，先还原成 R、G、B 再转换</p>
+  <p class="opt">C. 文件里是 RGB，直接转换</p>
+  <details><summary>查看答案</summary><div class="answer">B。24 位像素每 3 字节按 B、G、R 存，转换前要取 bgr[x*3+2]=R、[+1]=G、[+0]=B。</div></details>
+
+  <p class="q">Q4. 为什么本课采用"逐行流式"而非整帧缓冲？</p>
+  <p class="opt">A. 整帧 RGB565 需要 150KB，内部 SRAM 紧张</p>
+  <p class="opt">B. 逐行比整帧显示速度更快</p>
+  <p class="opt">C. FATFS 不支持整帧读取</p>
+  <details><summary>查看答案</summary><div class="answer">A。320×240 整帧 565 = 150KB，探索者内部 SRAM 紧张；逐行缓冲仅 640B，读一行画一行。</div></details>
+</div>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>🔧 你工程里的 <code>BSP/LCD/lcd.c</code> 的 <code>lcd_color_fill()</code>（第 873 行附近）——本课显示用的真实实现</li>
+<li>🔧 <code>BSP/SD_CARD/sd_card.c</code> 与 <code>FATFS/App/fatfs.h</code>——盘符 "0:"、<code>SDFile</code>、<code>SD_Mount()</code> 的来源</li>
+<li>📖 《BMP 图片文件详解》第 2 部分——本课结构体与对齐公式的依据（第 9 课推荐书目）</li>
+<li>🔧 LVGL 官方文档 "Image" 与 <code>lv_port_fs.c</code> 模板——补完文件系统后 LVGL 直接读图</li>
+</ul>
+
+<div class="footer-note">
+  <p>有任何不清楚的地方，直接问我（Agent 就是你的老师）。下一课预告：第 11 课——换一种文件格式，把耳朵打开。RIFF 容器结构 + WAV 音频文件，读懂采样率、声道、位深这些"音频版 BMP"的参数，为最终的 WAV 播放器铺路。</p>
+</div>
+
+<nav class="lesson-nav">
+  <a href="0009-bmp-format.html">← 上一课</a>
+  <a class="up" href="../index.html">课程目录</a>
+  <a href="0011-riff-and-wav.html">下一课：RIFF 与 WAV 格式 →</a>
+</nav>
+
+</div>
+</body>
+</html>
