@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>汇编术语表 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>汇编术语表</h1>
+<p class="meta">收录 A 系列课程会用到的术语；未用过的没列。和 Linux 课术语表是两套，但互通。</p>
+
+<p><strong>汇编器 / 链接器 / 格式转换</strong>: 分别把 .s 编译成 .o(gcc)、把 .o 按地址放好成 .elf(ld)、把 .elf 剥成纯二进制( objcopy .bin)。烧录只认 .bin。</p>
+
+<p><strong>链接地址</strong>: 代码运行时要被放置的内存地址。裸机链接到 <code>0X87800000</code>（DDR 起始 0X80000000 之上），u-boot 把内核放到 <code>0X80800000</code>，道理相同。</p>
+
+<p><strong>全局标号（.global _start）</strong>: 声明一个符号对链接器可见（别的文件能引用、链接器能找到入口）。裸机/内核入口都叫 <code>_start</code>。</p>
+
+<p><strong>立即数</strong>: 指令里直接嵌的常量，写法 <code>#5</code>、<code>#(1&lt;&lt;3)</code>。ARM 对立即数的编码有限制，但 <code>ldr =</code> 伪指令绕开它装任意 32 位常量。</p>
+
+<p><strong>伪指令</strong>: 汇编器替你"变魔法"的写法，如 <code>ldr r0, =值</code> 会被转成一条真正的取常量指令（常用"从字面池 ldr [pc,#…]"），不是真实 ARM 指令名。别和真 ldr 混淆。</p>
+
+<p><strong>寄存器寻址 / 内存寻址</strong>: 操作对象在寄存器里(<code>add r3,r1,r2</code>) 还是内存里(<code>ldr r3,[r1]</code>)。外设寄存器操作 = 拿地址 → 读/写 [地址]。</p>
+
+<p><strong>条件执行 / 条件后缀</strong>: 指令可以带 <code>eq/ne</code> 等后缀，仅在 CPSR 对应标志满足时才执行。ARM 特色，让常见分支少跳几次。</p>
+
+<p><strong>标志位（N/Z/C/V）</strong>: CPSR 里由比较/算术指令设置的状态。Z=结果为零；C=进位/借位；N=结果负；V=溢出。<code>beq</code> 看 Z。</p>
+
+<p><strong>栈 / 栈指针 SP</strong>: 一段后进先出的内存区，SP 指向顶端，满递减（从高地址往下长）。函数局部变量/保存现场/返回地址都在这。</p>
+
+<p><strong>链接寄存器 LR</strong>: r14。<code>bl</code> 把返回地址存进 LR，子程序结束 <code>mov pc,lr</code> 或 <code>bx lr</code> 返回。深层嵌套要压栈保存 LR。</p>
+
+<p><strong>填栈/弹栈（push/pop、stmfd/ldmfd）</strong>: 把寄存器现场存进栈/恢复。函数调用前保存需要保护的寄存器（尤其 LR 和用到的 r*），返回前恢复。栈指针自动增减。</p>
+
+<p><strong>看门狗（WDOG）</strong>: 硬件"防死机狗"：必须周期性喂（写某些位），超时不喂自动复位系统。start.S 先关掉它，调试期才安定。</p>
+
+<p><strong>轮询 vs 中断</strong>: 轮询=CPU 反复读判断（吃 CPU 但简单）；中断=硬件主动通知（省 CPU 但需要异常处理）。裸机按键常用轮询，Linux 驱动用中断（见 Linux 课 L06）。</p>
+
+<p><strong>消抖</strong>: 机械按键按下瞬间的颤动噪声（几十 ms），软件上"检测后再延时确认一次"过滤掉。</p>
+</body>
+</html>

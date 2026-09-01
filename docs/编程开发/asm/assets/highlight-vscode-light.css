@@ -1,0 +1,77 @@
+/* VSCode Light+ 配色（白色主题）· qt-learning 共享代码块高亮
+   给 highlight.js 的 token 类着色，映射自 VSCode 默认 "Light+" 主题。
+   仅影响带 language-* 类且被 highlight-init.js 处理的 pre>code 块。 */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  color: #000000;
+  background: #ffffff;
+}
+pre code.hljs {
+  display: block;
+  background: #ffffff;
+  padding: 0;
+  font-size: .95em;
+}
+pre.hljs-wrap {
+  background: #ffffff;
+  border: 1px solid #e1e4e8;
+}
+
+/* 注释 / 引用 */
+.hljs-comment,
+.hljs-quote { color: #008000; font-style: italic; }
+
+/* 关键字 */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-template-tag,
+.hljs-name.hljs-keyword,
+.hljs-meta .hljs-keyword { color: #0000ff; }
+
+/* 类型 / 类名（VSCode Light+ 青色） */
+.hljs-type,
+.hljs-title.class_,
+.hljs-title.class_.inherits__,
+.hljs-selector-id,
+.hljs-selector-class { color: #267f99; }
+
+/* 字符串 / 正则 / 模板字符串 */
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo { color: #a31515; }
+
+/* 数字 */
+.hljs-number,
+.hljs-variable.constant_ { color: #098658; }
+
+/* 函数名 */
+.hljs-title,
+.hljs-title.function_,
+.hljs-function .hljs-title,
+.hljs-built_in { color: #795e26; }
+
+/* 变量 / 属性 */
+.hljs-variable,
+.hljs-property { color: #001080; }
+
+/* XML/QML 标签名与属性（VSCode 里 HTML 配色） */
+.hljs-tag,
+.hljs-name { color: #800000; }
+.hljs-attr,
+.hljs-attribute { color: #e50000; }
+
+/* 元数据 / 预处理指令 */
+.hljs-meta { color: #2b91af; }
+
+/* 删除 / 强调 / 加粗 */
+.hljs-deletion { color: #a31515; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }

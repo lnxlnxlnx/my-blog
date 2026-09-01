@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ARM 寄存器与指令速查 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>ARM 寄存器与指令速查表</h1>
+<p class="meta">配套课程 A01-A06 · 按"动手要用"精选，非指令集全集</p>
+
+<h2>寄存器</h2>
+<table>
+<tr><th>寄存器</th><th>别名</th><th>职责</th></tr>
+<tr><td>r0-r7</td><td>—</td><td>通用数据寄存器</td></tr>
+<tr><td>r8-r12</td><td>—</td><td>通用（r8-r12 在 FIQ 模式有备份）</td></tr>
+<tr><td>r13</td><td>SP</td><td>栈指针（往低地址增长，满递减栈）</td></tr>
+<tr><td>r14</td><td>LR</td><td>链接寄存器，<code>bl</code> 存返回地址</td></tr>
+<tr><td>r15</td><td>PC</td><td>程序计数器（ARM 下 = 当前指令+8）</td></tr>
+<tr><td>CPSR</td><td>—</td><td>条件标志 N/Z/C/V · 中断使能位 · 模式位</td></tr>
+</table>
+
+<h2>常用指令（七组一把抓）</h2>
+<table>
+<tr><th>分类</th><th>指令</th><th>说明</th></tr>
+<tr><td rowspan="2">搬运</td><td><code>mov Rd, #imm / Rd,Rn</code></td><td>立即数/寄存器 → 寄存器</td></tr>
+<tr><td><code>mvn Rd, #imm</code></td><td>取反后放入（<code>#0</code> 得全 1）</td></tr>
+<tr><td rowspan="3">算术</td><td><code>add/sub Rd,Rn,#imm</code></td><td>加/减（末尾加 <code>s</code> 更新标志：<code>subs</code>）</td></tr>
+<tr><td><code>mul / udiv / sdiv</code></td><td>乘 / 无符号除 / 有符号除</td></tr>
+<tr><td><code>rsb Rd,Rn,#i</code></td><td>反向减：<code>#i - Rn</code></td></tr>
+<tr><td rowspan="3">逻辑/位</td><td><code>and/orr/eor</code></td><td>与 / 或 / 异或（<code>orr r,#(3&lt;&lt;26)</code> 置位）</td></tr>
+<tr><td><code>bic R,#m</code></td><td>bit clear：把指定位清 0</td></tr>
+<tr><td><code>tst / cmp / cmn</code></td><td>测位 / 比较 / 反数比较，只改标志</td></tr>
+<tr><td rowspan="2">内存</td><td><code>ldr Rt,[Rn,...]</code></td><td>读内存（带 <code>=</code> 是伪指令：塞立即数地址）</td></tr>
+<tr><td><code>str Rt,[Rn,...]</code></td><td>写内存</td></tr>
+<tr><td rowspan="3">移位</td><td><code>mov r1, r2, lsl #2</code></td><td>逻辑左移（×2^n）</td></tr>
+<tr><td><code>mov r1, r2, lsr #2</code></td><td>逻辑右移（÷2^n）</td></tr>
+<tr><td><code>mov r1, r2, asr #2</code></td><td>算术右移（符号位填充，用于有符号）</td></tr>
+<tr><td rowspan="2">分支</td><td><code>b / bl / bx / blx</code></td><td>跳 / 调用(BL 记 LR) / 返回 / 调函数指针</td></tr>
+<tr><td><code>beq/bne/bgt/…</code></td><td>条件跳转（后缀全表见指令示例库）</td></tr>
+<tr><td rowspan="2">栈/多载</td><td><code>push {..}/pop {..}</code></td><td>一条压/弹多个寄存器（现场保存）</td></tr>
+<tr><td><code>stmfd/ldmfd sp!, {..}</code></td><td>push/pop 的原型（满递减/满递增）</td></tr>
+<tr><td rowspan="2">专用</td><td><code>mrs / msr</code></td><td>读 / 写 CPSR 等状态寄存器</td></tr>
+<tr><td><code>svc / nop / wfi</code></td><td>软中断(进内核) / 空操作 / 睡眠等中断</td></tr>
+</table>
+<p class="callout"><span class="t">逐条示例</span> 每种指令的"一行示例+注释"见 <a href="instructions.html">ARM 指令示例库</a>——当词典用。</p>
+
+<h2>易混对照</h2>
+<table>
+<tr><th>写法</th><th>含义</th><th>示例意图</th></tr>
+<tr><td><code>ldr r0, =0X0209C000</code></td><td>伪指令：地址值 → r0</td><td>想访问外设寄存器基地址</td></tr>
+<tr><td><code>ldr r0, [r1]</code></td><td>真内存读：r0 = 内存[r1] 处</td><td>想读某个寄存器当前值</td></tr>
+<tr><td><code>sub r2,r2,#1</code></td><td>不减标志</td><td>单纯算数</td></tr>
+<tr><td><code>subs r2,r2,#1</code></td><td>减并更新 Z 标志</td><td>延时循环（配 <code>bne</code>）</td></tr>
+<tr><td><code>b label</code></td><td>跳走不回来</td><td>死循环/兜底 <code>loop: b loop</code></td></tr>
+<tr><td><code>bl func</code></td><td>跳走去能回来</td><td>调 C 函数/延时函数</td></tr>
+</table>
+
+<h2>裸机工程速记（对照 A01/A05）</h2>
+<pre><code>编译   : arm-linux-gnueabihf-gcc -g -c led.s -o led.o
+链接   : arm-linux-gnueabihf-ld -Ttext 0X87800000 led.o -o led.elf
+转换   : arm-linux-gnueabihf-objcopy -O binary -S -g led.elf led.bin
+反汇编 : arm-linux-gnueabihf-objdump -D led.elf > led.dis
+烧录   : imxdownload led.bin /dev/sdX（SD 卡；勿碰 eMMC）
+链接地址: 0X87800000（正点原子裸机惯例；DDR 起始 0X80000000）</code></pre>
+
+<h2>常用寄存器地址（与 Linux 课速查表一致）</h2>
+<table>
+<tr><th>功能</th><th>寄存器</th><th>地址</th><th>LED/KEY 用途</th></tr>
+<tr><td>时钟</td><td>CCM_CCGR1</td><td>0x020C406C</td><td>GPIO1 时钟 bit27:26=11</td></tr>
+<tr><td>复用</td><td>SW_MUX_GPIO1_IO03</td><td>0x020E0068</td><td>LED：MUX=5(GPIO)</td></tr>
+<tr><td>电气</td><td>SW_PAD_GPIO1_IO03</td><td>0x020E02F4</td><td>LED：0x10B0</td></tr>
+<tr><td>方向</td><td>GPIO1_GDIR</td><td>0x0209C004</td><td>LED bit3=1 出；KEY bit18=0 入</td></tr>
+<tr><td>数据</td><td>GPIO1_DR</td><td>0x0209C000</td><td>LED bit3：0 亮 / 1 灭（低有效）</td></tr>
+<tr><td>状态</td><td>GPIO1_PSR</td><td>0x0209C008</td><td>读 KEY：bit18=0 按下</td></tr>
+</table>
+<p>详细见 Linux 课：<a href="../../linux/reference/imx6ull-cheatsheet.html">IMX6ULL 速查表</a></p>
+</body>
+</html>

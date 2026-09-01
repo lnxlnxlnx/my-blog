@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A06 · 按键轮询综合练习 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>A06 · 综合收官：汇编按键轮询（读 GPIO 输入）</h1>
+<p class="meta"><span class="tag">汇编课</span><span class="tag">收官动手课</span> · 动手约 40 分钟</p>
+<p class="lead">A01-A05 你一直在"写寄存器输出"。真实世界里还得<b>读</b>——按键。这课用汇编写"按键轮询"：读 GPIO1_PSR，按下就在 LED 上呈现（按下亮/松开灭或翻转）。跑通它，你已经从"看得懂寄存器"升级成"能独立用汇编操作输入与输出"。</p>
+
+<h2>读按键的硬件事实</h2>
+<p>《指南》第 15 章：KEY0 = <strong>GPIO1_IO18</strong>，按下为<b>低</b>电平。读一个按键电平，就是读 GPIO1_PSR（引脚状态寄存器）的 bit18：</p>
+<pre lang="armasm" class="highlight"><span style="color: #008000">@ GPIO1_PSR = 0X0209C008</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C008</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]            <span style="color: #008000">@ 读整组引脚状态到 r1</span>
+<span style="color: #00F">tst</span> <span style="color: #001080">r1</span>, #(<span style="color: #098658">1</span> &lt;&lt; <span style="color: #098658">18</span>)      <span style="color: #008000">@ 测试 r1 的 bit18（tst = 按位与，只改标志）</span>
+<span style="color: #00F">beq</span> <span style="color: #001080">pressed</span>             <span style="color: #008000">@ bit18=0 → 按下（低有效）→ 跳去处理</span></pre>
+<p class="callout"><span class="t">把输入引脚配成输入</span> KEY0 的 GPIO 方向要设成输入（GDIR bit18 = 0）。和输出相反——这提醒你：<b>同一套"四步走"（时钟→复用→电气→方向），只是最后一步填输入还是输出不同</b>。</p>
+
+<h2>完整主线逻辑（配成输入，读按键，控制 LED）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #267F99">_start</span>:
+    <span style="color: #008000">@= 时钟、复用、电气：KEY0(GPIO1_IO18) 与 LED(GPIO1_IO03) 都要配</span>
+    <span style="color: #008000">@（用 A01 那套指令分别写时钟/复用/电气，这里省略重复部分）</span>
+
+    <span style="color: #008000">@ 方向：GDIR = 0X0209C004</span>
+    <span style="color: #008000">@   bit3 = 1 → LED 输出</span>
+    <span style="color: #008000">@   bit18 = 0 → 按键输入  （0x0209C004 写 (1&lt;&lt;3)）</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C004</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X00000008</span>
+    <span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+
+<span style="color: #267F99">loop</span>:
+    <span style="color: #008000">@ 读 PSR，判断按键</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C008</span>     <span style="color: #008000">@ GPIO1_PSR</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+    <span style="color: #00F">tst</span> <span style="color: #001080">r1</span>, #(<span style="color: #098658">1</span> &lt;&lt; <span style="color: #098658">18</span>)      <span style="color: #008000">@ bit18 = 1 吗？</span>
+    <span style="color: #00F">beq</span> <span style="color: #001080">key_down</span>            <span style="color: #008000">@ bit18=0（按下）→ 去灯亮分支</span>
+    <span style="color: #008000">@ 否则：灯灭</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C000</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X00000008</span>     <span style="color: #008000">@ LED 灭（bit3=1）</span>
+    <span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+    <span style="color: #00F">b</span>   <span style="color: #001080">loop</span>
+
+<span style="color: #267F99">key_down</span>:
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C000</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X00000000</span>     <span style="color: #008000">@ LED 亮（bit3=0）</span>
+    <span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+    <span style="color: #00F">b</span>   <span style="color: #001080">loop</span></pre>
+<p>一个 <code>tst + beq</code> 就实现了 "if (按键按下) 亮 else 灭"。注意<b>轮询</b>：CPU 一直在 loop 里反复读——简单但占着 CPU，这就是"轮询 vs 中断"（Linux 课 L06）的基础对比。</p>
+
+<h2>实战提醒：消抖</h2>
+<p>机械按键按下瞬间电平会抖动（几十 ms），直接读会闪。简单处理：检测到电平变化后<b>延时 ~10ms 再确认一次</b>。用 A04 的 <code>delay</code> 就能消抖——现在你知道为什么 A04 要先学延时了。</p>
+
+<div class="exercise">
+<div class="t">练习 A06：按键控制 LED（收官综合）</div>
+<ol>
+<li>把上面逻辑写成完整 <code>key.s</code>：KEY0 输入 + LED 输出 + 轮询 + time 消抖（首次跳过消抖，观察抖动现象再加）。</li>
+<li>编译三连 + objdump：定位 <code>tst</code>/<code>beq</code>，看懂"读-判-分支"三段体。</li>
+<li>把"按下亮"改成"按一下翻转、再按一下灭"（记忆开关），需要控一个 flag 寄存器（如 r6）——这是对 ADD/SUB 和分支的又一次综合。</li>
+<li><b>可选上板</b>：SD+imxdownload 烧录，真人按按键看灯。若不上板，用 objdump + 纸面推演代替（在 A06 的练习注释里写下你的"预期行为表"）。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>tst r1, #(1&lt;&lt;18) 之后，怎么判断 "bit18==1"？</summary><p class="a">tst 做按位与只更新 Z 标志：bit18=1 时结果非 0 → Z=0。所以 bit18=1 → 走 beq 外的分支(bne)/顺序执行；bit18=0 → Z=1 → beq 成立。</p></details>
+<details><summary>为什么按键要配成输入（GDIR bit=0），LED 配成输出？</summary><p class="a">方向决定该引脚的驱动/采样模式。LED 要"把电平送出去"所以输出；按键要"别人把电平拉进来"所以输入。配反了读不到按键状态/点不亮灯。</p></details>
+<details><summary>轮询 vs 中断，裸机里怎么选？</summary><p class="a">轮询简单、吃 CPU；中断省电、及时但复杂。裸机按键常轮询（够用），Linux 驱动推荐中断。你从这两种思路切换的感觉，就是入门嵌入式软件的"分水岭"。</p></details>
+</div>
+
+<p class="callout"><span class="t">到这里，汇编课收官。</span> 你已经：能读/写寄存器、能写循环/延时/按键轮询、懂 start.S。接下来把同一套"读-写寄存器"搬进 Linux 驱动（course/linux 的 L05/L06/L07），你会觉得亲切：<b>驱动课里的 ioremap+readl/writel，就是汇编里 ldr/str 的"亲兄弟"。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 15 章（按键输入实验：含轮询读按键的 C 写法对照）</li>
+<li>第 18/19 章（EPIT 定时器 + 定时器消抖，若你想让消灭抖从"软延时"升级到"硬件定时"）</li>
+<li>课程速查：<a href="../reference/arm-cheatsheet.html">ARM 速查表</a> · <a href="../reference/glossary.html">汇编术语表</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。综合课最容易在"方向配错/读错 bit 号/消抖没加"上翻车——把 objdump 和现象贴给我一起看。</p>
+
+<nav class="lesson-nav">
+<span class="nav-prev"><a href="0005-stack-and-c.html">← 上一节：A05 栈与汇编调 C</a></span>
+<span class="nav-mid"><a href="../index.html">课程目录</a></span>
+<span class="nav-next"><span class="nolink">—</span></span>
+</nav>
+</body>
+</html>

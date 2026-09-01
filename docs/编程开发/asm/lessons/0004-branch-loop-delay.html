@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A04 · 分支·循环·延时 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>A04 · 分支、循环与延时：程序怎么"跑起来有节奏"</h1>
+<p class="meta"><span class="tag">汇编课</span> · 动手约 25 分钟</p>
+<p class="lead"><code>b loop</code> 你会了。真正的程序要"等一会""做 N 次"——这正是<span class="meta">分支+循环</span>。这课写一个<b>汇编延时循环</b>让 LED 闪烁，把 <code>cmp/subs/bne</code> 联动用熟。</p>
+
+<h2>一个简单的延时循环</h2>
+<pre lang="armasm" class="highlight"><span style="color: #008000">@ 让 r2 从 200000 递减到 0，每次还跑两条指令 → 每掉一格约几纳秒</span>
+<span style="color: #008000">@ 从而"浪费"出一段可感知的时间（这就是最朴素的软延时）</span>
+
+<span style="color: #267F99">delay</span>:
+    <span style="color: #00F">subs</span> <span style="color: #001080">r2</span>, <span style="color: #001080">r2</span>, <span style="color: #098658">#1</span>     <span style="color: #008000">@ r2 = r2-1，同时更新 Z 标志（关键在 s 后缀）</span>
+    <span style="color: #00F">bne</span>  <span style="color: #001080">delay</span>          <span style="color: #008000">@ 若 Z=0（还没减到 0）就跳回去继续减</span>
+    <span style="color: #008000">@ 减到 0，Z=1，bne 不满足 → 落到下一行继续执行</span>
+    <span style="color: #00F">mov</span> <span style="color: #001080">pc</span>, <span style="color: #001080">lr</span>          <span style="color: #008000">@ 返回</span></pre>
+<p>三条要点：</p>
+<ol>
+<li><code>sub<b>s</b></code> 的 <code>s</code> 后缀让减法结果 <b>更新 CPSR 的 Z 标志</b>；没有 s 就不改标志，<code>bne</code> 就没依据。</li>
+<li><code>bne</code> = "Not Equal"，其实判断的就是 Z：Z=0（结果非 0）就跳。所以它做的是"还没到 0 就继续"。</li>
+<li>这就是 <code>while(r2-- &gt; 0);</code> 的汇编形态——你已经在"写 C 的底层逻辑"了。</li>
+</ol>
+
+<h2>把它接进点灯：LED 闪烁</h2>
+<pre lang="armasm" class="highlight"><span style="color: #008000">@ 在 A01 点灯代码后，加一个闪灯主循环：</span>
+<span style="color: #267F99">loop</span>:
+    <span style="color: #00F">b</span>     <span style="color: #001080">blink</span>           <span style="color: #008000">@ 或是直接走到下面</span>
+
+<span style="color: #267F99">blink</span>:
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C000</span>   <span style="color: #008000">@ GPIO1_DR</span>
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X00000000</span>   <span style="color: #008000">@ bit3=0 → 亮</span>
+    <span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+    <span style="color: #00F">bl</span>    <span style="color: #001080">delay</span>           <span style="color: #008000">@ 调用延时（bl 会记录返回地址到 LR）</span>
+
+    <span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X00000008</span>   <span style="color: #008000">@ bit3=1 → 灭</span>
+    <span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]
+    <span style="color: #00F">bl</span>    <span style="color: #001080">delay</span>
+
+    <span style="color: #00F">b</span>     <span style="color: #001080">blink</span>           <span style="color: #008000">@ 循环：亮 灭 亮 灭...</span>
+
+<span style="color: #267F99">delay</span>:
+    <span style="color: #00F">ldr</span>   <span style="color: #001080">r2</span>, =<span style="color: #098658">200000</span>   
+<span style="color: #267F99">dloop</span>:
+    <span style="color: #00F">subs</span>  <span style="color: #001080">r2</span>, <span style="color: #001080">r2</span>, <span style="color: #098658">#1</span>
+    <span style="color: #00F">bne</span>   <span style="color: #001080">dloop</span>
+    <span style="color: #00F">mov</span>   <span style="color: #001080">pc</span>, <span style="color: #001080">lr</span>          <span style="color: #008000">@ 返回调用处（LR = bl 记下的地址）</span></pre>
+<p class="callout"><span class="t">为什么这里要 <code>bl</code> 而不是 <code>b</code>？</span> <code>b delay</code> 只是跳，跳过去就不会回来了；<code>bl delay</code> 先存返回地址到 LR，延时完了 <code>mov pc, lr</code> 就能回来接着闪灯。A05 会把"跳出去还能回来"这件事讲透。</p>
+
+<h2>延时的代价：CPU 白忙，但足够应付光感知</h2>
+<p>软延时让 CPU 空转，缺点是不精确、和主频有关。裸机做毫秒级"等人看得见"完全够用；要精确/省电（Linux 驱动里）就用内核定时器或硬件定时器（EPIT）——那是 L07 和《指南》第 18 章的领域。</p>
+
+<div class="exercise">
+<div class="t">练习 A04：让 LED 真正闪起来</div>
+<ol>
+<li>把 blink + delay 拼到 A01 的 led.s 里，编译三连 + objdump。</li>
+<li>在反汇编里找到 <code>subs</code> 和 <code>bne</code> 的机器码，确认 S 标志后缀真的生成了不同的指令。</li>
+<li>改延时初值（比如 200000 → 50000），预测闪烁会变快还是变慢，<b>先写预测再烧/编验证</b>。</li>
+<li>思考题：把 <code>subs</code> 换成 <code>sub</code> 会怎样？用反汇编对比两者的区别，然后看懂"标志位被丢弃"导致的死循环。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>subs 的 s 后缀到底在干嘛？</summary><p class="a">s 后缀让这条算术指令"更新 CPSR 条件标志"（这里主要是 Z：结果是否为 0）。bne 依赖 Z 判断，没有 s 标志不会变，bne 就永远"相等"或永远"不等"，循环就坏了。</p></details>
+<details><summary>bne delay 的跳转条件是什么？</summary><p class="a">Z=0 时跳（结果非 0，也就是 r2 还没减到 0）。注意 bne 名字叫"不等"，实际判的是 Z 标志：subs 结果非零 → Z=0 → 跳。</p></details>
+<details><summary>软延时有什么缺点？什么时候不该用它？</summary><p class="a">不精确、和主频/流水线相关、CPU 空转。做"够看的闪烁"很好；做精确计时、省电、就要用硬件定时器/内核定时器。Linux 驱动里几乎不用软延时。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① subs+bne 联动 = 基本循环结构；② bl/mov pc,lr 的"出去还能回来"；③ 软延时的边界认知。<b>下一课正式玩转"跳出去再回来"——栈与函数调用，也是你要读 C 语言版 LED 和 start.S 的关键。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 7 章（分支/循环、条件执行）与第 8 章完整 led.s（含延时闪烁写法）</li>
+<li><a href="../reference/arm-cheatsheet.html">ARM 指令速查表</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。看到 "infinite loop" 或板子表现异常，多半是 subs 忘了 s 或 bne 判断反了。</p>
+
+<nav class="lesson-nav">
+<span class="nav-prev"><a href="0003-asm-instructions.html">← 上一节：A03 指令与寻址</a></span>
+<span class="nav-mid"><a href="../index.html">课程目录</a></span>
+<span class="nav-next"><a href="0005-stack-and-c.html">下一节：A05 栈与汇编调 C →</a></span>
+</nav>
+</body>
+</html>

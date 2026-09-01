@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A02 · ARM 寄存器与处理器模式 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>A02 · Cortex-A7 寄存器组与处理器模式</h1>
+<p class="meta"><span class="tag">汇编课</span> · 阅读约 15 分钟</p>
+<p class="lead">A01 里 r0、r1、"SP" 都是什么？为什么中断要分身？这课把 ARM CPU 的"储物柜"和"工作模式"讲清楚——它是读懂所有汇编和 u-boot/Kernel 汇编代码的前提。</p>
+
+<h2>通用寄存器：16 个小柜子（r0~r15）</h2>
+<p>ARM 处理器有 16 个通用寄存器，其中几个还有特殊职责（对照《指南》第 6 章）：</p>
+<table>
+<tr><th>寄存器</th><th>别名</th><th>职责</th></tr>
+<tr><td>r0 ~ r7</td><td>—</td><td>纯通用：装数据、算数</td></tr>
+<tr><td>r8 ~ r12</td><td>—</td><td>通用（r8-r12 在 FIQ 模式有备份，先记住名字）</td></tr>
+<tr><td>r13</td><td><b>SP</b>（栈指针）</td><td>指向当前栈顶；压栈/弹栈都动它</td></tr>
+<tr><td>r14</td><td><b>LR</b>（链接寄存器）</td><td>调用子程序 <code>bl</code> 时，存"返回地址"</td></tr>
+<tr><td>r15</td><td><b>PC</b>（程序计数器）</td><td>当前正在执行的指令地址（ARM 中等于当前指令+8）</td></tr>
+</table>
+<p>再加一个<b>状态寄存器 CPSR</b>：存条件标志（Z/N/C/V）、中断使能位、当前处理器模式位。条件跳转（<code>beq/bne</code>）就看它的标志。</p>
+
+<h2>处理器模式：一个 CPU 的多种"工牌"</h2>
+<p>Cortex-A7 有好几种模式，区别就像员工临时切换工牌，权利不同、专用寄存器也不同：</p>
+<table>
+<tr><th>模式</th><th>用途</th></tr>
+<tr><td>User（USR）</td><td>正常用户程序（受限：不能直接改 CPSR 和很多寄存器）</td></tr>
+<tr><td>System（SYS）</td><td>和 User 同寄存器，但特权级更高，常用于驱动/裸机入口代码</td></tr>
+<tr><td>Supervisor（SVC）</td><td>操作系统内核（通过软中断 SWI 进入）；裸机 main 常跑在 SVC</td></tr>
+<tr><td>IRQ / FIQ</td><td>中断处理（硬件中断进来自动切到它，有独立的 SP/LR，避免打断工作现场）</td></tr>
+<tr><td>Abort（ABT）/ Undefined（UND）</td><td>异常/未定义指令</td></tr>
+</table>
+<p>为什么要有模式？最朴素的理由：<b>中断来时要有"独立的工作现场"</b>（独立的 SP/LR），才不会把正在干的活搞乱。你在 Linux 驱动课 L06 学中断时，内核会自动帮你切到 IRQ 模式。</p>
+
+<h2>你已经在用"模式"了</h2>
+<p>A01 里 <code>b loop</code>、<code>ldr r0,=</code> 都在某个模式下执行。裸机入口 <code>_start</code> 一般在 SVC 模式（上电/复位后就是 SVC）。给你一个观察点：<b>u-boot 和 Linux 内核的入口汇编也是这么开头</b>（设置各模式 SP、切模式、跳 C 入口）。</p>
+
+<div class="exercise">
+<div class="t">练习 A02：只读、联想</div>
+<ol>
+<li>重新打开 A01 的 <code>led.s</code>，给每一行标出"操作哪个寄存器、改动哪个寄存器"。</li>
+<li>如果我把 <code>r1</code> 换成 <code>r13</code>（SP）写值，会不会出问题？为什么？（提示：SP 有专门用途，乱动会让栈崩）</li>
+<li>在你的板子的 u-boot 里 <code>printenv</code>/反汇编联想：等 L13 学 u-boot 时，你会看到它对每种模式各设一个 SP——现在埋下印象。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>bl 调用子程序时，返回地址存哪个寄存器？</summary><p class="a">LR（r14）。bl 先把下一条指令地址放入 LR，再跳去执行子程序。子程序末尾把 LR 回传（或压栈恢复）就能"回来"。</p></details>
+<details><summary>SP 是干嘛的？乱改它为什么危险？</summary><p class="a">SP 指向栈顶，压栈(push)和弹栈(pop)都靠它。乱改成非法值会让 push/pop 写到错误内存 → 栈破坏、函数返回就崩。</p></details>
+<details><summary>为什么要分 IRQ 模式？好处是？</summary><p class="a">中断处理切换到 IRQ 模式，有自己独立的 SP/LR，不污染被打断任务的工作现场。中断处理完切回原模式，恢复原现场，正常继续。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① r0-r15 + SP/LR/PC + CPSR 的角色；② 模式 = 独立现场 + 特权分级；③ 你已在 SVC/IRQ 模式里"生活"过了。<b>下一课把"统一词汇表"变成能写代码的指令。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 6 章 6.3（寄存器组）、6.4（处理器模式）</li>
+<li><a href="../reference/arm-cheatsheet.html">ARM 寄存器与指令速查</a></li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。寄存器/模式这种抽象，用一个例程就能消化——把 A01 或某个你见过的例程丢给我，我陪你逐行认寄存器。</p>
+
+<nav class="lesson-nav">
+<span class="nav-prev"><a href="0001-first-asm-led.html">← 上一节：A01 第一个汇编点灯</a></span>
+<span class="nav-mid"><a href="../index.html">课程目录</a></span>
+<span class="nav-next"><a href="0003-asm-instructions.html">下一节：A03 指令与寻址 →</a></span>
+</nav>
+</body>
+</html>

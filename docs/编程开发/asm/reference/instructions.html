@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ARM 指令示例库 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>ARM 指令示例库：逐条示例，按组查</h1>
+<p class="meta">对齐《I.MX6U 驱动开发指南 V1.81》第 7 章与《ARMv7-A 参考手册》 · 每行都是"可以当场跑"的最短示例</p>
+<p class="lead">A03 只讲了"你常碰的 15 条"。这里是完整一些的<b>示例库</b>——每条指令一行示例 + 一行注释，按类别分组。<b>不必背</b>，当作查表用；配套课程 <a href="../lessons/0003-asm-instructions.html">A03</a> 里的练习就是拿这里的指令"点兵点将"。</p>
+
+<h2>① 数据传输（把值/地址送进寄存器）</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">mov</span> <span style="color: #001080">r0</span>, <span style="color: #098658">#5</span>              <span style="color: #008000">@ r0 = 5（立即数）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>              <span style="color: #008000">@ r0 = r1（寄存器拷贝）</span>
+<span style="color: #00F">mvn</span> <span style="color: #001080">r0</span>, <span style="color: #098658">#0</span>              <span style="color: #008000">@ r0 = ~0 = 0xFFFFFFFF（按位取反再放）</span>
+<span style="color: #00F">mrs</span> <span style="color: #001080">r0</span>, <span style="color: #001080">cpsr</span>            <span style="color: #008000">@ r0 = cpsr（读状态寄存器）</span>
+<span style="color: #00F">msr</span> <span style="color: #001080">cpsr</span>, <span style="color: #001080">r0</span>            <span style="color: #008000">@ cpsr = r0（写状态寄存器）</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C000</span>     <span style="color: #008000">@ r0 = 那个"地址值"（伪指令，取立即数）</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]            <span style="color: #008000">@ r1 = *(r0)（读内存）</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]            <span style="color: #008000">@ *(r0) = r1（写内存）</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>, <span style="color: #098658">#4</span>]        <span style="color: #008000">@ *(r0+4) = r1（基址+偏移）</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>, <span style="color: #098658">#4</span>]!       <span style="color: #008000">@ *(r0+4) = r1；且 r0 += 4（! 回写基址）</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>], <span style="color: #098658">#4</span>        <span style="color: #008000">@ *(r0) = r1；然后 r0 += 4（后变址）</span>
+</pre>
+
+<h2>② 算术运算</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">add</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>          <span style="color: #008000">@ r0 = r1 + r2</span>
+<span style="color: #00F">add</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #098658">#1</span>          <span style="color: #008000">@ r0 = r0 + 1（自增）</span>
+<span style="color: #00F">adc</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #098658">#0</span>          <span style="color: #008000">@ r0 = r0 + 进位（多精度加法用）</span>
+<span style="color: #00F">sub</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>          <span style="color: #008000">@ r0 = r1 - r2</span>
+<span style="color: #00F">subs</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #098658">#1</span>         <span style="color: #008000">@ r0 = r0 - 1，且更新 Z/N 标志（延时循环的灵魂）</span>
+<span style="color: #00F">sbc</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #098658">#0</span>          <span style="color: #008000">@ r0 = r0 - 借位</span>
+<span style="color: #00F">rsb</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #098658">#10</span>         <span style="color: #008000">@ r0 = 10 - r1（反向减法，把"取x=10-x"写成一条）</span>
+<span style="color: #00F">mul</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>          <span style="color: #008000">@ r0 = r1 * r2（32 位乘法）</span>
+<span style="color: #00F">mla</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">r3</span>      <span style="color: #008000">@ r0 = r1*r2 + r3（乘加）</span>
+<span style="color: #00F">umull</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">r3</span>    <span style="color: #008000">@ {r1:r0} = r2 * r3（64 位结果，@r0 低32 r1 高32）</span>
+<span style="color: #001080">udiv</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>         <span style="color: #008000">@ r0 = r1 / r2（无符号除法，ARMv7 有）</span>
+<span style="color: #001080">sdiv</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>         <span style="color: #008000">@ r0 = r1 / r2（有符号除法）</span>
+</pre>
+
+<h2>③ 逻辑 / 位运算（配寄存器就是"开关位"）</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">and</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>          <span style="color: #008000">@ r0 &amp;= r1（取交）</span>
+<span style="color: #00F">orr</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, #(<span style="color: #098658">3</span>&lt;&lt;<span style="color: #098658">26</span>)    <span style="color: #008000">@ r0 |= 3&lt;&lt;26（置位：开时钟就这种）</span>
+<span style="color: #00F">eor</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>          <span style="color: #008000">@ r0 ^= r1（异或：翻转位）</span>
+<span style="color: #00F">bic</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">3</span>)     <span style="color: #008000">@ r0 &amp;= ~(1&lt;&lt;3)（清 bit3）</span>
+<span style="color: #00F">tst</span> <span style="color: #001080">r0</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">18</span>)        <span style="color: #008000">@ 检查 bit18：按位与，只改 Z 标志（不写回 r0）</span>
+<span style="color: #00F">teq</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>              <span style="color: #008000">@ 检查 r0==r1：异或判等，只改标志</span>
+<span style="color: #00F">cmp</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>              <span style="color: #008000">@ r0 - r1，只改标志（比较）</span>
+<span style="color: #00F">cmn</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>              <span style="color: #008000">@ r0 + r1，只改标志（比较反数）</span>
+<span style="color: #00F">clz</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>              <span style="color: #008000">@ r0 = r1 前导零个数（找最高位 1 的位置）</span>
+</pre>
+
+<h2>④ 移位（作为"操作数"移位和独立移位指令）</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">lsl</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ r1 = r2 &lt;&lt; 2（逻辑左移）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">lsr</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ r1 = r2 &gt;&gt; 2（逻辑右移）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">asr</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ r1 = r2 &gt;&gt; 2（算术右移：最高位补符号，用于有符号数）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">ror</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ r1 = r2 循环右移 2 位</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">lsl</span> <span style="color: #001080">r3</span>      <span style="color: #008000">@ r0 = r1 &lt;&lt; r3（移位量可变——数组下标索引很方便）</span>
+<span style="color: #00F">orr</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">3</span>)     <span style="color: #008000">@ 立即数里也常配移位：等价于 orr r0, r0, #8，可读性更好</span>
+</pre>
+
+<h2>⑤ 多寄存器搬运：PUSH/POP 与 LDM/STM（栈和现场保存）</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">push</span> {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">r12</span>}       <span style="color: #008000">@ 把 r0..r3、r12 压栈（一条代替多条 str）</span>
+<span style="color: #00F">push</span> {<span style="color: #001080">lr</span>}               <span style="color: #008000">@ 保存返回地址（函数开头必做）</span>
+<span style="color: #00F">pop</span>  {<span style="color: #001080">lr</span>}               <span style="color: #008000">@ 恢复返回地址</span>
+<span style="color: #00F">pop</span>  {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">r12</span>}       <span style="color: #008000">@ 恢复现场</span>
+<span style="color: #00F">stmfd</span> <span style="color: #001080">sp</span>!, {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">lr</span>}  <span style="color: #008000">@ 满递减压栈：sp 先减，再存（= push 的原型）</span>
+<span style="color: #00F">ldmfd</span> <span style="color: #001080">sp</span>!, {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">pc</span>}  <span style="color: #008000">@ 满递增弹栈并把最后存的送给 pc（= pop + 返回 一条搞定）</span>
+</pre>
+<p class="callout"><span class="t">栈是"后进先出"</span> push 和 pop 必须<b>严格配对</b>：函数开头 <code>push {lr}</code>，结尾 <code>pop {lr}</code>（或 <code>ldmfd sp!, {..., pc}</code> 一口气返回）。压栈/弹栈顺序反了，现场就乱了，上层函数返回必然崩。</p>
+
+<h2>⑥ 跳转 / 调用</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">b</span>    <span style="color: #001080">label</span>              <span style="color: #008000">@ 无条件跳转（不回来）</span>
+<span style="color: #00F">bl</span>   <span style="color: #001080">func</span>               <span style="color: #008000">@ 调用子程序：把返回地址存 LR，再跳</span>
+<span style="color: #00F">bx</span>   <span style="color: #001080">lr</span>                 <span style="color: #008000">@ 返回（跳到 LR 指向的地址）</span>
+<span style="color: #00F">bx</span>   <span style="color: #001080">r3</span>                 <span style="color: #008000">@ 跳到 r3 里的地址（函数指针）</span>
+<span style="color: #00F">blx</span>  <span style="color: #001080">r3</span>                 <span style="color: #008000">@ 调 r3 指向的函数（带返回）</span>
+<span style="color: #00F">blx</span>  <span style="color: #001080">func</span>               <span style="color: #008000">@ 等价形式，顺便可能切 Thumb 模式</span>
+<span style="color: #267F99">loop</span>:              <span style="color: #008000">@ 标签本身不是指令，只是地址记号</span>
+     <span style="color: #00F">subs</span> <span style="color: #001080">r2</span>, <span style="color: #001080">r2</span>, <span style="color: #098658">#1</span>
+     <span style="color: #00F">bne</span>  <span style="color: #001080">loop</span>          <span style="color: #008000">@ Z=0 就跳（还没减到 0）</span>
+</pre>
+
+<h2>⑦ 条件执行后缀全表（挂在任意指令后面）</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">cmp</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>
+<span style="color: #00F">beq</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ EQ：相等        (r0==r1)   Z=1</span>
+<span style="color: #00F">bne</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ NE：不等        (r0!=r1)   Z=0</span>
+<span style="color: #00F">bcs</span>  <span style="color: #001080">done</span> / <span style="color: #001080">bhs</span> <span style="color: #008000">@ CS/HS：无符号 &gt;= (进位/高或相同)  C=1</span>
+<span style="color: #00F">bcc</span>  <span style="color: #001080">done</span> / <span style="color: #001080">blo</span> <span style="color: #008000">@ CC/LO：无符号 &lt;  （借位/更低）   C=0</span>
+<span style="color: #00F">bmi</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ MI：负数        N=1</span>
+<span style="color: #00F">bpl</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ PL：非负        N=0</span>
+<span style="color: #00F">bvs</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ VS：溢出        V=1</span>
+<span style="color: #00F">bvc</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ VC：无溢出      V=0</span>
+<span style="color: #00F">bhi</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ HI：无符号 &gt;   (且 Z=0)  C=1 且 Z=0</span>
+<span style="color: #00F">bls</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ LS：无符号 &lt;=  C=0 或 Z=1</span>
+<span style="color: #00F">bge</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ GE：有符号 &gt;=   N==V</span>
+<span style="color: #00F">blt</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ LT：有符号 &lt;    N!=V</span>
+<span style="color: #00F">bgt</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ GT：有符号 &gt;    (Z=0 且 N==V)</span>
+<span style="color: #00F">ble</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ LE：有符号 &lt;=   Z=1 或 N!=V</span>
+<span style="color: #00F">bal</span>  <span style="color: #001080">done</span>       <span style="color: #008000">@ AL：总是（默认）</span>
+<span style="color: #008000">@ 后缀不只用于 b，也用于普通指令：</span>
+<span style="color: #00F">moveq</span> <span style="color: #001080">r0</span>, <span style="color: #098658">#1</span>    <span style="color: #008000">@ 仅当 Z=1 才执行：r0 = 1</span>
+<span style="color: #00F">addne</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, <span style="color: #098658">#1</span> <span style="color: #008000">@ 仅当 Z=0 才加</span>
+</pre>
+
+<h2>⑧ 特殊 / 软中断 / 杂项</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">svc</span> <span style="color: #098658">0x13</span>        <span style="color: #008000">@ （旧名 swi）软中断：陷入内核/异常，Linux 系统调用就是它</span>
+<span style="color: #00F">nop</span>             <span style="color: #008000">@ 空操作（占位/对齐）</span>
+<span style="color: #00F">yield</span>           <span style="color: #008000">@ 提示 CPU 可让出（多核友好）</span>
+<span style="color: #00F">wfi</span> / <span style="color: #00F">wfe</span>       <span style="color: #008000">@ 等中断/等事件（省电睡眠，被唤醒才继续）</span>
+<span style="color: #00F">dmb</span> / <span style="color: #00F">dsb</span> / <span style="color: #00F">isb</span> <span style="color: #008000">@ 内存屏障：保证读写顺序（多核/与外设通信时防乱序）</span>
+</pre>
+
+<h2>看注释过的一条：怎么"读"陌生指令</h2>
+<pre lang="armasm" class="highlight">
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r2</span>, <span style="color: #098658">#4</span>]!
+<span style="color: #008000">@ 从右往左读：先算地址 r2+4，做存储(把 r1 写进去)，! 表示把算出的地址写回 r2。</span>
+<span style="color: #008000">@ 拆解词典：str=存到内存  [r2,#4]=基址+偏移  !=回写基址。</span>
+</pre>
+<p>还配了逐条练习：<a href="../lessons/0003-asm-instructions.html">A03 指令与寻址</a>；寄存器表见 <a href="arm-cheatsheet.html">ARM 速查表</a>。</p>
+</body>
+</html>

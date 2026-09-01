@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A03 · 指令与寻址方式 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<h1>A03 · 常用指令与寻址方式：你真正要背的那 15 条（扩展版）</h1>
+<p class="meta"><span class="tag">汇编课</span> · 阅读约 25 分钟</p>
+<p class="lead">不用背 ARM 几百条指令。裸机+驱动你反复用的就那么些——把它们按七组记住，你就能读懂并写出 95% 的 Board 启动汇编。<b>每一条都配了最短示例</b>；完整示例库在 <a href="../reference/instructions.html">指令示例库</a>，随查随用。</p>
+
+<h2>① 数据搬运（进寄存器）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #098658">#5</span>            <span style="color: #008000">@ 立即数 5 → r1</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>            <span style="color: #008000">@ 寄存器拷贝：r1 = r2</span>
+<span style="color: #00F">mvn</span> <span style="color: #001080">r2</span>, <span style="color: #098658">#0</span>            <span style="color: #008000">@ 按位取反再放（0 → 全 1），常用在置全 1</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, =<span style="color: #098658">0X0209C000</span>   <span style="color: #008000">@ 伪指令：把"地址值"塞进 r1（不是读内存！看方括号区分）</span>
+<span style="color: #00F">mrs</span> <span style="color: #001080">r1</span>, <span style="color: #001080">cpsr</span>          <span style="color: #008000">@ 读状态寄存器：r1 = cpsr（A02 讲过，先混个脸熟）</span></pre>
+
+<h2>② 算术运算</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">add</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>        <span style="color: #008000">@ r3 = r1 + r2</span>
+<span style="color: #00F">add</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r3</span>, <span style="color: #098658">#1</span>        <span style="color: #008000">@ 自增：r3 = r3 + 1</span>
+<span style="color: #00F">sub</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r3</span>, <span style="color: #098658">#1</span>        <span style="color: #008000">@ 自减：r3 = r3 - 1（延时循环靠它！）</span>
+<span style="color: #00F">subs</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r3</span>, <span style="color: #098658">#1</span>       <span style="color: #008000">@ 同上，但更新 Z/N 标志（循环判 0 全靠这个 s）</span>
+<span style="color: #00F">rsb</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r1</span>, <span style="color: #098658">#100</span>      <span style="color: #008000">@ 反向减：r3 = 100 - r1</span>
+<span style="color: #00F">mul</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>        <span style="color: #008000">@ r3 = r1 * r2</span>
+<span style="color: #001080">udiv</span> <span style="color: #001080">r3</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>       <span style="color: #008000">@ r3 = r1 / r2（无符号除法）</span></pre>
+
+<h2>③ 逻辑与位运算（"开关位"才是驱动里的主角）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">and</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>        <span style="color: #008000">@ 按位与（取交，常用来"读某几位"）</span>
+<span style="color: #00F">orr</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r1</span>, #(<span style="color: #098658">3</span>&lt;&lt;<span style="color: #098658">26</span>)  <span style="color: #008000">@ 按位或（置位：L05 开时钟就这种！）</span>
+<span style="color: #00F">eor</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>        <span style="color: #008000">@ 异或（翻转位）</span>
+<span style="color: #00F">bic</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r1</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">3</span>)   <span style="color: #008000">@ 清位：把 bit3 清 0</span>
+<span style="color: #00F">tst</span> <span style="color: #001080">r1</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">18</span>)      <span style="color: #008000">@ 测试 bit18：只改标志不写回（A06 读按键就是它）</span>
+<span style="color: #00F">cmp</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>            <span style="color: #008000">@ 比较：r1-r2，只改标志（if 的地基）</span></pre>
+
+<h2>④ 内存访问（最重要：ldr / str）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">ldr</span> <span style="color: #001080">r0</span>, =<span style="color: #098658">0X0209C000</span>     <span style="color: #008000">@ 伪指令：把"地址值"放进 r0</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]            <span style="color: #008000">@ 读内存：r1 = *(r0)</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]            <span style="color: #008000">@ 写内存：*(r0) = r1</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r2</span>, [<span style="color: #001080">r0</span>, <span style="color: #098658">#4</span>]        <span style="color: #008000">@ r2 = *(r0+4)（基址+偏移）</span>
+<span style="color: #00F">str</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>, <span style="color: #098658">#4</span>]!       <span style="color: #008000">@ 先 *(r0+4)=r1，再把 r0 更新为 r0+4（! 回写基址）</span>
+<span style="color: #00F">ldr</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>], <span style="color: #098658">#4</span>        <span style="color: #008000">@ r1 = *(r0)；然后 r0 += 4（后变址）</span>
+<span style="color: #00F">ldrb</span> <span style="color: #001080">r1</span>, [<span style="color: #001080">r0</span>]           <span style="color: #008000">@ 读 1 字节（b 后缀：字节；h 后缀：半字）</span></pre>
+<p class="callout"><span class="t">ldr 的两种面孔要分清</span> <code>ldr r0, =值/地址</code> 是<b>伪指令</b>（汇编器帮你生成"取常量"的魔法）；<code>ldr r0, [r1]</code> 才是真的"从内存读"。看有没有方括号——有括号读内存，没括号取常量。</p>
+
+<h2>⑤ 移位与条件后缀（ARM 特色两件套）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">mov</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>, <span style="color: #001080">lsl</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ r1 = r2 &lt;&lt; 2（左移：×4）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r2</span>, <span style="color: #001080">r3</span>, <span style="color: #001080">lsr</span> <span style="color: #098658">#3</span>      <span style="color: #008000">@ r2 = r3 &gt;&gt; 3（逻辑右移：÷8）</span>
+<span style="color: #00F">mov</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r1</span>, <span style="color: #001080">asr</span> <span style="color: #098658">#2</span>      <span style="color: #008000">@ 算术右移：带符号右移（最高位补符号）</span>
+<span style="color: #00F">orr</span> <span style="color: #001080">r0</span>, <span style="color: #001080">r0</span>, #(<span style="color: #098658">1</span>&lt;&lt;<span style="color: #098658">3</span>)     <span style="color: #008000">@ 立即数里配移位："第 3 位"写法，比 #8 可读</span>
+<span style="color: #00F">cmp</span> <span style="color: #001080">r1</span>, <span style="color: #001080">r2</span>
+<span style="color: #00F">beq</span>  <span style="color: #001080">equal</span>              <span style="color: #008000">@ EQ 相等 (Z=1)</span>
+<span style="color: #00F">bne</span>  <span style="color: #001080">notequal</span>           <span style="color: #008000">@ NE 不等 (Z=0)</span>
+<span style="color: #00F">bgt</span>  <span style="color: #001080">big</span>                <span style="color: #008000">@ GT 有符号大于（还有 ge/lt/le/hi/ls/…）</span>
+<span style="color: #00F">moveq</span> <span style="color: #001080">r0</span>, <span style="color: #098658">#1</span>            <span style="color: #008000">@ 条件后缀不只给 b 用：仅当 Z=1 才执行 r0=1</span></pre>
+<p>条件后缀全表（<code>eq ne cs/cc/hs/lo mi/pl vs/vc hi/ls ge/lt gt/le al</code>）在 <a href="../reference/instructions.html">指令示例库 ⑦</a>，用到再查。</p>
+
+<h2>⑥ 跳转 / 调用：出去还得回来</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">b</span>   <span style="color: #001080">loop</span>       <span style="color: #008000">@ 无条件跳（死循环常用，回不来）</span>
+<span style="color: #00F">bl</span>  <span style="color: #001080">delay</span>      <span style="color: #008000">@ 调用子程序：把"返回地址"存进 LR，再跳（A04 会用到）</span>
+<span style="color: #00F">bx</span>  <span style="color: #001080">lr</span>         <span style="color: #008000">@ 子程序返回：跳到 LR 存的地址</span>
+<span style="color: #00F">blx</span> <span style="color: #001080">r3</span>         <span style="color: #008000">@ 调用 r3 指向的函数（函数指针）</span></pre>
+
+<h2>⑦ 栈与多寄存器搬运（A04/A05 的地基）</h2>
+<pre lang="armasm" class="highlight"><span style="color: #00F">push</span> {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">lr</span>}        <span style="color: #008000">@ 一条指令压多个：保存现场（函数开头）</span>
+<span style="color: #00F">pop</span>  {<span style="color: #001080">r0</span>-<span style="color: #001080">r3</span>, <span style="color: #001080">pc</span>}        <span style="color: #008000">@ 恢复现场 + 返回（保存了 pc 变体就能"弹出即返回"）</span>
+<span style="color: #00F">stmfd</span> <span style="color: #001080">sp</span>!, {<span style="color: #001080">r0</span>,<span style="color: #001080">r1</span>, <span style="color: #001080">lr</span>}  <span style="color: #008000">@ 满递减压栈（= push 的原型）</span>
+<span style="color: #00F">ldmfd</span> <span style="color: #001080">sp</span>!, {<span style="color: #001080">r0</span>,<span style="color: #001080">r1</span>, <span style="color: #001080">pc</span>}  <span style="color: #008000">@ 满递增弹栈（= pop + 返回，一条搞定）</span></pre>
+
+<div class="exercise">
+<div class="t">练习 A03：每条指令都跑一遍 objdump</div>
+<ol>
+<li>写一个 <code>ops.s</code>，把上面 ①-⑦ <b>每条都抄一行</b>放进 <code>loop: b loop</code> 保护区域（>30 行），工具链三连。</li>
+<li><code>objdump -D ops.elf</code>：逐行核对每条指令的机器码。重点盯三个"魔法"：
+<ul>
+<li><code>ldr r0, =0X0209C000</code> 伪指令实际编成了 <code>ldr r0, [pc, #...]</code>（从常量池取数）；</li>
+<li><code>subs</code> 和 <code>sub</code> 的机器码不同（S 标志体现在指令的 S 位）；</li>
+<li><code>push {r0-r3, lr}</code> 展开成一条 <code>stmfd sp!, ...</code>。</li>
+</ul></li>
+<li><b>实战验证</b>：用 <code>orr (...) #(1&lt;&lt;3)</code> 和 <code>bic #(1&lt;&lt;3)</code> 在 r1 上先置位再清位，最后 <code>mov r2, r1, lsl #1</code>，全流程推进 Set→Clear→Shift 的位操作手感。</li>
+<li>对照 <a href="../reference/instructions.html">指令示例库</a>，把还不熟的指令各找一行，抄进 ops.s 再编一遍——"会用 = 亲口编过一次"。</li>
+</ol>
+</div>
+
+<div class="quiz">
+<div class="t">自测</div>
+<details><summary>怎么把 r1 的第 3 位（bit3）清成 0？</summary><p class="a">bic r1, r1, #(1&lt;&lt;3)。bic=bit clear：把指定位清 0。前置 # 表示立即数；(1&lt;&lt;3) 就是"构造第 3 位"的写法。</p></details>
+<details><summary>ldr r0, =0X0209C000 和 ldr r0, [r1] 有什么区别？</summary><p class="a">前者是伪指令，把常量"地址值"塞进 r0（外设寄存器访问时用）；后者从内存读：r0 = *(r1)。看有没有方括号。</p></details>
+<details><summary>if (a==b) 在汇编里通常是怎样的三步？</summary><p class="a">cmp a, b → 只改标志 → 用 beq/bne 条件跳转（或 moveq 条件执行）。cmp 不存结果，只把比较结果写进 CPSR 标志。</p></details>
+<details><summary>push {r0-r3, lr} 和 pop {r0-r3, pc} 是什么关系？</summary><p class="a">一对栈操作：push 把现场（含返回地址 LR）压进栈；pop 弹出并直接放进 pc 就"恢复现场并返回"。必须严格配对，否则栈错乱上层函数崩。</p></details>
+</div>
+
+<p class="callout"><span class="t">要带走的</span> ① 七组指令各记 2-4 条；② ldr 伪指令 vs 真读内存（看方括号）；③ cmp+条件后缀 = if 的底层；④ 移位 = "第几位"的通用写法。<b>不懂的指令去 <a href="../reference/instructions.html">指令示例库</a> 查——那就是你随身的汇编词典。</b></p>
+
+<h2>推荐阅读</h2>
+<ul>
+<li>《I.MX6U 驱动开发指南 V1.81》第 7 章（汇编基础，MOV/MRS/LDR/STR/PUSH/STMFD/B/BL/UDIV + 条件后缀）</li>
+<li>本工作区：<a href="../reference/instructions.html">ARM 指令示例库</a> · <a href="../reference/arm-cheatsheet.html">ARM 速查表</a></li>
+<li>深度参考：<em>ARM Architecture Reference Manual (ARMv7-A)</em> 指令集章节</li>
+</ul>
+
+<p><strong>有不清楚的直接问我（agent）</strong>。立即数/伪指令/条件后缀是三个最常见的小坑；把 exception 和 objdump 输出贴给我，逐条陪你读。</p>
+
+<nav class="lesson-nav">
+<span class="nav-prev"><a href="0002-arm-registers-modes.html">← 上一节：A02 寄存器与处理器模式</a></span>
+<span class="nav-mid"><a href="../index.html">课程目录</a></span>
+<span class="nav-next"><a href="0004-branch-loop-delay.html">下一节：A04 分支·循环·延时 →</a></span>
+</nav>
+</body>
+</html>

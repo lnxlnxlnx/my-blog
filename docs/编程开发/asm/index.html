@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>课程目录 · 裸机 ARM 汇编</title>
+<link rel="stylesheet" href="assets/lesson.css">
+</head>
+<body>
+<h1>裸机 ARM 汇编 · 课程目录</h1>
+<p class="meta">主线：《I.MX6U 驱动开发指南 V1.81》第 6/7/8/9/10/15 章 · 为 Linux 驱动课补"亲手写寄存器"的地基</p>
+
+<table>
+<tr><th>课</th><th>标题</th><th>内容</th><th>对应章节</th></tr>
+<tr><td><a href="lessons/0001-first-asm-led.html">A01</a></td><td>第一个汇编点灯</td><td>工具链三连、led.s、链接地址、SD 烧写思路</td><td>第 4/7/8 章</td></tr>
+<tr><td><a href="lessons/0002-arm-registers-modes.html">A02</a></td><td>寄存器与处理器模式</td><td>r0-r15 / SP/LR/PC / CPSR、USR/SVC/IRQ 等模式</td><td>第 6 章</td></tr>
+<tr><td><a href="lessons/0003-asm-instructions.html">A03</a></td><td>指令与寻址方式</td><td>mov/mvn、add/sub、and/orr/bic/eor、ldr/str、b/bl 四组</td><td>第 7 章</td></tr>
+<tr><td><a href="lessons/0004-branch-loop-delay.html">A04</a></td><td>分支·循环·延时</td><td>subs+bne 延时循环、bl/mov pc,lr、LED 闪烁</td><td>第 7/8 章</td></tr>
+<tr><td><a href="lessons/0005-stack-and-c.html">A05</a></td><td>栈与汇编调 C</td><td>start.S（关狗/设 sp/跳 C）、混编、看门狗</td><td>第 9/10 章</td></tr>
+<tr><td><a href="lessons/0006-key-scan-comprehensive.html">A06</a></td><td>按键轮询综合</td><td>读 GPIO1_PSR、tst+beq、轮询 vs 中断、消抖</td><td>第 15 章</td></tr>
+</table>
+
+<h2>配套资料</h2>
+<ul>
+<li><a href="reference/instructions.html">ARM 指令示例库</a>（逐条示例，随查随用）</li>
+<li><a href="reference/arm-cheatsheet.html">ARM 寄存器与指令速查</a></li>
+<li><a href="reference/glossary.html">汇编术语表</a></li>
+<li><a href="../linux/index.html">Linux 驱动与系统课</a>（学完 A 系列，去给它补寄存器地基的你，衔接更顺）</li>
+</ul>
+</body>
+</html>

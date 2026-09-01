@@ -1,0 +1,52 @@
+/* Shared lesson stylesheet — every lesson links this so the course looks unified. Tufte-flavoured. */
+:root{
+  --ink:#111; --paper:#fffff8; --muted:#666; --accent:#3b5bd8; --accent-soft:#eef1ff;
+  --code-bg:#f4f3ef; --rule:#ddd;
+}
+*{box-sizing:border-box}
+html{font-size:17px}
+body{
+  font-family:Georgia,"Songti SC",serif; color:var(--ink); background:var(--paper);
+  max-width:820px; margin:0 auto; padding:2.5rem 1.5rem 5rem; line-height:1.6;
+}
+h1,h2,h3,h4{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; font-weight:650; line-height:1.25}
+h1{font-size:1.7rem; border-bottom:1px solid var(--rule); padding-bottom:.4rem; margin-top:0}
+h2{font-size:1.3rem; margin-top:2rem}
+h3{font-size:1.05rem; margin-top:1.4rem; color:#222}
+p{margin:.6rem 0}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+.meta{color:var(--muted); font-size:.85rem; margin-top:-.4rem}
+.lead{font-size:1.1rem; color:#333}
+blockquote{border-left:3px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:#333; background:var(--accent-soft)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.85em}
+pre{background:var(--code-bg); padding:.9rem 1rem; border-radius:6px; overflow-x:auto; font-size:.82rem; line-height:1.45}
+pre code{background:none; padding:0}
+table{border-collapse:collapse; width:100%; font-size:.9rem; margin:1rem 0}
+th,td{border:1px solid var(--rule); padding:.45rem .6rem; text-align:left; vertical-align:top}
+th{background:var(--accent-soft)}
+.callout{border:1px solid var(--accent); background:var(--accent-soft); border-radius:8px; padding:.8rem 1rem; margin:1.2rem 0}
+.callout .t{font-weight:700; font-family:-apple-system,Helvetica,Arial,sans-serif}
+.exercise{border:1px solid #2e7d32; background:#f0f7f0; border-radius:8px; padding:.9rem 1.1rem; margin:1.3rem 0}
+.exercise .t{font-weight:700; color:#1b5e20; font-family:-apple-system,Helvetica,Arial,sans-serif}
+ul,ol{padding-left:1.4rem}
+li{margin:.25rem 0}
+.tag{display:inline-block; font-family:-apple-system,sans-serif; font-size:.72rem; padding:.15rem .5rem; border-radius:999px; background:#eee; color:#444; margin-right:.3rem}
+/* Quiz widget — reuse in every lesson. Question hidden until user commits to an answer via <details>. */
+.quiz{background:#fffdf5; border:1px solid #d9c98a; border-radius:8px; padding:.8rem 1.1rem; margin:1.3rem 0}
+.quiz .t{font-weight:700; color:#7a6a1e; font-family:-apple-system,Helvetica,Arial,sans-serif}
+.quiz details{border-top:1px dashed #e2d6a8; padding:.4rem 0}
+.quiz summary{cursor:pointer; font-weight:600; font-family:-apple-system,Helvetica,Arial,sans-serif; font-size:.92rem}
+.quiz summary::before{content:"Q"; display:inline-block; background:var(--accent); color:#fff; font-size:.7rem; border-radius:4px; padding:.05rem .3rem; margin-right:.4rem; vertical-align:1px}
+.quiz .a{color:#1b5e20}
+.quiz .a::before{content:"答案 "; font-weight:700; color:#2e7d32; font-family:-apple-system,sans-serif; font-size:.8rem}
+@media print{ body{max-width:100%} pre,blockquote{page-break-inside:avoid} }
+/* Course navigation: prev / index / next. Inserted by course scaffolding. */
+.lesson-nav{display:flex; justify-content:space-between; align-items:baseline; gap:1rem; margin:2.2rem 0 .5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:-apple-system,Helvetica,Arial,sans-serif; font-size:.9rem}
+.lesson-nav .nav-prev,.lesson-nav .nav-next{flex:1; min-width:0}
+.lesson-nav .nav-mid{flex:0 0 auto; padding:0 1rem}
+.lesson-nav .nav-mid a{font-weight:700; white-space:nowrap}
+.lesson-nav .nav-next{text-align:right}
+.lesson-nav .nav-prev{text-align:left}
+.lesson-nav .nolink{color:var(--muted)}
