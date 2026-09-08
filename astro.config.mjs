@@ -69,7 +69,7 @@ const adapter = process.env.CF_WORKERS
 export default defineConfig({
 	site: siteConfig.site_url,
 
-	base: "/",
+	base: "/my-blog/",
 	trailingSlash: "always",
 
 	// 字体配置 - 只加载实际使用的字体，跳过未引用的以加快构建
@@ -163,6 +163,12 @@ export default defineConfig({
 			themes: [expressiveCodeConfig.darkTheme, expressiveCodeConfig.lightTheme],
 			useDarkModeMediaQuery: false,
 			themeCssSelector: (theme) => `[data-theme='${theme.name}']`,
+			shiki: {
+				// Qt project files use the .pro extension; render them with INI syntax.
+				langAlias: {
+					pro: "ini",
+				},
+			},
 			plugins: [
 				// pluginLanguageBadge 配置 - 从expressiveCodeConfig读取设置
 				...(expressiveCodeConfig.pluginLanguageBadge?.enable === true

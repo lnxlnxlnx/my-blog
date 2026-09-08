@@ -59,7 +59,11 @@ export async function GET(context: APIContext): Promise<Response> {
 	return rss({
 		title: siteConfig.title,
 		description: siteConfig.subtitle || "No description",
-		site: context.site ?? "https://firefly.cuteleaf.cn",
+		// Astro.site does not include the configured base path for project pages.
+		site: new URL(
+			import.meta.env.BASE_URL,
+			context.site ?? "https://firefly.cuteleaf.cn",
+		).toString(),
 		customData: `<templateTheme>Firefly</templateTheme>
 		<templateThemeVersion>${pkg.version}</templateThemeVersion>
 		<templateThemeUrl>https://github.com/CuteLeaf/Firefly</templateThemeUrl>
