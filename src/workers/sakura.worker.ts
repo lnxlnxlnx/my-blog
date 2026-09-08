@@ -24,6 +24,9 @@ let windowHeight = 0;
 let isRunning = false;
 let isHidden = false; // 页面可见性,隐藏时暂停动画
 
+// Public assets must include Astro's base path for GitHub Pages project sites.
+const sakuraImageUrl = `${import.meta.env.BASE_URL}assets/images/effects/sakura.png`;
+
 // ---------------------------------------------------------------------------
 // 工具:getRandom(逻辑与原 SakuraEffect.astro 完全一致)
 // ---------------------------------------------------------------------------
@@ -194,7 +197,7 @@ class SakuraList {
 // 核心逻辑
 // ---------------------------------------------------------------------------
 async function loadImage(): Promise<ImageBitmap> {
-	const response = await fetch("/assets/images/effects/sakura.png");
+	const response = await fetch(sakuraImageUrl);
 	if (!response.ok) {
 		throw new Error(
 			`Failed to load sakura image: ${response.status} ${response.statusText}`,
