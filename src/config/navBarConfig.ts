@@ -1,75 +1,239 @@
 import {
-	LinkPreset,
 	type NavBarConfig,
 	type NavBarLink,
 	type NavBarSearchConfig,
 	NavBarSearchMethod,
-} from "../types/config";
-import { siteConfig } from "./siteConfig";
+} from "../types/navBarConfig";
 
-// 根据页面开关动态生成导航栏配置
+// ============================================================================
+// 导航栏配置 - 根据顺序动态生成导航栏链接
+// NavBar Configuration - Dynamically generate navigation bar links based on order
+// ============================================================================
 const getDynamicNavBarConfig = (): NavBarConfig => {
-	const links: (NavBarLink | LinkPreset)[] = [
-		LinkPreset.Home,
-		LinkPreset.Archive,
-	];
+	// 基础导航栏链接
+	const links: NavBarLink[] = [];
 
-	// 支持自定义导航栏链接,并且支持多级菜单
+	// 主页
+	links.push(LinkPresets.Home);
+
+	// 文章及其子菜单
+	links.push({
+		name: "文章",
+		url: "#",
+		icon: "material-symbols:article",
+		children: [
+			// 归档
+			LinkPresets.Archive,
+
+			// 分类
+			LinkPresets.Categories,
+
+			// 标签
+			LinkPresets.Tags,
+
+			// 系列
+			LinkPresets.Series,
+		],
+	});
+
+	//社交及其子菜单
+	links.push({
+		name: "社交",
+		url: "#",
+		icon: "material-symbols:group",
+		children: [
+			// 友链
+			LinkPresets.Friends,
+
+			// 留言
+			LinkPresets.Guestbook,
+		],
+	});
+
+	// 我的及其子菜单
+	links.push({
+		name: "我的",
+		url: "#",
+		icon: "material-symbols:person",
+		children: [
+			// 动态
+			LinkPresets.Dynamic,
+
+			// 项目
+			LinkPresets.Projects,
+
+			// 相册
+			LinkPresets.Gallery,
+
+			// 书签导航
+			LinkPresets.Booknav,
+
+			// 哔哩哔哩追番
+			LinkPresets.Bilibili,
+
+			// 番组计划
+			LinkPresets.Bangumi,
+
+			// VNDB
+			LinkPresets.VNDB,
+
+			// MyAnimeList
+			LinkPresets.MAL,
+		],
+	});
+
+	// 关于及其子菜单
+	links.push({
+		name: "关于",
+		url: "#",
+		icon: "material-symbols:info",
+		children: [
+			// 打赏
+			LinkPresets.Sponsor,
+
+			// 关于页面
+			LinkPresets.About,
+		],
+	});
+
+	// 自定义导航栏链接
 	links.push({
 		name: "链接",
-		url: "/links/",
+		url: "#",
 		icon: "material-symbols:link",
+		// 子菜单
 		children: [
 			{
 				name: "GitHub",
-				url: "https://github.com/CuteLeaf/Firefly",
+				url: "https://github.com/lnxlnxlnx",
 				external: true,
-				icon: "fa6-brands:github",
+				icon: "fa7-brands:github",
 			},
 			{
 				name: "Bilibili",
-				url: "https://space.bilibili.com/38932988",
+				url: "https://space.bilibili.com/1113515635",
 				external: true,
-				icon: "fa6-brands:bilibili",
+				icon: "fa7-brands:bilibili",
 			},
 		],
 	});
 
-	links.push(LinkPreset.Friends);
+	// 文档链接
+	// links.push({
+	// 	name: "文档",
+	// 	url: "https://docs-firefly.cuteleaf.cn",
+	// 	external: true,
+	// 	icon: "material-symbols:docs",
+	// });
 
-	// 根据配置决定是否添加留言板页面
-	if (siteConfig.pages.guestbook) {
-		links.push(LinkPreset.Guestbook);
-	}
-
-	links.push({
-		name: "关于",
-		url: "/content/",
-		icon: "material-symbols:info",
-		children: [
-			...(siteConfig.pages.sponsor ? [LinkPreset.Sponsor] : []), // 根据配置决定是否添加赞助页面
-			LinkPreset.About,
-			...(siteConfig.pages.bangumi ? [LinkPreset.Bangumi] : []), // 根据配置决定是否添加番组计划页面
-		],
-	});
-	// 仅返回链接，其它导航搜索相关配置在模块顶层常量中独立导出
 	return { links } as NavBarConfig;
 };
 
 // 导航搜索配置
 export const navBarSearchConfig: NavBarSearchConfig = {
-	// 可选：PageFind， MeiliSearch
-	// 选择PageFind时：NavBarSearchMethod.PageFind,
-	// 选择MeiliSearch时：NavBarSearchMethod.MeiliSearch,
 	method: NavBarSearchMethod.PageFind,
-	// 当选择 MeiliSearch 时的配置
-	meiliSearchConfig: {
-		INDEX_NAME: "posts",
-		CONTENT_DIR: "src/content/posts",
-		MEILI_HOST: "http://localhost:7700",
-		PUBLIC_MEILI_HOST: "http://localhost:7700",
-		PUBLIC_MEILI_SEARCH_KEY:
-			"41134b15079da66ca545375edbea848a9b7173dff13be2028318fefa41ae8f2b",
+};
+
+// ============================================================================
+// 链接预设 - 可自由自定义导航栏链接的名称、图标和URL
+// Link Presets - Allows free customization of the name, icon, and URL of navigation bar links
+// ============================================================================
+export const LinkPresets: Record<string, NavBarLink> = {
+	Home: {
+		name: "主页",
+		url: "/",
+		icon: "material-symbols:home",
+	},
+	Archive: {
+		name: "归档",
+		url: "/archive/",
+		icon: "material-symbols:archive",
+	},
+	Categories: {
+		name: "分类",
+		url: "/categories/",
+		icon: "material-symbols:folder-open-rounded",
+	},
+	Tags: {
+		name: "标签",
+		url: "/tags/",
+		icon: "material-symbols:tag-rounded",
+	},
+	Series: {
+		name: "系列",
+		url: "/series/",
+		icon: "material-symbols:layers",
+	},
+	Friends: {
+		name: "友链",
+		url: "/friends/",
+		icon: "material-symbols:link-2-rounded",
+		pageKey: "friends",
+	},
+	Guestbook: {
+		name: "留言",
+		url: "/guestbook/",
+		icon: "material-symbols:chat",
+		pageKey: "guestbook",
+	},
+	Dynamic: {
+		name: "动态",
+		url: "/dynamic/",
+		icon: "material-symbols:forum-rounded",
+		pageKey: "dynamic",
+	},
+	Projects: {
+		name: "项目",
+		url: "/projects/",
+		icon: "material-symbols:rocket-launch",
+		pageKey: "projects",
+	},
+	Gallery: {
+		name: "相册",
+		url: "/gallery/",
+		icon: "material-symbols:photo-library",
+		pageKey: "gallery",
+	},
+	Booknav: {
+		name: "书签导航",
+		url: "/booknav/",
+		icon: "material-symbols:bookmarks",
+		pageKey: "booknav",
+	},
+	Bilibili: {
+		name: "哔哩哔哩",
+		url: "/bilibili/",
+		icon: "fa7-brands:bilibili",
+		pageKey: "bilibili",
+	},
+	Bangumi: {
+		name: "番组计划",
+		url: "/bangumi/",
+		icon: "material-symbols:movie",
+		pageKey: "bangumi",
+	},
+	VNDB: {
+		name: "VNDB",
+		url: "/vndb/",
+		icon: "material-symbols:chrome-reader-mode-rounded",
+		pageKey: "vndb",
+	},
+	MAL: {
+		name: "AnimeList",
+		url: "/myanimelist/",
+		icon: "material-symbols:menu-book",
+		pageKey: "mal",
+	},
+	Sponsor: {
+		name: "打赏",
+		url: "/sponsor/",
+		icon: "material-symbols:favorite",
+		pageKey: "sponsor",
+	},
+	About: {
+		name: "关于我",
+		url: "/about/",
+		icon: "material-symbols:person",
 	},
 };
 
