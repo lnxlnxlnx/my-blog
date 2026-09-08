@@ -1,4 +1,5 @@
 import type { APIRoute } from "astro";
+import { url } from "@utils/url-utils";
 
 export const prerender = true;
 
@@ -9,7 +10,7 @@ Disallow: /archive/?tag=
 Disallow: /archive/?category=
 Disallow: /archive/?uncategorized=
 
-Sitemap: ${new URL("sitemap-index.xml", import.meta.env.SITE).href}
+Sitemap: ${new URL(url("/sitemap-index.xml"), import.meta.env.SITE).href}
 `.trim();
 
 export const GET: APIRoute = () => {
