@@ -156,7 +156,12 @@ export type Tag = {
 	count: number;
 };
 
+let tagListPromise: Promise<Tag[]> | null = null;
+
 export async function getTagList(): Promise<Tag[]> {
+	if (tagListPromise) return tagListPromise;
+
+	tagListPromise = (async () => {
 	const allBlogPosts = await getCollection<"posts">("posts", ({ data }) => {
 		return import.meta.env.PROD ? data.draft !== true : true;
 	});
@@ -175,6 +180,22 @@ export async function getTagList(): Promise<Tag[]> {
 	});
 
 	return keys.map((key) => ({ name: key, count: countMap[key] }));
+	})();
+
+	return tagListPromise;
+}
+
+/**
+ * 获取全站高频标签。
+ * 默认只保留出现次数 >= 2 的标签，单次标签不在文章元信息中占位。
+ */
+export async function getFrequentTagSet(
+	minCount = 2,
+): Promise<Set<string>> {
+	const tags = await getTagList();
+	return new Set(
+		tags.filter((tag) => tag.count >= minCount).map((tag) => tag.name),
+	);
 }
 
 export type Category = {

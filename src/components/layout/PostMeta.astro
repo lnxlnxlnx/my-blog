@@ -4,6 +4,7 @@ import { commentConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import { formatDateToYYYYMMDD } from "@/utils/date-utils";
+import { getFrequentTagSet } from "@/utils/content-utils";
 import { getCategoryUrl, getTagUrl } from "@/utils/url-utils";
 
 export interface Props {
@@ -57,8 +58,10 @@ const {
 } = Astro.props;
 
 const path = customPath || (id ? `/posts/${id}` : "");
+const frequentTags = await getFrequentTagSet();
+const filteredTags = (tags || []).filter((tag) => frequentTags.has(tag));
 const visibleTags =
-	typeof maxTags === "number" ? tags?.slice(0, maxTags) : tags;
+	typeof maxTags === "number" ? filteredTags.slice(0, maxTags) : filteredTags;
 ---
 
 <div

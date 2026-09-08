@@ -115,6 +115,12 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 				external: true,
 				icon: "fa7-brands:bilibili",
 			},
+			{
+				name: "Firefly文档",
+				url: "https://docs-firefly.cuteleaf.cn/",
+				external: true,
+				icon: "material-symbols:docs",
+			}
 		],
 	});
 

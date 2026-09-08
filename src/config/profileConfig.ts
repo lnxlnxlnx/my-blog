@@ -6,13 +6,14 @@ export const profileConfig: ProfileConfig = {
 	// 1. public 目录（以 "/" 开头，不优化）："/assets/images/avatar.webp"
 	// 2. src 目录（不以 "/" 开头，自动优化但会增加构建时间，推荐）："assets/images/avatar.webp"
 	// 3. 远程 URL："https://example.com/avatar.jpg"
-	avatar: "/assets/images/avatar.webp",
+	//avatar: "/assets/images/avatar.webp",
+	avatar: "/assets/images/head.png",
 
 	// 名字
-	name: "Firefly",
+	name: "LnxLnxLnx",
 
 	// 个人签名
-	bio: "Hello, I'm Firefly.",
+	bio: "Hello, I'm LnxLnxLnx.Welcome to my personal blog. I love coding, music, and exploring new technologies.",
 
 	// 链接配置
 	// 已经预装的图标集：fa7-brands，fa7-regular，fa7-solid，material-symbols，simple-icons
@@ -33,5 +34,11 @@ export const profileConfig: ProfileConfig = {
 			url: "https://github.com/lnxlnxlnx",
 			showName: false,
 		},
+		{
+			name: "RSS",
+			icon: "fa7-solid:rss",
+			url: "https://lnxlnxlnx.github.io/my-blog/rss/",
+			showName: false,
+		}
 	],
 };

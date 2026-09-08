@@ -6,6 +6,7 @@ import CoverImage from "@/components/common/CoverImage.astro";
 import PostMetadata from "@/components/layout/PostMeta.astro";
 import PostStats from "@/components/layout/PostStats.astro";
 import { siteConfig } from "@/config";
+import { getFrequentTagSet } from "@/utils/content-utils";
 import { getApiUrlList, processCoverImageSync } from "@/utils/image-utils";
 import { getFileDirFromPath, getTagUrl } from "@/utils/url-utils";
 
@@ -90,7 +91,8 @@ const descriptionClampLines = String(descriptionLines);
 const shouldClampDescription = descriptionLines > 0;
 
 // 底部标签：超出 tagCount 的部分折叠成一个 +N 提示，tagCount 为 0 时不限制
-const tagList = tags ?? [];
+const frequentTags = await getFrequentTagSet();
+const tagList = (tags ?? []).filter((tag) => frequentTags.has(tag));
 const bottomTags = metaTagCount > 0 ? tagList.slice(0, metaTagCount) : tagList;
 const hiddenTags = tagList.slice(bottomTags.length);
 const hiddenTagCount = hiddenTags.length;
