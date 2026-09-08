@@ -9,7 +9,7 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 	showInSidebar: true,
 
 	// 使用方式："meting" 使用 Meting API，"local" 使用本地音乐列表
-	mode: "meting",
+	mode: "local",
 
 	// 默认音量 (0-1)
 	volume: 0.7,
@@ -54,6 +54,13 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 				cover: "/assets/music/cover/109951169585655912.webp",
 				lrc: "",
 			},
+			{
+				name: "吹梦到西洲",
+				artist: "恋恋故人难 / 黄诗扶/ 王敬轩", 
+				url: "/assets/music/吹梦到西洲 - 恋恋故人难、黄诗扶、王敬轩（妖扬）.mp3",
+				cover: "/assets/music/cover/吹梦到西洲.png",
+				lrc: "",
+			}
 		],
 	},
 };
